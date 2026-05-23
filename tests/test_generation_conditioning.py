@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class GenerationConditioningTests(unittest.TestCase):
     def generation_config(self, style_seed="auto", structure_anchor=0.0, source_wsi_id=None) -> dict:
         return {
-            "schema_version": "v0.45.0",
+            "schema_version": "v0.46.0",
             "random_seed": 7,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -40,7 +40,7 @@ class GenerationConditioningTests(unittest.TestCase):
         root.mkdir(parents=True, exist_ok=True)
         artifacts = {
             "layout_mask_prior": {
-                "schema_version": "v0.45.0",
+                "schema_version": "v0.46.0",
                 "prior_type": "layout_mask_prior",
                 "sample_count": 2,
                 "class_names": [
@@ -56,7 +56,7 @@ class GenerationConditioningTests(unittest.TestCase):
                 "adjacency_counts": {"horizontal": {"1:2": 3}, "vertical": {"2:3": 2}},
             },
             "style_prior": {
-                "schema_version": "v0.45.0",
+                "schema_version": "v0.46.0",
                 "prior_type": "style_prior",
                 "sample_count": 2,
                 "rgb_statistics": {
@@ -66,7 +66,7 @@ class GenerationConditioningTests(unittest.TestCase):
                 },
             },
             "texture_prior": {
-                "schema_version": "v0.45.0",
+                "schema_version": "v0.46.0",
                 "prior_type": "texture_prior",
                 "embedding_count": 4,
                 "embedding_dim": 2,
@@ -89,7 +89,7 @@ class GenerationConditioningTests(unittest.TestCase):
                 ],
             },
             "qc_reference_distribution": {
-                "schema_version": "v0.45.0",
+                "schema_version": "v0.46.0",
                 "source": "qc_report_metric_distribution",
                 "sample_count": 3,
                 "metrics": {
@@ -143,7 +143,7 @@ class GenerationConditioningTests(unittest.TestCase):
             )
             written = json.loads(output_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(packet["schema_version"], "v0.45.0")
+        self.assertEqual(packet["schema_version"], "v0.46.0")
         self.assertEqual(packet["condition_packet_type"], "generation_condition_packet")
         self.assertEqual(packet["prior_id"], "prior-demo")
         self.assertEqual(written["conditions"]["coord"]["tile_origin_40x"], [128, 256])
@@ -196,7 +196,7 @@ class GenerationConditioningTests(unittest.TestCase):
             paths["texture_prior"].write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.45.0",
+                        "schema_version": "v0.46.0",
                         "prior_type": "texture_prior",
                         "cluster_count": 2,
                     }

@@ -1,5 +1,44 @@
 # CHANGELOG
 
+## v0.46.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐输出摘要的 CLI 入口：UI controller 已有 `collect_output_summary()`，但命令行还没有一个可复现方式把 metadata + QC 汇总成稳定 JSON。
+
+### 已做改动
+
+- 版本号升级到 `v0.46.0`。
+- CLI 新增 `inspect-output-summary --metadata <metadata.json> --qc <qc.json>`。
+- `inspect-output-summary` 复用 `collect_output_summary()`，把 metadata + QC 汇总成 JSON 输出；坏输入会返回非零退出码并输出明确错误。
+- 新增 CLI output summary 成功路径和坏 QC 失败路径测试。
+- 同步更新 README、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/ui/controller.py`
+- `tests/test_ui.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.46.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_ui.UITests.test_cli_inspects_output_summary tests.test_ui.UITests.test_cli_rejects_invalid_output_summary_qc -v`
+- `PYTHONPATH=src python -m unittest tests.test_ui tests.test_version tests.test_cli -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`（137 tests passed, 21 skipped）
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+
 ## v0.45.0 - 2026-05-23
 
 ### 用户需求

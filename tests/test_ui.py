@@ -26,7 +26,7 @@ class UITests(unittest.TestCase):
     def test_default_ui_config_contains_single_page_sections(self):
         config = create_default_ui_config()
 
-        self.assertEqual(config["schema_version"], "v0.45.0")
+        self.assertEqual(config["schema_version"], "v0.46.0")
         self.assertEqual(
             list(config["sections"]),
             [
@@ -80,7 +80,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.45.0",
+                        "schema_version": "v0.46.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -150,7 +150,136 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
-        self.assertEqual(config["schema_version"], "v0.45.0")
+        self.assertEqual(config["schema_version"], "v0.46.0")
+
+    def test_cli_inspects_output_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path = root / "metadata.json"
+            qc_path = root / "qc.json"
+            qc_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v0.46.0",
+                        "generated_id": "gen-001",
+                        "overall_status": "warning",
+                        "levels": {
+                            "wsi": {"status": "pass", "metrics": []},
+                            "tile": {"status": "warning", "metrics": []},
+                            "mask_region": {"status": "pass", "metrics": []},
+                        },
+                        "non_copy_report": {
+                            "enabled": True,
+                            "patch_nearest_neighbor_search": False,
+                            "items": [],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "generated_id": "gen-001",
+                        "output": {
+                            "wsi_path": "generated.ome.tiff",
+                            "mask_path": "generated_mask/mask.npy",
+                            "qc_json_path": str(qc_path),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "inspect-output-summary",
+                    "--metadata",
+                    str(metadata_path),
+                    "--qc",
+                    str(qc_path),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            summary = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(summary["generated_id"], "gen-001")
+        self.assertEqual(summary["qc_status"], "warning")
+        self.assertEqual(summary["outputs"]["wsi_path"], "generated.ome.tiff")
+
+    def test_cli_rejects_invalid_output_summary_qc(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path = root / "metadata.json"
+            qc_path = root / "qc.json"
+            qc_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v0.46.0",
+                        "generated_id": "gen-001",
+                        "overall_status": "warning",
+                        "levels": {
+                            "wsi": {"status": "pass", "metrics": []},
+                            "tile": {"status": "warning", "metrics": []},
+                            "mask_region": {"status": "pass", "metrics": []},
+                        },
+                        "non_copy_report": {
+                            "enabled": True,
+                            "patch_nearest_neighbor_search": True,
+                            "items": [],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "generated_id": "gen-001",
+                        "output": {
+                            "wsi_path": "generated.ome.tiff",
+                            "mask_path": "generated_mask/mask.npy",
+                            "qc_json_path": str(qc_path),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "inspect-output-summary",
+                    "--metadata",
+                    str(metadata_path),
+                    "--qc",
+                    str(qc_path),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("non_copy_report.patch_nearest_neighbor_search must be false", result.stderr)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,26 @@
 # DEMANDS
 
+## v0.46.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐输出摘要的 CLI 入口：UI controller 已有 `collect_output_summary()`，但命令行还没有一个可复现方式把 metadata + QC 汇总成稳定 JSON。
+
+### 结构化需求
+
+- 版本号升级为 `v0.46.0`。
+- CLI 新增 `inspect-output-summary --metadata <metadata.json> --qc <qc.json>`。
+- `inspect-output-summary` 必须复用 `collect_output_summary()`，把 metadata + QC 汇总成 JSON 输出到 stdout。
+- 读取失败、QC schema 错误或缺失输入必须显式报错并返回非零退出码。
+- 新增/更新测试覆盖 success 路径和 invalid QC 失败路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只暴露输出摘要查看入口，不实现 HTML 报告、可视化渲染、上传或远程聚合。
+- `inspect-output-summary` 只读输入文件，不会修改 metadata 或 QC。
+
 ## v0.45.0 - 2026-05-23
 
 ### 用户需求

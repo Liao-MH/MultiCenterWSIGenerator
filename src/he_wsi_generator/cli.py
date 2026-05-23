@@ -41,6 +41,7 @@ from .priors.texture import TexturePriorBuildError, build_texture_prior_from_emb
 from .qc.reference import QCReferenceBuildError, build_qc_reference_distribution
 from .schemas import ValidationError, load_document, validate_file
 from .ui.config import create_default_ui_config, load_ui_config, save_ui_config
+from .ui.controller import collect_output_summary
 from .ui.jobs import JobRunner, JobRunnerError
 from .ui.pyside_app import UIUnavailableError, launch_ui
 
@@ -496,6 +497,13 @@ def build_parser() -> argparse.ArgumentParser:
     archive_parser.add_argument("--metadata", required=True, help="Input metadata JSON/YAML.")
     archive_parser.add_argument("--qc", required=True, help="Input QC report JSON/YAML.")
 
+    output_summary_parser = subparsers.add_parser(
+        "inspect-output-summary",
+        help="Inspect a metadata/QC output summary as JSON.",
+    )
+    output_summary_parser.add_argument("--metadata", required=True, help="Input metadata JSON.")
+    output_summary_parser.add_argument("--qc", required=True, help="Input QC JSON.")
+
     ui_config_parser = subparsers.add_parser(
         "write-ui-config",
         help="Write the default single-page console UI config JSON.",
@@ -928,6 +936,15 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"sample archived: {archive['batch_index_path']}")
+        return 0
+
+    if args.command == "inspect-output-summary":
+        try:
+            summary = collect_output_summary(args.metadata, args.qc)
+        except (ValidationError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2))
         return 0
 
     if args.command == "write-ui-config":
