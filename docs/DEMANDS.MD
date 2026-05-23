@@ -1,5 +1,26 @@
 # DEMANDS
 
+## v0.43.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐本地 job 的查看入口：既然 `run-local-job` 和 `cancel-local-job` 已经可用，`he-wsi-gen` 也应提供可复现的 inspect 命令，把持久化 job 记录导出为 JSON 供排障和状态查看。
+
+### 结构化需求
+
+- 版本号升级为 `v0.43.0`。
+- CLI 新增 `inspect-local-job <job_root> --job-id <id>`。
+- `inspect-local-job` 必须复用 `JobRunner.load_job()` 读取已持久化记录；未知 job id、非法 job id 或损坏 JSON 必须显式报错并返回非零退出码。
+- 成功时必须把完整 job record 以 JSON 形式写到 stdout，便于脚本和人工查看。
+- 新增/更新测试覆盖 inspect 成功路径、未知 job 失败路径和损坏记录失败路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只暴露 job 记录查看入口，不实现 job 编辑、重放、批量列表、后台 daemon 或并发调度。
+- `inspect-local-job` 只负责读取已存在的持久化记录，不会自动执行或修改 job 状态。
+
 ## v0.42.0 - 2026-05-23
 
 ### 用户需求

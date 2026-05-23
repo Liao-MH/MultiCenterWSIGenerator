@@ -526,6 +526,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="job cancelled",
         help="Cancellation message persisted in the job record.",
     )
+
+    inspect_job_parser = subparsers.add_parser(
+        "inspect-local-job",
+        help="Inspect a persisted local command job record as JSON.",
+    )
+    inspect_job_parser.add_argument("job_root", help="Directory used to store local job records.")
+    inspect_job_parser.add_argument("--job-id", required=True, help="Local job id to inspect.")
     return parser
 
 
@@ -933,6 +940,15 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"local job cancelled: {record['record_path']}")
+        return 0
+
+    if args.command == "inspect-local-job":
+        try:
+            record = JobRunner(args.job_root).load_job(args.job_id)
+        except JobRunnerError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps(record, indent=2))
         return 0
 
     parser.error(f"unknown command {args.command!r}")

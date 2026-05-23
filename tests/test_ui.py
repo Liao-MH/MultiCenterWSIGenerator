@@ -26,7 +26,7 @@ class UITests(unittest.TestCase):
     def test_default_ui_config_contains_single_page_sections(self):
         config = create_default_ui_config()
 
-        self.assertEqual(config["schema_version"], "v0.42.0")
+        self.assertEqual(config["schema_version"], "v0.43.0")
         self.assertEqual(
             list(config["sections"]),
             [
@@ -80,7 +80,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.42.0",
+                        "schema_version": "v0.43.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -150,7 +150,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
-        self.assertEqual(config["schema_version"], "v0.42.0")
+        self.assertEqual(config["schema_version"], "v0.43.0")
 
 
 if __name__ == "__main__":

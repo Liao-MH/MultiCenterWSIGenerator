@@ -209,6 +209,100 @@ class JobRunnerTests(unittest.TestCase):
         self.assertIn("not queued", result.stderr)
         self.assertEqual(record["status"], "completed")
 
+    def test_cli_inspects_local_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_root = Path(tmpdir) / "jobs"
+            runner = JobRunner(job_root)
+            runner.create_job(
+                job_id="job-inspect",
+                command=[sys.executable, "-c", "print('inspect me')"],
+            )
+            runner.run_job("job-inspect")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "inspect-local-job",
+                    str(job_root),
+                    "--job-id",
+                    "job-inspect",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            inspected = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(inspected["job_id"], "job-inspect")
+        self.assertEqual(inspected["status"], "completed")
+        self.assertIn("stdout_path", inspected)
+        self.assertIn("stderr_path", inspected)
+
+    def test_cli_rejects_inspecting_unknown_local_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_root = Path(tmpdir) / "jobs"
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "inspect-local-job",
+                    str(job_root),
+                    "--job-id",
+                    "missing-job",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown job_id", result.stderr)
+
+    def test_cli_rejects_inspecting_corrupt_local_job_record(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_root = Path(tmpdir) / "jobs"
+            job_dir = job_root / "job-corrupt"
+            job_dir.mkdir(parents=True)
+            (job_dir / "job.json").write_text("{not json", encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "inspect-local-job",
+                    str(job_root),
+                    "--job-id",
+                    "job-corrupt",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not valid JSON", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

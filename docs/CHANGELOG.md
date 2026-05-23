@@ -1,5 +1,44 @@
 # CHANGELOG
 
+## v0.43.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐本地 job 的查看入口：在 `run-local-job` 和 `cancel-local-job` 之外，再提供一个可复现的 inspect 命令，把持久化 job 记录导出为 JSON，便于排障和状态查看。
+
+### 已做改动
+
+- 版本号升级到 `v0.43.0`。
+- CLI 新增 `inspect-local-job <job_root> --job-id <id>`。
+- `inspect-local-job` 复用 `JobRunner.load_job()` 读取持久化 job record；未知 job、非法 job id 或损坏 JSON 会返回非零退出码并输出明确错误。
+- 成功时把完整 job record 以 JSON 输出到 stdout，便于脚本和人工查看。
+- 新增 CLI inspect 成功路径、未知 job 失败路径和损坏记录失败路径测试。
+- 同步更新 README、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `tests/test_job_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.43.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_job_runner.JobRunnerTests.test_cli_inspects_local_job tests.test_job_runner.JobRunnerTests.test_cli_rejects_inspecting_unknown_local_job tests.test_job_runner.JobRunnerTests.test_cli_rejects_inspecting_corrupt_local_job_record -v`
+- `PYTHONPATH=src python -m unittest tests.test_job_runner tests.test_version tests.test_cli -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`（132 tests passed, 21 skipped）
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+
 ## v0.42.0 - 2026-05-23
 
 ### 用户需求
