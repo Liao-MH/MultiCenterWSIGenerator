@@ -128,6 +128,47 @@ class JobRunnerTests(unittest.TestCase):
         self.assertIn("local job completed", result.stdout)
         self.assertEqual(record["status"], "completed")
 
+    def test_cli_runs_local_job_with_cwd(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            job_root = root / "jobs"
+            workdir = root / "workdir"
+            workdir.mkdir()
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "run-local-job",
+                    str(job_root),
+                    "--job-id",
+                    "job-cwd",
+                    "--cwd",
+                    str(workdir),
+                    "--",
+                    sys.executable,
+                    "-c",
+                    "from pathlib import Path; Path('cwd.txt').write_text(str(Path.cwd()), encoding='utf-8')",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            record = json.loads((job_root / "job-cwd" / "job.json").read_text(encoding="utf-8"))
+            cwd_file = (workdir / "cwd.txt").read_text(encoding="utf-8")
+
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["cwd"], str(workdir))
+        self.assertEqual(cwd_file, str(workdir))
+
     def test_cli_cancels_queued_local_job(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             job_root = Path(tmpdir) / "jobs"

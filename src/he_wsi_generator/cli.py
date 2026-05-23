@@ -514,6 +514,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     job_parser.add_argument("job_root", help="Directory used to store local job records.")
     job_parser.add_argument("--job-id", required=True, help="Unique local job id.")
+    job_parser.add_argument(
+        "--cwd",
+        help="Optional working directory for the command being run.",
+    )
 
     cancel_job_parser = subparsers.add_parser(
         "cancel-local-job",
@@ -549,6 +553,10 @@ def _build_local_job_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("job_root", help="Directory used to store local job records.")
     parser.add_argument("--job-id", required=True, help="Unique local job id.")
+    parser.add_argument(
+        "--cwd",
+        help="Optional working directory for the command being run.",
+    )
     return parser
 
 
@@ -564,7 +572,7 @@ def _run_local_job_cli(argv: list[str]) -> int:
     command = argv[separator_index + 1 :]
     try:
         runner = JobRunner(args.job_root)
-        record = runner.create_job(args.job_id, command)
+        record = runner.create_job(args.job_id, command, cwd=args.cwd)
         record = runner.run_job(record["job_id"])
     except JobRunnerError as exc:
         print(str(exc), file=sys.stderr)

@@ -172,7 +172,7 @@ def validate_generation_config(data: dict[str, Any]) -> dict[str, Any]:
     )
     if non_copy:
         raise ValidationError(
-            "non_copy_patch_nearest_neighbor_search must be false in v0.44.0"
+            "non_copy_patch_nearest_neighbor_search must be false in v0.45.0"
         )
     return deepcopy(config)
 
@@ -274,7 +274,7 @@ def validate_qc_report(data: dict[str, Any]) -> dict[str, Any]:
     )
     if patch_search:
         raise ValidationError(
-            "non_copy_report.patch_nearest_neighbor_search must be false in v0.44.0"
+            "non_copy_report.patch_nearest_neighbor_search must be false in v0.45.0"
         )
     _require_list(non_copy_report, "items", "non_copy_report.items")
     return deepcopy(report)
@@ -299,7 +299,7 @@ def _validate_annotation_record(value: Any, path: str) -> None:
         annotation, "label_encoding", f"{path}.label_encoding"
     )
     if label_encoding != "integer_index":
-        raise ValidationError(f"{path}.label_encoding must be integer_index in v0.44.0")
+        raise ValidationError(f"{path}.label_encoding must be integer_index in v0.45.0")
     _ensure_mapping(
         _require(annotation, "transform_to_level0", f"{path}.transform_to_level0"),
         f"{path}.transform_to_level0",

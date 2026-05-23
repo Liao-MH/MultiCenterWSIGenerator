@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## v0.45.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐本地 job 执行命令的工作目录透传：`JobRunner.create_job()` 已支持 `cwd`，但 `run-local-job` 还没有暴露这个能力。
+
+### 已做改动
+
+- 版本号升级到 `v0.45.0`。
+- `run-local-job` CLI 新增可选 `--cwd <path>`，并透传给 `JobRunner.create_job()`。
+- 使用 `--cwd` 时，job record 现在会持久化 `cwd`，且命令在指定目录执行。
+- 新增 `run-local-job --cwd` 成功路径测试。
+- 同步更新 README、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `tests/test_job_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.45.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_job_runner.JobRunnerTests.test_cli_runs_local_job_with_cwd -v`
+- `PYTHONPATH=src python -m unittest tests.test_job_runner tests.test_version tests.test_cli -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`（135 tests passed, 21 skipped）
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+
 ## v0.44.0 - 2026-05-23
 
 ### 用户需求

@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class TrainingIndexTests(unittest.TestCase):
     def manifest(self, root: Path, mask_path: Path) -> dict:
         return {
-            "schema_version": "v0.44.0",
+            "schema_version": "v0.45.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -55,7 +55,7 @@ class TrainingIndexTests(unittest.TestCase):
 
     def audit(self, root: Path) -> dict:
         return {
-            "schema_version": "v0.44.0",
+            "schema_version": "v0.45.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -81,7 +81,7 @@ class TrainingIndexTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.44.0",
+            "schema_version": "v0.45.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -121,7 +121,7 @@ class TrainingIndexTests(unittest.TestCase):
                 for line in output_path.read_text(encoding="utf-8").splitlines()
             ]
 
-        self.assertEqual(summary["schema_version"], "v0.44.0")
+        self.assertEqual(summary["schema_version"], "v0.45.0")
         self.assertEqual(summary["sample_count"], 8)
         self.assertEqual(summary["records_by_level"]["1/1"], 2)
         self.assertEqual(records[0]["wsi_id"], "slide-001")
