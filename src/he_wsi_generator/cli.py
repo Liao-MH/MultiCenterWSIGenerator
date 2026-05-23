@@ -186,6 +186,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="none",
         help="Optional reference QC outlier policy applied before threshold estimation.",
     )
+    qc_ref_parser.add_argument(
+        "--stratify-by",
+        action="append",
+        help="Optional QC report dot-path used for stratified thresholds. Repeat for multiple fields.",
+    )
     qc_ref_parser.add_argument("--output", required=True, help="Path to write reference JSON.")
 
     layout_prior_parser = subparsers.add_parser(
@@ -745,6 +750,7 @@ def main(argv: list[str] | None = None) -> int:
                 min_samples=args.min_samples,
                 estimator=args.estimator,
                 outlier_policy=args.outlier_policy,
+                stratify_by=args.stratify_by,
             )
         except (ValidationError, QCReferenceBuildError) as exc:
             print(str(exc), file=sys.stderr)

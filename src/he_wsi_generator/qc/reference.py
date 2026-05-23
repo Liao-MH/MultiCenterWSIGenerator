@@ -18,6 +18,7 @@ def build_qc_reference_distribution(
     min_samples: int = 2,
     estimator: str = "observed_min_max_with_range_margin",
     outlier_policy: str = "none",
+    stratify_by: list[str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(qc_reports, list) or not qc_reports:
         raise QCReferenceBuildError("qc_reports must contain at least one report")
@@ -36,8 +37,10 @@ def build_qc_reference_distribution(
         )
     if outlier_policy not in {"none", "robust_iqr_filter"}:
         raise QCReferenceBuildError("outlier_policy must be none or robust_iqr_filter")
+    strata_fields = _validate_stratify_by(stratify_by)
 
     samples_by_metric = {name: [] for name in metric_names}
+    stratum_samples: dict[str, dict[str, Any]] = {}
     for report in qc_reports:
         validated = validate_qc_report(report)
         numeric_metrics = _numeric_metrics(validated)
@@ -52,22 +55,50 @@ def build_qc_reference_distribution(
                     "value": numeric_metrics[name],
                 }
             )
+        if strata_fields:
+            key, group_values = _stratum_key(validated, strata_fields)
+            bucket = stratum_samples.setdefault(
+                key,
+                {
+                    "group_values": group_values,
+                    "samples_by_metric": {name: [] for name in metric_names},
+                    "sample_ids": [],
+                },
+            )
+            bucket["sample_ids"].append(validated["generated_id"])
+            for name in metric_names:
+                bucket["samples_by_metric"][name].append(
+                    {
+                        "generated_id": validated["generated_id"],
+                        "value": numeric_metrics[name],
+                    }
+                )
 
-    metrics = {}
-    outlier_audit = {"policy": outlier_policy, "metrics": {}}
-    filtered_by_metric = _apply_outlier_policy(samples_by_metric, outlier_policy)
-    for name, result in filtered_by_metric.items():
-        values = [sample["value"] for sample in result["kept_samples"]]
-        if len(values) < min_samples:
-            raise QCReferenceBuildError(f"metric {name} requires at least {min_samples} samples")
-        metrics[name] = _thresholds(values, estimator)
-        outlier_audit["metrics"][name] = {
-            "original_sample_count": result["original_sample_count"],
-            "kept_sample_count": len(result["kept_samples"]),
-            "excluded_sample_count": len(result["excluded_samples"]),
-            "filter": result["filter"],
-            "excluded_samples": result["excluded_samples"],
-        }
+    metrics, outlier_audit = _build_metric_thresholds_and_audit(
+        samples_by_metric=samples_by_metric,
+        min_samples=min_samples,
+        estimator=estimator,
+        outlier_policy=outlier_policy,
+    )
+    strata = {}
+    if strata_fields:
+        for key in sorted(stratum_samples):
+            bucket = stratum_samples[key]
+            stratum_metrics, stratum_audit = _build_metric_thresholds_and_audit(
+                samples_by_metric=bucket["samples_by_metric"],
+                min_samples=min_samples,
+                estimator=estimator,
+                outlier_policy=outlier_policy,
+                error_prefix=f"stratum {key} ",
+            )
+            strata[key] = {
+                "group_values": bucket["group_values"],
+                "sample_count": len(bucket["sample_ids"]),
+                "sample_ids": list(bucket["sample_ids"]),
+                "outlier_policy": outlier_policy,
+                "outlier_audit": stratum_audit,
+                "metrics": stratum_metrics,
+            }
 
     reference = {
         "schema_version": PROJECT_VERSION,
@@ -76,8 +107,16 @@ def build_qc_reference_distribution(
         "sample_count": len(qc_reports),
         "outlier_policy": outlier_policy,
         "outlier_audit": outlier_audit,
+        "stratification": {
+            "enabled": bool(strata_fields),
+            "fields": strata_fields,
+            "stratum_count": len(strata),
+            "key_format": "field=value joined by | in requested field order",
+        },
         "metrics": metrics,
     }
+    if strata_fields:
+        reference["strata"] = strata
     if output_path is not None:
         target = Path(output_path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +140,33 @@ def _thresholds(values: list[float], estimator: str) -> dict[str, Any]:
     if estimator == "robust_mad_z_score":
         return _robust_mad_z_score_thresholds(values)
     return _observed_min_max_thresholds(values)
+
+
+def _build_metric_thresholds_and_audit(
+    samples_by_metric: dict[str, list[dict[str, Any]]],
+    min_samples: int,
+    estimator: str,
+    outlier_policy: str,
+    error_prefix: str = "",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    metrics = {}
+    outlier_audit = {"policy": outlier_policy, "metrics": {}}
+    filtered_by_metric = _apply_outlier_policy(samples_by_metric, outlier_policy)
+    for name, result in filtered_by_metric.items():
+        values = [sample["value"] for sample in result["kept_samples"]]
+        if len(values) < min_samples:
+            raise QCReferenceBuildError(
+                f"{error_prefix}metric {name} requires at least {min_samples} samples"
+            )
+        metrics[name] = _thresholds(values, estimator)
+        outlier_audit["metrics"][name] = {
+            "original_sample_count": result["original_sample_count"],
+            "kept_sample_count": len(result["kept_samples"]),
+            "excluded_sample_count": len(result["excluded_samples"]),
+            "filter": result["filter"],
+            "excluded_samples": result["excluded_samples"],
+        }
+    return metrics, outlier_audit
 
 
 def _apply_outlier_policy(
@@ -259,6 +325,76 @@ def _percentile(ordered_values: list[float], fraction: float) -> float:
     lower = ordered_values[lower_index]
     upper = ordered_values[upper_index]
     return float(lower + (upper - lower) * weight)
+
+
+def _validate_stratify_by(stratify_by: list[str] | None) -> list[str]:
+    if stratify_by is None:
+        return []
+    if not isinstance(stratify_by, list):
+        raise QCReferenceBuildError("stratify_by must be a list of dot-path strings")
+    fields = []
+    seen = set()
+    for field in stratify_by:
+        if not isinstance(field, str) or not field.strip():
+            raise QCReferenceBuildError("stratify_by fields must be non-empty strings")
+        normalized = field.strip()
+        parts = normalized.split(".")
+        if any(part == "" for part in parts):
+            raise QCReferenceBuildError(f"stratify_by field {normalized!r} is not a valid dot path")
+        if normalized in seen:
+            raise QCReferenceBuildError(f"duplicate stratify_by field {normalized}")
+        seen.add(normalized)
+        fields.append(normalized)
+    return fields
+
+
+def _stratum_key(report: dict[str, Any], fields: list[str]) -> tuple[str, dict[str, Any]]:
+    group_values = {}
+    key_parts = []
+    generated_id = report["generated_id"]
+    for field in fields:
+        value = _read_dot_path(report, field, generated_id)
+        normalized = _normalize_group_value(value, field, generated_id)
+        group_values[field] = normalized
+        key_parts.append(f"{field}={normalized}")
+    return "|".join(key_parts), group_values
+
+
+def _read_dot_path(report: dict[str, Any], field: str, generated_id: str) -> Any:
+    current: Any = report
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            raise QCReferenceBuildError(
+                f"stratification field {field} is missing in QC report {generated_id}"
+            )
+        current = current[part]
+    return current
+
+
+def _normalize_group_value(value: Any, field: str, generated_id: str) -> str | int | float:
+    # Stratification values become audit keys, so only scalar, explicit values
+    # are accepted. Missing/null/empty/group-object values are rejected instead
+    # of being silently collapsed into an unknown bucket.
+    if value is None:
+        raise QCReferenceBuildError(
+            f"stratification field {field} is null in QC report {generated_id}"
+        )
+    if isinstance(value, bool) or isinstance(value, (dict, list)):
+        raise QCReferenceBuildError(
+            f"stratification field {field} in QC report {generated_id} must be a string or number"
+        )
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            raise QCReferenceBuildError(
+                f"stratification field {field} is empty in QC report {generated_id}"
+            )
+        return normalized
+    if isinstance(value, (int, float)):
+        return value
+    raise QCReferenceBuildError(
+        f"stratification field {field} in QC report {generated_id} must be a string or number"
+    )
 
 
 def _now_iso() -> str:

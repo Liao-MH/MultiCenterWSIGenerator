@@ -251,6 +251,14 @@ def _summarize_artifact_json(artifact_type: str, data: dict[str, Any]) -> dict[s
             "qc_reference_distribution.metrics",
         )
         metadata["metric_count"] = len(metrics)
+        stratification = data.get("stratification")
+        if isinstance(stratification, dict):
+            fields = stratification.get("fields")
+            stratum_count = stratification.get("stratum_count")
+            if isinstance(fields, list):
+                metadata["stratification_fields"] = deepcopy(fields)
+            if isinstance(stratum_count, int) and not isinstance(stratum_count, bool):
+                metadata["stratum_count"] = stratum_count
     elif artifact_type == "wsi_tissue_overview":
         actual_type = _require_non_empty_str(
             data,

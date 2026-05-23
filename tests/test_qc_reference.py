@@ -13,10 +13,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class QCReferenceTests(unittest.TestCase):
-    def qc_report(self, generated_id: str, red: float, sharpness: float, tissue_fraction: float) -> dict:
+    def qc_report(
+        self,
+        generated_id: str,
+        red: float,
+        sharpness: float,
+        tissue_fraction: float,
+        metadata: dict | None = None,
+    ) -> dict:
         return {
-            "schema_version": "v0.59.0",
+            "schema_version": "v0.60.0",
             "generated_id": generated_id,
+            "metadata": metadata or {},
             "overall_status": "pass",
             "levels": {
                 "wsi": {
@@ -63,7 +71,7 @@ class QCReferenceTests(unittest.TestCase):
             )
             written = json.loads(output_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(reference["schema_version"], "v0.59.0")
+        self.assertEqual(reference["schema_version"], "v0.60.0")
         self.assertEqual(reference["sample_count"], 4)
         self.assertEqual(reference["metrics"]["mean_red"]["warning_min"], 100.0)
         self.assertEqual(reference["metrics"]["mean_red"]["warning_max"], 160.0)
@@ -173,6 +181,80 @@ class QCReferenceTests(unittest.TestCase):
         self.assertEqual(audit["excluded_samples"][0]["metric"], "mean_red")
         self.assertEqual(audit["excluded_samples"][0]["value"], 500.0)
 
+    def test_build_qc_reference_distribution_writes_stratified_thresholds(self):
+        reports = [
+            self.qc_report(
+                "breast-001",
+                red=100.0,
+                sharpness=2.0,
+                tissue_fraction=0.50,
+                metadata={"cancer_type": "breast", "center_id": "A"},
+            ),
+            self.qc_report(
+                "breast-002",
+                red=104.0,
+                sharpness=2.1,
+                tissue_fraction=0.52,
+                metadata={"cancer_type": "breast", "center_id": "A"},
+            ),
+            self.qc_report(
+                "lung-001",
+                red=180.0,
+                sharpness=3.0,
+                tissue_fraction=0.70,
+                metadata={"cancer_type": "lung", "center_id": "B"},
+            ),
+            self.qc_report(
+                "lung-002",
+                red=184.0,
+                sharpness=3.1,
+                tissue_fraction=0.72,
+                metadata={"cancer_type": "lung", "center_id": "B"},
+            ),
+        ]
+
+        reference = build_qc_reference_distribution(
+            reports,
+            output_path=None,
+            metric_names=["mean_red"],
+            min_samples=2,
+            estimator="robust_mad_z_score",
+            stratify_by=["metadata.cancer_type"],
+        )
+
+        self.assertEqual(reference["stratification"]["enabled"], True)
+        self.assertEqual(reference["stratification"]["fields"], ["metadata.cancer_type"])
+        self.assertEqual(reference["stratification"]["stratum_count"], 2)
+        breast = reference["strata"]["metadata.cancer_type=breast"]
+        lung = reference["strata"]["metadata.cancer_type=lung"]
+        self.assertEqual(breast["sample_count"], 2)
+        self.assertEqual(breast["group_values"], {"metadata.cancer_type": "breast"})
+        self.assertEqual(breast["metrics"]["mean_red"]["median"], 102.0)
+        self.assertEqual(lung["metrics"]["mean_red"]["median"], 182.0)
+        self.assertIn("mean_red", breast["outlier_audit"]["metrics"])
+        self.assertEqual(reference["metrics"]["mean_red"]["sample_count"], 4)
+
+    def test_build_qc_reference_distribution_rejects_missing_stratification_field(self):
+        reports = [
+            self.qc_report(
+                "gen-001",
+                red=100.0,
+                sharpness=2.0,
+                tissue_fraction=0.50,
+                metadata={"cancer_type": "breast"},
+            ),
+            self.qc_report("gen-002", red=104.0, sharpness=2.1, tissue_fraction=0.52),
+        ]
+
+        with self.assertRaisesRegex(QCReferenceBuildError, "metadata.cancer_type"):
+            build_qc_reference_distribution(
+                reports,
+                output_path=None,
+                metric_names=["mean_red"],
+                min_samples=1,
+                stratify_by=["metadata.cancer_type"],
+            )
+
     def test_build_qc_reference_distribution_errors_when_filter_drops_below_min_samples(self):
         reports = [
             self.qc_report("gen-001", red=100.0, sharpness=2.0, tissue_fraction=0.50),
@@ -231,7 +313,15 @@ class QCReferenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             paths = []
-            for index, value in enumerate((100.0, 120.0, 140.0), start=1):
+            for index, (value, cancer_type) in enumerate(
+                (
+                    (100.0, "breast"),
+                    (120.0, "breast"),
+                    (140.0, "lung"),
+                    (160.0, "lung"),
+                ),
+                start=1,
+            ):
                 path = root / f"qc-{index}.json"
                 path.write_text(
                     json.dumps(
@@ -240,6 +330,7 @@ class QCReferenceTests(unittest.TestCase):
                             red=value,
                             sharpness=float(index),
                             tissue_fraction=0.5 + index * 0.05,
+                            metadata={"cancer_type": cancer_type},
                         )
                     ),
                     encoding="utf-8",
@@ -264,6 +355,8 @@ class QCReferenceTests(unittest.TestCase):
                     "robust_mad_z_score",
                     "--outlier-policy",
                     "robust_iqr_filter",
+                    "--stratify-by",
+                    "metadata.cancer_type",
                     "--output",
                     str(output_path),
                 ],
@@ -278,9 +371,12 @@ class QCReferenceTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("qc reference distribution written", result.stdout)
-        self.assertEqual(reference["metrics"]["mean_red"]["sample_count"], 3)
+        self.assertEqual(reference["metrics"]["mean_red"]["sample_count"], 4)
         self.assertEqual(reference["metrics"]["mean_red"]["estimator"], "robust_mad_z_score")
         self.assertEqual(reference["outlier_policy"], "robust_iqr_filter")
+        self.assertEqual(reference["stratification"]["fields"], ["metadata.cancer_type"])
+        self.assertEqual(reference["stratification"]["stratum_count"], 2)
+        self.assertIn("metadata.cancer_type=breast", reference["strata"])
 
 
 if __name__ == "__main__":

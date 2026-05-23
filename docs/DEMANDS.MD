@@ -1,5 +1,30 @@
 # DEMANDS
 
+## v0.60.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进研究设计中“按组织区域、疾病类型或中心分层统计/QC”的工程落地：`qc_reference_distribution` 需要支持显式分层阈值估计，在保留全局阈值兼容性的同时，为癌种、中心、组织类型等元数据分组写出独立 warning/fail 区间和审计记录。
+
+### 结构化需求
+
+- 版本号升级为 `v0.60.0`。
+- `build_qc_reference_distribution()` 新增可选 `stratify_by` 参数，接受一个或多个 dot-path 字段，例如 `metadata.cancer_type`、`metadata.center_id` 或 `metadata.tissue_type`。
+- 未传 `stratify_by` 时，必须保持既有全局 `metrics`、`outlier_policy` 和 `outlier_audit` 行为兼容。
+- 传入 `stratify_by` 时，输出 JSON 必须新增 `stratification` 和 `strata` 字段：记录启用状态、分层字段、分层数量、每个 stratum 的字段值、样本数、metric 阈值和分层 outlier audit。
+- 每个 stratum 必须使用与全局一致的 estimator、outlier policy 和 `min_samples` 规则独立估计阈值；某个 stratum 的某个 metric 样本数不足时必须显式报错，不得回退到全局阈值。
+- 分层字段缺失、为 `null`、为空字符串或值类型不适合做分组时，必须显式报错，避免静默把样本归入未知组。
+- CLI `build-qc-reference` 新增可重复参数 `--stratify-by <dot.path>`。
+- Prior manifest 的 `qc_reference_distribution` artifact metadata 应记录分层字段和分层数量，便于后续审计。
+- 新增/更新测试覆盖：函数级分层阈值输出、缺失分层字段显式失败、CLI 可写出分层 reference、prior artifact metadata 记录 stratum 信息。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只实现 reference distribution artifact 的显式分层阈值估计和审计，不改变现有 QC engine 的默认消费逻辑；生成/QC 仍默认消费全局 `metrics`。
+- 本次版本不实现自动选择最匹配 stratum 的运行时 QC policy、不实现人工复核工作流，也不实现 mask class 内部像素级分层阈值。
+
 ## v0.59.0 - 2026-05-23
 
 ### 用户需求
