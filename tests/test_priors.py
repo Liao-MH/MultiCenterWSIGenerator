@@ -25,25 +25,25 @@ class PriorArtifactTests(unittest.TestCase):
         paths = {}
         for name, payload in {
             "layout_mask_prior": {
-                "schema_version": "v0.41.0",
+                "schema_version": "v0.42.0",
                 "prior_type": "layout_mask_prior",
                 "sample_count": 2,
                 "non_background_fraction": 0.75,
             },
             "style_prior": {
-                "schema_version": "v0.41.0",
+                "schema_version": "v0.42.0",
                 "prior_type": "style_prior",
                 "sample_count": 2,
                 "rgb_statistics": {"mean_rgb": [180.0, 120.0, 160.0]},
             },
             "texture_prior": {
-                "schema_version": "v0.41.0",
+                "schema_version": "v0.42.0",
                 "prior_type": "texture_prior",
                 "embedding_count": 4,
                 "cluster_count": 2,
             },
             "qc_reference_distribution": {
-                "schema_version": "v0.41.0",
+                "schema_version": "v0.42.0",
                 "source": "qc_report_metric_distribution",
                 "sample_count": 3,
                 "metrics": {
@@ -63,7 +63,7 @@ class PriorArtifactTests(unittest.TestCase):
     def build_manifest(self, root: Path) -> dict:
         artifact_paths = self.write_artifacts(root)
         return {
-            "schema_version": "v0.41.0",
+            "schema_version": "v0.42.0",
             "prior_id": "prior-demo",
             "created_at": "2026-05-23T10:00:00Z",
             "random_seed": 7,
@@ -87,7 +87,7 @@ class PriorArtifactTests(unittest.TestCase):
 
             loaded = load_prior_manifest(manifest_path, verify_files=True)
 
-        self.assertEqual(loaded["schema_version"], "v0.41.0")
+        self.assertEqual(loaded["schema_version"], "v0.42.0")
         self.assertEqual(loaded["prior_id"], "prior-demo")
         self.assertEqual(loaded["random_seed"], 7)
         self.assertEqual(
@@ -179,7 +179,7 @@ class PriorArtifactTests(unittest.TestCase):
             manifest_path = output_dir / "prior_manifest.json"
             loaded = load_prior_manifest(manifest_path, verify_files=True)
 
-        self.assertEqual(manifest["schema_version"], "v0.41.0")
+        self.assertEqual(manifest["schema_version"], "v0.42.0")
         self.assertEqual(loaded["created_at"], "2026-05-23T12:00:00Z")
         self.assertEqual(loaded["input_data"]["dataset_id"], "demo")
         self.assertEqual(loaded["input_data"]["manifest_path"], "inputs/manifest.json")
@@ -190,7 +190,7 @@ class PriorArtifactTests(unittest.TestCase):
         )
         self.assertEqual(
             loaded["artifacts"]["style_prior"]["metadata"]["artifact_schema_version"],
-            "v0.41.0",
+            "v0.42.0",
         )
         self.assertEqual(
             loaded["artifacts"]["texture_prior"]["metadata"]["cluster_count"],
@@ -208,7 +208,7 @@ class PriorArtifactTests(unittest.TestCase):
             artifact_paths["style_prior"].write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.41.0",
+                        "schema_version": "v0.42.0",
                         "prior_type": "layout_mask_prior",
                     }
                 ),

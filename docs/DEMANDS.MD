@@ -1,5 +1,26 @@
 # DEMANDS
 
+## v0.42.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐本地任务取消的 CLI 入口：既然 UI job runner 已支持 queued job 取消，`he-wsi-gen` 也应提供可复现命令来把已排队任务显式标记为 `cancelled`。
+
+### 结构化需求
+
+- 版本号升级为 `v0.42.0`。
+- CLI 新增 `cancel-local-job <job_root> --job-id <id> [--message <message>]`。
+- `cancel-local-job` 必须复用 `JobRunner.cancel_job()`，只允许取消 `queued` job；未知 job、非法 job id 或非 queued 状态必须显式报错并返回非零退出码。
+- 取消成功时必须持久化 `job.json`、写空 `stdout.txt` / `stderr.txt`，并在 stdout 输出包含 `local job cancelled` 和记录路径的信息。
+- 新增/更新测试覆盖 CLI 取消成功路径和非 queued job 的失败路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只暴露 queued job 的显式取消入口，不实现运行中进程终止、后台 daemon、并发队列或跨机器调度。
+- `run-local-job` 仍是同步执行命令；取消命令用于已经持久化但尚未运行的 queued job。
+
 ## v0.41.0 - 2026-05-23
 
 ### 用户需求

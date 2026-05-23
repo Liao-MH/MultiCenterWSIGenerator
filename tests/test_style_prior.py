@@ -30,7 +30,7 @@ class StylePriorTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.41.0",
+            "schema_version": "v0.42.0",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -65,7 +65,7 @@ class StylePriorTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.41.0",
+            "schema_version": "v0.42.0",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -91,7 +91,7 @@ class StylePriorTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.41.0",
+            "schema_version": "v0.42.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -144,7 +144,7 @@ class StylePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(style_prior, saved)
-        self.assertEqual(style_prior["schema_version"], "v0.41.0")
+        self.assertEqual(style_prior["schema_version"], "v0.42.0")
         self.assertEqual(style_prior["prior_type"], "style_prior")
         self.assertEqual(style_prior["source"]["training_index_path"], str(index_path))
         self.assertEqual(style_prior["source"]["batch_size"], 2)

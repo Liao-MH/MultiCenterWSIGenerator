@@ -1,5 +1,44 @@
 # CHANGELOG
 
+## v0.42.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐本地任务取消的 CLI 入口，使已排队 job 可以通过可复现命令显式持久化为 `cancelled`。
+
+### 已做改动
+
+- 版本号升级到 `v0.42.0`。
+- CLI 新增 `cancel-local-job <job_root> --job-id <id> [--message <message>]`。
+- `cancel-local-job` 复用 `JobRunner.cancel_job()`，仅允许取消 queued job；非 queued job、未知 job 或非法 job id 会返回非零退出码并输出明确错误。
+- 取消成功时写出 `job.json`、空 `stdout.txt` / `stderr.txt`，并在 stdout 输出 `local job cancelled` 和记录路径。
+- 新增 CLI 取消成功路径和非 queued job 失败路径测试。
+- 同步更新 README、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `tests/test_job_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.42.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_job_runner.JobRunnerTests.test_cli_cancels_queued_local_job tests.test_job_runner.JobRunnerTests.test_cli_rejects_cancelling_non_queued_local_job -v`
+- `PYTHONPATH=src python -m unittest tests.test_job_runner tests.test_version tests.test_cli -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`（129 tests passed, 21 skipped）
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+
 ## v0.41.0 - 2026-05-23
 
 ### 用户需求

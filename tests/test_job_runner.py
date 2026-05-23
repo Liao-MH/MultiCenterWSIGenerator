@@ -128,6 +128,87 @@ class JobRunnerTests(unittest.TestCase):
         self.assertIn("local job completed", result.stdout)
         self.assertEqual(record["status"], "completed")
 
+    def test_cli_cancels_queued_local_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_root = Path(tmpdir) / "jobs"
+            runner = JobRunner(job_root)
+            runner.create_job(
+                job_id="job-cli-cancel",
+                command=[sys.executable, "-c", "print('should stay queued')"],
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "cancel-local-job",
+                    str(job_root),
+                    "--job-id",
+                    "job-cli-cancel",
+                    "--message",
+                    "cancelled from cli",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            record = json.loads(
+                (job_root / "job-cli-cancel" / "job.json").read_text(encoding="utf-8")
+            )
+            stdout = (job_root / "job-cli-cancel" / "stdout.txt").read_text(encoding="utf-8")
+            stderr = (job_root / "job-cli-cancel" / "stderr.txt").read_text(encoding="utf-8")
+
+        self.assertIn("local job cancelled", result.stdout)
+        self.assertEqual(record["status"], "cancelled")
+        self.assertEqual(record["message"], "cancelled from cli")
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "")
+
+    def test_cli_rejects_cancelling_non_queued_local_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_root = Path(tmpdir) / "jobs"
+            runner = JobRunner(job_root)
+            runner.create_job(
+                job_id="job-cli-completed",
+                command=[sys.executable, "-c", "print('already done')"],
+            )
+            runner.run_job("job-cli-completed")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "cancel-local-job",
+                    str(job_root),
+                    "--job-id",
+                    "job-cli-completed",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            record = json.loads(
+                (job_root / "job-cli-completed" / "job.json").read_text(encoding="utf-8")
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not queued", result.stderr)
+        self.assertEqual(record["status"], "completed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ class VersionTests(unittest.TestCase):
         version_file = (repo_root / "VERSION").read_text(encoding="utf-8").strip()
 
         self.assertEqual(version_file, PROJECT_VERSION)
-        self.assertEqual(PROJECT_VERSION, "v0.41.0")
+        self.assertEqual(PROJECT_VERSION, "v0.42.0")
 
     def test_pyproject_version_matches_project_version_without_v_prefix(self):
         repo_root = Path(__file__).resolve().parents[1]

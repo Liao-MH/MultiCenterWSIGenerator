@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class QCReferenceTests(unittest.TestCase):
     def qc_report(self, generated_id: str, red: float, sharpness: float, tissue_fraction: float) -> dict:
         return {
-            "schema_version": "v0.41.0",
+            "schema_version": "v0.42.0",
             "generated_id": generated_id,
             "overall_status": "pass",
             "levels": {
@@ -63,7 +63,7 @@ class QCReferenceTests(unittest.TestCase):
             )
             written = json.loads(output_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(reference["schema_version"], "v0.41.0")
+        self.assertEqual(reference["schema_version"], "v0.42.0")
         self.assertEqual(reference["sample_count"], 4)
         self.assertEqual(reference["metrics"]["mean_red"]["warning_min"], 100.0)
         self.assertEqual(reference["metrics"]["mean_red"]["warning_max"], 160.0)

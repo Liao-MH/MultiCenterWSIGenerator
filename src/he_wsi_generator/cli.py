@@ -514,6 +514,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     job_parser.add_argument("job_root", help="Directory used to store local job records.")
     job_parser.add_argument("--job-id", required=True, help="Unique local job id.")
+
+    cancel_job_parser = subparsers.add_parser(
+        "cancel-local-job",
+        help="Cancel a queued persisted local command job.",
+    )
+    cancel_job_parser.add_argument("job_root", help="Directory used to store local job records.")
+    cancel_job_parser.add_argument("--job-id", required=True, help="Queued local job id to cancel.")
+    cancel_job_parser.add_argument(
+        "--message",
+        default="job cancelled",
+        help="Cancellation message persisted in the job record.",
+    )
     return parser
 
 
@@ -913,6 +925,15 @@ def main(argv: list[str] | None = None) -> int:
         except (UIUnavailableError, ValueError) as exc:
             print(str(exc), file=sys.stderr)
             return 1
+
+    if args.command == "cancel-local-job":
+        try:
+            record = JobRunner(args.job_root).cancel_job(args.job_id, message=args.message)
+        except JobRunnerError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"local job cancelled: {record['record_path']}")
+        return 0
 
     parser.error(f"unknown command {args.command!r}")
     return 2
