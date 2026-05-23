@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from ..constants import PROJECT_VERSION
+from ..schemas import ValidationError, load_document
 
 
 def create_default_ui_config() -> dict:
@@ -72,15 +73,46 @@ def save_ui_config(config: dict, path: str | Path) -> Path:
     _validate_ui_config(config)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    suffix = target.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        payload = _dump_yaml(config)
+    else:
+        payload = json.dumps(config, indent=2)
+    try:
+        target.write_text(payload.rstrip() + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(str(exc)) from exc
     return target
 
 
 def load_ui_config(path: str | Path) -> dict:
     source = Path(path)
-    data = json.loads(source.read_text(encoding="utf-8"))
+    if source.suffix.lower() in {".yaml", ".yml"}:
+        try:
+            data = load_document(source)
+        except ValidationError as exc:
+            raise ValueError(str(exc)) from exc
+    else:
+        try:
+            text = source.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{source} is not valid JSON: {exc.msg}") from exc
     _validate_ui_config(data)
     return data
+
+
+def _dump_yaml(config: dict) -> str:
+    try:
+        import yaml  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ValueError(
+            "YAML UI configs require PyYAML; install the optional yaml dependency or use JSON"
+        ) from exc
+    return yaml.safe_dump(config, sort_keys=False)
 
 
 def _validate_ui_config(config: dict) -> None:

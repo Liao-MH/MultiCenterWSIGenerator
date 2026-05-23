@@ -3,8 +3,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from he_wsi_generator.ui.config import (
     create_default_ui_config,
@@ -26,7 +28,7 @@ class UITests(unittest.TestCase):
     def test_default_ui_config_contains_single_page_sections(self):
         config = create_default_ui_config()
 
-        self.assertEqual(config["schema_version"], "v0.46.0")
+        self.assertEqual(config["schema_version"], "v0.47.0")
         self.assertEqual(
             list(config["sections"]),
             [
@@ -56,6 +58,34 @@ class UITests(unittest.TestCase):
             "cancelled",
         ])
 
+    def test_ui_config_yaml_roundtrip_uses_optional_yaml_dependency(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ui-config.yaml"
+            config = create_default_ui_config()
+            yaml_module = types.ModuleType("yaml")
+            yaml_module.safe_dump = lambda data, sort_keys=False: json.dumps(data, indent=2)  # type: ignore[assignment]
+            yaml_module.safe_load = lambda text: json.loads(text)  # type: ignore[assignment]
+
+            with patch.dict(sys.modules, {"yaml": yaml_module}):
+                save_ui_config(config, path)
+                loaded = load_ui_config(path)
+
+        self.assertEqual(loaded["schema_version"], "v0.47.0")
+        self.assertEqual(loaded["sections"]["qc_output"]["status_levels"], ["pass", "warning", "fail"])
+
+    def test_ui_config_yaml_requires_optional_dependency(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ui-config.yaml"
+            config = create_default_ui_config()
+
+            try:
+                import yaml  # noqa: F401
+            except ImportError:
+                with self.assertRaisesRegex(ValueError, "PyYAML"):
+                    save_ui_config(config, path)
+            else:
+                self.assertIsNotNone(yaml)
+
     def test_job_state_store_tracks_valid_transitions(self):
         store = JobStateStore()
 
@@ -80,7 +110,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.46.0",
+                        "schema_version": "v0.47.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -150,7 +180,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
-        self.assertEqual(config["schema_version"], "v0.46.0")
+        self.assertEqual(config["schema_version"], "v0.47.0")
 
     def test_cli_inspects_output_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -160,7 +190,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.46.0",
+                        "schema_version": "v0.47.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -226,7 +256,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.46.0",
+                        "schema_version": "v0.47.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {

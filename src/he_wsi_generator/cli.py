@@ -506,15 +506,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui_config_parser = subparsers.add_parser(
         "write-ui-config",
-        help="Write the default single-page console UI config JSON.",
+        help="Write the default single-page console UI config JSON or YAML.",
     )
-    ui_config_parser.add_argument("output", help="Destination UI config JSON path.")
+    ui_config_parser.add_argument("output", help="Destination UI config JSON or YAML path.")
 
     launch_ui_parser = subparsers.add_parser(
         "launch-ui",
         help="Launch the optional PySide6 single-page desktop console.",
     )
-    launch_ui_parser.add_argument("--config", help="Optional UI config JSON path.")
+    launch_ui_parser.add_argument("--config", help="Optional UI config JSON or YAML path.")
 
     job_parser = subparsers.add_parser(
         "run-local-job",

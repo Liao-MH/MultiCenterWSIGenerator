@@ -1,5 +1,25 @@
 # DEMANDS
 
+## v0.47.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐 UI 配置的 YAML 支持：`write-ui-config` 和 `launch-ui` 相关配置应能按路径后缀读写 JSON/YAML，并在缺少 PyYAML 时显式报错。
+
+### 结构化需求
+
+- 版本号升级为 `v0.47.0`。
+- `save_ui_config()` 必须根据目标路径后缀写出 JSON 或 YAML；`.yaml` / `.yml` 路径需要使用 PyYAML，缺失依赖时必须显式报错。
+- `load_ui_config()` 必须根据输入路径后缀读取 JSON 或 YAML；`.yaml` / `.yml` 路径需要使用 PyYAML，缺失依赖时必须显式报错，不得静默把 YAML 当作 JSON。
+- 新增/更新测试覆盖 JSON roundtrip、YAML roundtrip 和 YAML 缺依赖错误路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只扩展 UI 配置文件格式支持，不实现通用 YAML 配置树、复杂标签或多文档 YAML。
+- YAML 仍是可选依赖能力；未安装 PyYAML 时，涉及 YAML 的读写必须明确失败，而不是隐式降级为 JSON。
+
 ## v0.46.0 - 2026-05-23
 
 ### 用户需求

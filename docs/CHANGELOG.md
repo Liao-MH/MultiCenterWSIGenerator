@@ -1,5 +1,38 @@
 # CHANGELOG
 
+## v0.47.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐 UI 配置的 YAML 支持，让 `write-ui-config` / `launch-ui` 相关配置能按路径后缀读写 JSON/YAML，并在缺少 PyYAML 时显式报错。
+
+### 已做改动
+
+- 版本号升级到 `v0.47.0`。
+- `src/he_wsi_generator/ui/config.py` 按路径后缀支持 JSON/YAML 读写；`.yaml` / `.yml` 路径在缺少 PyYAML 时会显式报错。
+- `tests/test_ui.py` 新增 YAML roundtrip 与缺依赖失败路径测试。
+- README 同步更新 UI 配置格式说明和 YAML 使用示例。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/ui/config.py`
+- `tests/test_ui.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.47.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_ui tests.test_version tests.test_cli -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+
 ## v0.46.0 - 2026-05-23
 
 ### 用户需求
