@@ -41,7 +41,62 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.60.0",
+                "schema_version": "v0.61.0",
+                "prior_id": "prior-smoke",
+                "created_at": "2026-05-23T13:00:00Z",
+                "random_seed": 17,
+                "input_data": {
+                    "dataset_id": "demo",
+                    "manifest_path": "inputs/manifest.json",
+                    "training_data_version": "train-v1",
+                    "wsi_ids": ["slide-001"],
+                },
+                "artifacts": artifacts,
+            },
+        )
+
+    def create_stratified_qc_prior_manifest(self, root: Path) -> Path:
+        artifacts = {}
+        for name, payload in {
+            "layout_mask_prior": {"area_fraction": 0.55},
+            "style_prior": {"mean_rgb": [186, 126, 166]},
+            "texture_prior": {"cluster_count": 3},
+            "qc_reference_distribution": {
+                "stratification": {
+                    "enabled": True,
+                    "fields": ["metadata.cancer_type"],
+                    "stratum_count": 1,
+                },
+                "strata": {
+                    "metadata.cancer_type=breast_cancer": {
+                        "group_values": {"metadata.cancer_type": "breast_cancer"},
+                        "metrics": {
+                            "mask_tissue_fraction": {
+                                "warning_min": 0.0,
+                                "warning_max": 1.0,
+                                "fail_min": 0.0,
+                                "fail_max": 1.0,
+                            }
+                        },
+                    }
+                },
+                "metrics": {
+                    "mask_tissue_fraction": {
+                        "warning_min": 0.95,
+                        "warning_max": 1.0,
+                        "fail_min": 0.9,
+                        "fail_max": 1.0,
+                    }
+                },
+            },
+        }.items():
+            path = root / f"{name}.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            artifacts[name] = create_prior_artifact_entry(path, kind="json", metadata={})
+        return save_prior_manifest(
+            root,
+            {
+                "schema_version": "v0.61.0",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -60,7 +115,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.60.0",
+                    "schema_version": "v0.61.0",
                     "model_family": "latent_diffusion_unet",
                     "status": "trained",
                     "usable_for_inference": True,
@@ -75,7 +130,7 @@ class GenerationRunnerTests(unittest.TestCase):
 
     def generation_config(self, canvas_size_40x: list[int] | None = None) -> dict:
         config = {
-            "schema_version": "v0.60.0",
+            "schema_version": "v0.61.0",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -109,12 +164,16 @@ class GenerationRunnerTests(unittest.TestCase):
                 "record_count": 1,
                 "source_backend": "openslide",
                 "thumbnail_max_size": [512, 512],
-                "records": [
-                    {
-                        "wsi_id": "slide-001",
-                        "tissue_fraction": 0.375,
-                        "bounding_box_xywh": [8, 4, 32, 24],
-                        "connected_component_count": 3,
+                        "records": [
+                            {
+                                "wsi_id": "slide-001",
+                                "manifest": {
+                                    "cancer_type": "breast_cancer",
+                                    "tissue_type": "breast",
+                                },
+                                "tissue_fraction": 0.375,
+                                "bounding_box_xywh": [8, 4, 32, 24],
+                                "connected_component_count": 3,
                     }
                 ],
             }
@@ -134,7 +193,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.60.0",
+                    "schema_version": "v0.61.0",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T15:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -185,7 +244,7 @@ class GenerationRunnerTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.60.0",
+                    "schema_version": "v0.61.0",
                     "artifact_type": "sampled_layout_mask",
                     "created_at": "2026-05-23T16:00:00Z",
                     "sample_id": "layout-smoke-001",
@@ -332,6 +391,33 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertEqual(metadata["generation"]["condition_summary"]["tile_origin_40x"], [128, 256])
         self.assertEqual(run_summary["condition_packet"]["path"], str(condition_packet_path))
         self.assertEqual(run_summary["condition_packet"]["summary"]["cascade_level"], "1/1")
+
+    def test_run_smoke_generation_uses_condition_summary_for_stratified_qc_reference(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_stratified_qc_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(root, include_tissue_overview=True)
+            output_root = root / "generated" / "gen-stratified-qc"
+
+            result = run_smoke_generation(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-stratified-qc",
+                condition_packet_path=condition_packet_path,
+            )
+            qc = validate_qc_report(
+                json.loads(Path(result["qc_json_path"]).read_text(encoding="utf-8"))
+            )
+
+        mask_metrics = {metric["name"]: metric for metric in qc["levels"]["mask_region"]["metrics"]}
+        reference = mask_metrics["mask_tissue_fraction"]["reference"]
+        self.assertEqual(mask_metrics["mask_tissue_fraction"]["status"], "pass")
+        self.assertEqual(reference["selection"], "stratified")
+        self.assertEqual(reference["stratum_key"], "metadata.cancer_type=breast_cancer")
+        self.assertEqual(reference["group_values"], {"metadata.cancer_type": "breast_cancer"})
 
     def test_run_smoke_generation_uses_sampled_layout_mask_condition(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -516,7 +602,7 @@ class GenerationRunnerTests(unittest.TestCase):
             checkpoint_manifest_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.60.0",
+                        "schema_version": "v0.61.0",
                         "model_family": "latent_diffusion_unet",
                         "status": "not_trained",
                         "usable_for_inference": False,

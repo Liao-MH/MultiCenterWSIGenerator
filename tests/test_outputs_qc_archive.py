@@ -26,9 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class OutputQCArchiveTests(unittest.TestCase):
     def metadata_payload(self, root: Path, qc_path: Path) -> dict:
         return {
-            "schema_version": "v0.60.0",
+            "schema_version": "v0.61.0",
             "generated_id": "gen-001",
-            "version": "v0.60.0",
+            "version": "v0.61.0",
             "created_at": "2026-05-23T12:00:00",
             "output": {
                 "wsi_path": str(root / "generated.ome.tiff"),
@@ -491,6 +491,125 @@ class OutputQCArchiveTests(unittest.TestCase):
         self.assertEqual(mask_metrics["mask_tissue_fraction"]["status"], "fail")
         self.assertEqual(wsi_metrics["mean_red"]["reference"]["warning_min"], 120)
 
+    def test_build_qc_report_uses_matching_stratified_reference_distribution(self):
+        levels = [np.ones((8, 8, 3), dtype=np.uint8) * 100]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wsi_path = root / "generated.ome.tiff"
+            mask_path = root / "generated_mask" / "mask.npy"
+            pyramid_report = write_pyramid_ome_tiff(levels, wsi_path)
+            mask_path.parent.mkdir(parents=True)
+            np.save(mask_path, np.ones((8, 8), dtype=np.uint8))
+
+            qc = build_qc_report(
+                generated_id="gen-001",
+                wsi_path=wsi_path,
+                mask_path=mask_path,
+                pyramid_report=pyramid_report,
+                non_copy_items=[],
+                qc_reference_context={"metadata.cancer_type": "breast_cancer"},
+                qc_reference_distribution={
+                    "stratification": {
+                        "enabled": True,
+                        "fields": ["metadata.cancer_type"],
+                        "stratum_count": 2,
+                    },
+                    "strata": {
+                        "metadata.cancer_type=breast_cancer": {
+                            "group_values": {"metadata.cancer_type": "breast_cancer"},
+                            "metrics": {
+                                "mean_red": {
+                                    "warning_min": 90,
+                                    "warning_max": 110,
+                                    "fail_min": 80,
+                                    "fail_max": 120,
+                                }
+                            },
+                        },
+                        "metadata.cancer_type=lung_cancer": {
+                            "group_values": {"metadata.cancer_type": "lung_cancer"},
+                            "metrics": {
+                                "mean_red": {
+                                    "warning_min": 150,
+                                    "warning_max": 180,
+                                    "fail_min": 140,
+                                    "fail_max": 190,
+                                }
+                            },
+                        },
+                    },
+                    "metrics": {
+                        "mean_red": {
+                            "warning_min": 150,
+                            "warning_max": 180,
+                            "fail_min": 140,
+                            "fail_max": 190,
+                        }
+                    },
+                },
+            )
+
+        wsi_metrics = {metric["name"]: metric for metric in qc["levels"]["wsi"]["metrics"]}
+        reference = wsi_metrics["mean_red"]["reference"]
+        self.assertEqual(wsi_metrics["mean_red"]["status"], "pass")
+        self.assertEqual(reference["selection"], "stratified")
+        self.assertEqual(reference["stratum_key"], "metadata.cancer_type=breast_cancer")
+        self.assertEqual(reference["group_values"], {"metadata.cancer_type": "breast_cancer"})
+        self.assertEqual(reference["warning_min"], 90)
+
+    def test_build_qc_report_records_global_fallback_when_stratified_context_missing(self):
+        levels = [np.ones((8, 8, 3), dtype=np.uint8) * 100]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wsi_path = root / "generated.ome.tiff"
+            mask_path = root / "generated_mask" / "mask.npy"
+            pyramid_report = write_pyramid_ome_tiff(levels, wsi_path)
+            mask_path.parent.mkdir(parents=True)
+            np.save(mask_path, np.ones((8, 8), dtype=np.uint8))
+
+            qc = build_qc_report(
+                generated_id="gen-001",
+                wsi_path=wsi_path,
+                mask_path=mask_path,
+                pyramid_report=pyramid_report,
+                non_copy_items=[],
+                qc_reference_distribution={
+                    "stratification": {
+                        "enabled": True,
+                        "fields": ["metadata.cancer_type"],
+                        "stratum_count": 1,
+                    },
+                    "strata": {
+                        "metadata.cancer_type=breast_cancer": {
+                            "group_values": {"metadata.cancer_type": "breast_cancer"},
+                            "metrics": {
+                                "mean_red": {
+                                    "warning_min": 90,
+                                    "warning_max": 110,
+                                    "fail_min": 80,
+                                    "fail_max": 120,
+                                }
+                            },
+                        }
+                    },
+                    "metrics": {
+                        "mean_red": {
+                            "warning_min": 120,
+                            "warning_max": 180,
+                            "fail_min": 80,
+                            "fail_max": 220,
+                        }
+                    },
+                },
+            )
+
+        wsi_metrics = {metric["name"]: metric for metric in qc["levels"]["wsi"]["metrics"]}
+        reference = wsi_metrics["mean_red"]["reference"]
+        self.assertEqual(wsi_metrics["mean_red"]["status"], "warning")
+        self.assertEqual(reference["selection"], "global_fallback")
+        self.assertEqual(reference["fallback_reason"], "missing_context_field:metadata.cancer_type")
+        self.assertEqual(reference["stratification_fields"], ["metadata.cancer_type"])
+
     def test_build_qc_report_rejects_invalid_reference_distribution(self):
         levels = [np.ones((2, 2, 3), dtype=np.uint8) * 100]
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -516,6 +635,49 @@ class OutputQCArchiveTests(unittest.TestCase):
                                 "fail_max": 220,
                             }
                         }
+                    },
+                )
+
+    def test_build_qc_report_rejects_invalid_stratified_reference_metrics_path(self):
+        levels = [np.ones((2, 2, 3), dtype=np.uint8) * 100]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wsi_path = root / "generated.ome.tiff"
+            mask_path = root / "mask.npy"
+            pyramid_report = write_pyramid_ome_tiff(levels, wsi_path)
+            np.save(mask_path, np.ones((2, 2), dtype=np.uint8))
+
+            with self.assertRaisesRegex(
+                QCReferenceError,
+                r"qc_reference_distribution\.strata\.metadata\.cancer_type=breast_cancer\.metrics",
+            ):
+                build_qc_report(
+                    generated_id="gen-001",
+                    wsi_path=wsi_path,
+                    mask_path=mask_path,
+                    pyramid_report=pyramid_report,
+                    non_copy_items=[],
+                    qc_reference_context={"metadata.cancer_type": "breast_cancer"},
+                    qc_reference_distribution={
+                        "stratification": {
+                            "enabled": True,
+                            "fields": ["metadata.cancer_type"],
+                            "stratum_count": 1,
+                        },
+                        "strata": {
+                            "metadata.cancer_type=breast_cancer": {
+                                "group_values": {"metadata.cancer_type": "breast_cancer"},
+                                "metrics": [],
+                            }
+                        },
+                        "metrics": {
+                            "mean_red": {
+                                "warning_min": 90,
+                                "warning_max": 110,
+                                "fail_min": 80,
+                                "fail_max": 120,
+                            }
+                        },
                     },
                 )
 

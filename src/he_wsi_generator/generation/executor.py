@@ -108,6 +108,7 @@ def run_smoke_generation(
                 }
             ],
             qc_reference_distribution=_load_qc_reference_distribution(prior_manifest_path),
+            qc_reference_context=_condition_qc_reference_context(condition_packet),
             wsi_tissue_overview_summary=_condition_wsi_tissue_overview(condition_packet),
             sampled_layout_mask_summary=_condition_sampled_layout_mask(condition_packet),
         )
@@ -244,6 +245,7 @@ def run_torch_diffusion_smoke_generation(
                 }
             ],
             qc_reference_distribution=_load_qc_reference_distribution(prior_manifest_path),
+            qc_reference_context=_condition_qc_reference_context(condition_packet),
             wsi_tissue_overview_summary=_condition_wsi_tissue_overview(condition_packet),
             sampled_layout_mask_summary=_condition_sampled_layout_mask(condition_packet),
         )
@@ -584,6 +586,15 @@ def _wsi_tissue_overview_summary(value: Any) -> dict[str, Any]:
                 ),
             }
         )
+        manifest = record.get("manifest")
+        if isinstance(manifest, dict):
+            manifest_summary = {}
+            for key in ("cancer_type", "tissue_type", "center_id", "split"):
+                value = manifest.get(key)
+                if isinstance(value, str) and value:
+                    manifest_summary[key] = value
+            if manifest_summary:
+                summarized_records[-1]["manifest"] = manifest_summary
     return {
         "source": source_value,
         "artifact_path": artifact_path,
@@ -638,6 +649,29 @@ def _condition_sampled_layout_mask(condition_packet: dict[str, Any] | None) -> d
     if condition_packet is None:
         return None
     return condition_packet["summary"].get("sampled_layout_mask")
+
+
+def _condition_qc_reference_context(condition_packet: dict[str, Any] | None) -> dict[str, Any]:
+    if condition_packet is None:
+        return {}
+    overview = condition_packet["summary"].get("wsi_tissue_overview")
+    if not isinstance(overview, dict):
+        return {}
+    records = overview.get("records")
+    if not isinstance(records, list) or not records:
+        return {}
+    first_record = records[0]
+    if not isinstance(first_record, dict):
+        return {}
+    manifest = first_record.get("manifest")
+    if not isinstance(manifest, dict):
+        return {}
+    context = {}
+    for field in ("cancer_type", "tissue_type", "center_id", "split"):
+        value = manifest.get(field)
+        if isinstance(value, str) and value:
+            context[f"metadata.{field}"] = value
+    return context
 
 
 def _conditioned_or_smoke_mask(

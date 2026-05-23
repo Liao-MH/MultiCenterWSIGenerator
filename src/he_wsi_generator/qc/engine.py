@@ -17,12 +17,16 @@ def build_qc_report(
     pyramid_report: dict[str, Any],
     non_copy_items: list[dict[str, Any]],
     qc_reference_distribution: dict[str, Any] | None = None,
+    qc_reference_context: dict[str, Any] | None = None,
     wsi_tissue_overview_summary: dict[str, Any] | None = None,
     sampled_layout_mask_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     wsi_path = Path(wsi_path)
     mask_path = Path(mask_path)
-    reference = _validate_qc_reference_distribution(qc_reference_distribution)
+    reference = _select_qc_reference_thresholds(
+        qc_reference_distribution,
+        qc_reference_context,
+    )
     file_metrics = [
         {
             "name": "wsi_file_exists",
@@ -100,20 +104,76 @@ def _combine_status(metrics: list[dict[str, Any]]) -> str:
     return "pass"
 
 
-def _validate_qc_reference_distribution(reference: dict[str, Any] | None) -> dict[str, dict[str, float]]:
+def _select_qc_reference_thresholds(
+    reference: dict[str, Any] | None,
+    context: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
     if reference is None:
         return {}
     if not isinstance(reference, dict):
         raise QCReferenceError("qc_reference_distribution must be an object")
-    metrics = reference.get("metrics")
+    global_thresholds = _validate_qc_reference_metrics(reference.get("metrics"), "metrics")
+    stratification = reference.get("stratification")
+    if not isinstance(stratification, dict) or not stratification.get("enabled"):
+        return {
+            name: {**threshold, "selection": "global"}
+            for name, threshold in global_thresholds.items()
+        }
+
+    fields = stratification.get("fields")
+    if not isinstance(fields, list) or not all(isinstance(field, str) and field for field in fields):
+        raise QCReferenceError("qc_reference_distribution.stratification.fields must be a list")
+    strata = reference.get("strata")
+    if not isinstance(strata, dict):
+        raise QCReferenceError("qc_reference_distribution.strata must be an object")
+
+    key, fallback_reason = _reference_context_key(fields, context)
+    if key is not None:
+        stratum = strata.get(key)
+        if stratum is not None:
+            if not isinstance(stratum, dict):
+                raise QCReferenceError(f"qc_reference_distribution.strata.{key} must be an object")
+            group_values = stratum.get("group_values")
+            if not isinstance(group_values, dict):
+                raise QCReferenceError(
+                    f"qc_reference_distribution.strata.{key}.group_values must be an object"
+                )
+            stratum_thresholds = _validate_qc_reference_metrics(
+                stratum.get("metrics"),
+                f"strata.{key}.metrics",
+            )
+            return {
+                name: {
+                    **threshold,
+                    "selection": "stratified",
+                    "stratum_key": key,
+                    "stratification_fields": list(fields),
+                    "group_values": dict(group_values),
+                }
+                for name, threshold in stratum_thresholds.items()
+            }
+        fallback_reason = f"missing_stratum:{key}"
+
+    return {
+        name: {
+            **threshold,
+            "selection": "global_fallback",
+            "fallback_reason": fallback_reason,
+            "stratification_fields": list(fields),
+        }
+        for name, threshold in global_thresholds.items()
+    }
+
+
+def _validate_qc_reference_metrics(metrics: Any, path: str) -> dict[str, dict[str, float]]:
     if not isinstance(metrics, dict):
-        raise QCReferenceError("qc_reference_distribution.metrics must be an object")
+        raise QCReferenceError(f"qc_reference_distribution.{path} must be an object")
     validated: dict[str, dict[str, float]] = {}
     for name, threshold in metrics.items():
         if not isinstance(name, str) or name == "":
             raise QCReferenceError("qc_reference_distribution metric names must be non-empty strings")
         if not isinstance(threshold, dict):
-            raise QCReferenceError(f"qc_reference_distribution.metrics.{name} must be an object")
+            raise QCReferenceError(f"qc_reference_distribution.{path}.{name} must be an object")
         parsed = {}
         for key in ("warning_min", "warning_max", "fail_min", "fail_max"):
             value = threshold.get(key)
@@ -133,9 +193,33 @@ def _validate_qc_reference_distribution(reference: dict[str, Any] | None) -> dic
     return validated
 
 
+def _reference_context_key(
+    fields: list[str],
+    context: dict[str, Any] | None,
+) -> tuple[str | None, str]:
+    if not isinstance(context, dict):
+        return None, f"missing_context_field:{fields[0]}"
+    key_parts = []
+    for field in fields:
+        if field not in context:
+            return None, f"missing_context_field:{field}"
+        value = context[field]
+        if value is None or isinstance(value, bool) or isinstance(value, (dict, list)):
+            return None, f"invalid_context_field:{field}"
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None, f"invalid_context_field:{field}"
+            value = normalized
+        elif not isinstance(value, (int, float)):
+            return None, f"invalid_context_field:{field}"
+        key_parts.append(f"{field}={value}")
+    return "|".join(key_parts), ""
+
+
 def _apply_reference_thresholds(
     metrics: list[dict[str, Any]],
-    reference: dict[str, dict[str, float]],
+    reference: dict[str, dict[str, Any]],
 ) -> None:
     for metric in metrics:
         threshold = reference.get(metric["name"])
@@ -159,6 +243,9 @@ def _apply_reference_thresholds(
             "fail_max": threshold["fail_max"],
             "source": "qc_reference_distribution",
         }
+        for key in ("selection", "stratum_key", "stratification_fields", "group_values", "fallback_reason"):
+            if key in threshold:
+                metric["reference"][key] = threshold[key]
 
 
 def _image_quality_metrics(wsi_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[int, int] | None]:

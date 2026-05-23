@@ -40,7 +40,7 @@ class WSITissueOverviewTests(unittest.TestCase):
 
     def manifest(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.60.0",
+            "schema_version": "v0.61.0",
             "dataset_id": "demo-tissue-overview",
             "created_at": "2026-05-23T16:00:00Z",
             "records": [
@@ -49,6 +49,7 @@ class WSITissueOverviewTests(unittest.TestCase):
                     "wsi_path": str(slide_path),
                     "cancer_type": "breast_cancer",
                     "tissue_type": "breast",
+                    "center_id": "center-a",
                     "split": "train",
                     "annotations": [],
                 }
@@ -72,13 +73,23 @@ class WSITissueOverviewTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(overview, saved)
-        self.assertEqual(overview["schema_version"], "v0.60.0")
+        self.assertEqual(overview["schema_version"], "v0.61.0")
         self.assertEqual(overview["artifact_type"], "wsi_tissue_overview")
         self.assertEqual(overview["source"]["manifest_path"], str(manifest_path))
         self.assertEqual(overview["source"]["backend"], "fixture-image")
         self.assertEqual(overview["record_count"], 1)
         record = overview["records"][0]
         self.assertEqual(record["wsi_id"], "slide-001")
+        self.assertEqual(
+            record["manifest"],
+            {
+                "split": "train",
+                "cancer_type": "breast_cancer",
+                "tissue_type": "breast",
+                "center_id": "center-a",
+                "annotation_count": 0,
+            },
+        )
         self.assertEqual(record["slide"]["dimensions"], [16, 12])
         self.assertEqual(record["thumbnail"]["size"], [16, 12])
         self.assertEqual(record["thumbnail"]["rgb_mean"], [223.5, 203.5, 218.5])

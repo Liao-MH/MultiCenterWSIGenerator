@@ -213,6 +213,19 @@ def _wsi_tissue_overview_condition(
                 ),
             }
         )
+        manifest = record.get("manifest")
+        if isinstance(manifest, dict):
+            # Only stable manifest fields used by runtime QC stratification are
+            # propagated. Missing or non-string optional fields are omitted so
+            # they trigger an audited global fallback later instead of creating
+            # ambiguous stratum keys.
+            manifest_summary = {}
+            for key in ("cancer_type", "tissue_type", "center_id", "split"):
+                value = manifest.get(key)
+                if isinstance(value, str) and value:
+                    manifest_summary[key] = value
+            if manifest_summary:
+                summarized_records[-1]["manifest"] = manifest_summary
     return {
         "source": "wsi_tissue_overview",
         "artifact_path": prior["artifacts"]["wsi_tissue_overview"]["path"],

@@ -1,5 +1,30 @@
 # DEMANDS
 
+## v0.61.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本在 v0.60.0 的分层 `qc_reference_distribution` artifact 基础上，推进运行时消费能力：生成/QC 链路需要能根据当前样本的可追踪上下文选择匹配 stratum 阈值，而不是永远只使用全局 `metrics`。
+
+### 结构化需求
+
+- 版本号升级为 `v0.61.0`。
+- `build_qc_report()` 新增可选 `qc_reference_context` 参数，用于提供运行时分层字段值，例如 `metadata.cancer_type`、`metadata.tissue_type` 或 `metadata.center_id`。
+- 当 `qc_reference_distribution.stratification.enabled=true` 且 context 完整匹配某个 stratum 时，QC engine 必须使用该 stratum 的 `metrics` 判定阈值。
+- 被分层阈值判定的 metric 必须在 `reference` 字段记录：`source=qc_reference_distribution`、`selection=stratified`、`stratum_key`、`stratification_fields` 和 `group_values`。
+- 当分层 reference 启用但 context 缺失、不完整或找不到匹配 stratum 时，QC engine 必须显式回退到全局 `metrics`，并在 metric reference 中记录 `selection=global_fallback` 与 fallback reason，避免静默误判。
+- `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 必须从 condition packet summary 中提取可追踪 QC context 并传入 QC engine。
+- Condition packet summary 必须从 `wsi_tissue_overview.records[0].manifest` 保留 `cancer_type`、`tissue_type` 等输入 manifest 元数据，用于运行时 stratum 选择。
+- `build-wsi-tissue-overview` 产物需保留输入 manifest 中的 `center_id`（若存在），并在 condition packet 中只透传 `cancer_type`、`tissue_type`、`center_id`、`split` 这些稳定字符串字段，缺失字段后续应触发带原因的 global fallback 审计。
+- 新增/更新测试覆盖：QC engine 命中分层 stratum、context 缺失时显式 global fallback、smoke generation 使用 condition packet 中的 cancer type 选择分层阈值。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只实现 QC reference 的运行时 stratum 选择和全局 fallback 审计，不实现按 mask class 内部像素级阈值、不实现人工复核工作流，也不改变 reference builder 的分层估计逻辑。
+- 当前 context 主要来自 condition packet 中的 `wsi_tissue_overview` manifest 摘要；若没有 condition packet 或没有匹配字段，系统会使用带审计字段的全局 fallback，而不是终止生成。
+
 ## v0.60.0 - 2026-05-23
 
 ### 用户需求

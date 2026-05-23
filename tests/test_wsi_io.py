@@ -61,7 +61,7 @@ class WSIIOTests(unittest.TestCase):
             tmp_path = Path(tmpdir)
             slide_path = self.create_fixture_slide(tmp_path)
             manifest = {
-                "schema_version": "v0.60.0",
+                "schema_version": "v0.61.0",
                 "dataset_id": "demo",
                 "created_at": "2026-05-23T09:00:00",
                 "records": [
@@ -77,7 +77,7 @@ class WSIIOTests(unittest.TestCase):
 
             audit = audit_manifest(manifest, reader=FixtureImageSlideReader())
 
-        self.assertEqual(audit["schema_version"], "v0.60.0")
+        self.assertEqual(audit["schema_version"], "v0.61.0")
         self.assertEqual(audit["dataset_id"], "demo")
         self.assertEqual(audit["records"][0]["wsi_id"], "slide-001")
         self.assertEqual(audit["records"][0]["dimensions"], [16, 8])
@@ -86,7 +86,7 @@ class WSIIOTests(unittest.TestCase):
 
     def test_audit_manifest_records_read_errors(self):
         manifest = {
-            "schema_version": "v0.60.0",
+            "schema_version": "v0.61.0",
             "dataset_id": "demo",
             "created_at": "2026-05-23T09:00:00",
             "records": [

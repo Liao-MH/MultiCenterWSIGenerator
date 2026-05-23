@@ -1,5 +1,94 @@
 # CHANGELOG
 
+## v0.61.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 用户要求代码开发完成后使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 验证，并确保所有输出能正常交付。
+- 本次版本在 v0.60.0 的分层 `qc_reference_distribution` artifact 基础上，推进运行时消费能力：生成/QC 链路需要能根据当前样本的可追踪上下文选择匹配 stratum 阈值，而不是永远只使用全局 `metrics`。
+
+### 已做改动
+
+- 版本号升级到 `v0.61.0`。
+- `build_qc_report()` 新增可选 `qc_reference_context` 参数，并在启用 `qc_reference_distribution.stratification` 时按 context 构造 exact stratum key。
+- 当 context 匹配 stratum 时，QC metric 使用该 stratum 的阈值，并在 `reference` 中记录 `selection=stratified`、`stratum_key`、`stratification_fields` 和 `group_values`。
+- 当 context 缺失、不完整、非法或找不到 stratum 时，QC metric 显式回退全局阈值，并记录 `selection=global_fallback`、`fallback_reason` 和 `stratification_fields`。
+- 未启用分层 reference 时，QC 仍消费全局 `metrics`，并记录 `selection=global`，保持既有全局阈值行为。
+- `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 从 condition packet summary 提取 `metadata.cancer_type`、`metadata.tissue_type`、`metadata.center_id`、`metadata.split` 作为 QC reference context。
+- `build_generation_condition_packet()` 在 `conditions.layout.wsi_tissue_overview.records[*]` 中保留运行时 QC 分层需要的 manifest 摘要字段。
+- `build-wsi-tissue-overview` 产物在输入 manifest 含 `center_id` 时保留该字段，便于后续按中心分层。
+- 嵌套 stratum metrics 类型错误现在会报告实际 JSON 路径，避免误报成全局 `qc_reference_distribution.metrics`。
+- README 同步说明运行时分层 QC exact-match 选择、global fallback 审计和当前边界。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/generation/conditioning.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/priors/tissue.py`
+- `src/he_wsi_generator/qc/engine.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_generation_runner.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_schemas.py`
+- `tests/test_wsi_tissue_overview.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.61.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- TDD 红灯记录：
+  - 新增 QC engine 分层 reference 测试最初因 `build_qc_report()` 不支持 `qc_reference_context` 而失败。
+  - 新增 context 缺失 fallback 测试最初因 metric reference 未记录 `selection=global_fallback` 而失败。
+  - 新增 smoke generation 分层 QC 测试最初因 condition packet summary 未传入 QC context 而失败。
+  - 新增 condition packet manifest 摘要测试最初因 `conditions.layout.wsi_tissue_overview.records[*]` 未保留 manifest 字段而失败。
+  - 新增 WSI tissue overview `center_id` 测试最初因 artifact 未保留输入 manifest 的 `center_id` 而失败。
+  - 新增嵌套 stratum metrics 错误路径测试最初因报错仍指向全局 `qc_reference_distribution.metrics` 而失败。
+- `PYTHONPATH=src python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_generation_conditioning tests.test_wsi_tissue_overview tests.test_schemas tests.test_ui tests.test_version -v`
+  - 结果：68 个测试通过。
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：178 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 PyTorch 被跳过。
+- `python -m compileall src tests`
+  - 结果：通过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无 whitespace error。
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新构建 v0.61.0 验证链路：
+  - `validate manifest build/validation/v0.61.0-291288/input_manifest.json`
+  - `validate qc build/validation/v0.61.0-291288/reference-qc/qc-reference-291288.json`
+  - `build-wsi-tissue-overview build/validation/v0.61.0-291288/input_manifest.json --backend openslide --thumbnail-max-size 512 --output build/validation/v0.61.0-291288/wsi_tissue_overview.json`
+  - `build-qc-reference build/validation/v0.61.0-291288/reference-qc/qc-reference-291288.json --metric mean_red --metric mask_tissue_fraction --min-samples 1 --estimator robust_mad_z_score --outlier-policy robust_iqr_filter --stratify-by metadata.cancer_type --output build/validation/v0.61.0-291288/qc_reference_distribution.json`
+  - `build-prior-manifest --output-dir build/validation/v0.61.0-291288/prior ... --qc-reference-distribution build/validation/v0.61.0-291288/qc_reference_distribution.json --wsi-tissue-overview build/validation/v0.61.0-291288/wsi_tissue_overview.json`
+  - `validate-prior-manifest build/validation/v0.61.0-291288/prior/prior_manifest.json`
+  - `sample-layout-mask build/validation/v0.61.0-291288/layout_mask_prior.json --output-dir build/validation/v0.61.0-291288/sampled-layout --sample-id 291288-v061-sampled-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview build/validation/v0.61.0-291288/wsi_tissue_overview.json`
+  - `build-condition-packet configs/generation.default.json --prior-manifest build/validation/v0.61.0-291288/prior/prior_manifest.json --output build/validation/v0.61.0-291288/condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask build/validation/v0.61.0-291288/sampled-layout/sampled_layout_mask.json`
+  - `run-generation configs/generation.default.json --backend smoke-cascade --prior-manifest build/validation/v0.61.0-291288/prior/prior_manifest.json --checkpoint-manifest build/validation/v0.61.0-291288/trained-checkpoint.json --output-root build/validation/v0.61.0-291288/generated/gen-291288-smoke-sampled-mask --generated-id gen-291288-smoke-sampled-mask-v061 --condition-packet build/validation/v0.61.0-291288/condition_packet.json`
+  - `validate metadata build/validation/v0.61.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json`
+  - `validate qc build/validation/v0.61.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+  - `inspect-output-summary --metadata build/validation/v0.61.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json --qc build/validation/v0.61.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+- 真实 SVS 验证结果：
+  - `wsi_tissue_overview.json`、`qc_reference_distribution.json`、`prior_manifest.json`、`sampled_layout_mask.json`、`condition_packet.json`、`generation_run.json`、`metadata.json` 与 `qc.json` 均为 `schema_version=v0.61.0`。
+  - `wsi_tissue_overview.records[0].manifest` 保留 `cancer_type=breast_cancer`、`tissue_type=breast`、`center_id=fanhong`、`split=test`。
+  - `condition_packet.conditions.layout.wsi_tissue_overview.records[0].manifest` 保留运行时 QC context 所需字段。
+  - `qc_reference_distribution.stratification.enabled=true`，`fields=["metadata.cancer_type"]`，`stratum_count=1`，包含 `metadata.cancer_type=breast_cancer` stratum。
+  - Prior manifest 的 `qc_reference_distribution` artifact metadata 记录 `stratification_fields=["metadata.cancer_type"]`、`stratum_count=1` 和 `metric_count=2`。
+  - 输出目录 `build/validation/v0.61.0-291288/generated/gen-291288-smoke-sampled-mask/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`generation_run.json` 和 `batch.jsonl`。
+  - `metadata.json` 与 `qc.json` 均通过当前 schema 校验，`inspect-output-summary` 返回 `qc_status=pass`，三级状态 `wsi/tile/mask_region` 均为 `pass`。
+  - `qc.json` 中 `mean_red` 和 `mask_tissue_fraction` 均记录 `reference.selection=stratified`、`stratum_key=metadata.cancer_type=breast_cancer` 和 `group_values={"metadata.cancer_type":"breast_cancer"}`。
+  - `sampled_layout_mask_match_proxy.status=pass`，`value=1.0`；最终 `generated_mask/mask.npy` 与 `sampled_layout_mask.npy` 完全一致，shape 均为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+  - `generated.ome.tiff` 可由 `tifffile` 读取，包含 OME metadata，level count 为 4，首层 shape 为 `[512, 512, 3]`。
+  - `generation_run.json.pyramid_report.chunked_write_audit.writer_backend=tifffile`，`production_streaming=false`。
+  - `batch.jsonl` 包含 1 条 generated sample 索引。
+  - 验证目录大小约 `1.5M`，最终输出目录约 `1.2M`。
+
 ## v0.60.0 - 2026-05-23
 
 ### 用户需求

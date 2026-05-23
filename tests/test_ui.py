@@ -29,7 +29,7 @@ class UITests(unittest.TestCase):
     def test_default_ui_config_contains_single_page_sections(self):
         config = create_default_ui_config()
 
-        self.assertEqual(config["schema_version"], "v0.60.0")
+        self.assertEqual(config["schema_version"], "v0.61.0")
         self.assertEqual(
             list(config["sections"]),
             [
@@ -71,7 +71,7 @@ class UITests(unittest.TestCase):
                 save_ui_config(config, path)
                 loaded = load_ui_config(path)
 
-        self.assertEqual(loaded["schema_version"], "v0.60.0")
+        self.assertEqual(loaded["schema_version"], "v0.61.0")
         self.assertEqual(loaded["sections"]["qc_output"]["status_levels"], ["pass", "warning", "fail"])
 
     def test_ui_config_yaml_requires_optional_dependency(self):
@@ -111,7 +111,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.60.0",
+                        "schema_version": "v0.61.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -181,7 +181,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
-        self.assertEqual(config["schema_version"], "v0.60.0")
+        self.assertEqual(config["schema_version"], "v0.61.0")
 
     def test_cli_writes_yaml_ui_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -195,7 +195,7 @@ class UITests(unittest.TestCase):
                 config = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(result, 0)
-        self.assertEqual(config["schema_version"], "v0.60.0")
+        self.assertEqual(config["schema_version"], "v0.61.0")
 
     def test_cli_launches_ui_with_yaml_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -211,7 +211,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertTrue(launch_mock.called)
-        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.60.0")
+        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.61.0")
 
     def test_cli_inspects_output_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -221,7 +221,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.60.0",
+                        "schema_version": "v0.61.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -287,7 +287,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.60.0",
+                        "schema_version": "v0.61.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {

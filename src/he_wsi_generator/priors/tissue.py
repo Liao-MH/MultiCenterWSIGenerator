@@ -57,6 +57,7 @@ def build_wsi_tissue_overview_from_manifest(
                     "split": manifest_record["split"],
                     "cancer_type": manifest_record["cancer_type"],
                     "tissue_type": manifest_record.get("tissue_type"),
+                    "center_id": manifest_record.get("center_id"),
                     "annotation_count": len(manifest_record.get("annotations", [])),
                 },
                 "thumbnail": {
