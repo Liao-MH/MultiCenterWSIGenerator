@@ -1,0 +1,27 @@
+{
+  "schema_version": "v0.41.0",
+  "random_seed": 0,
+  "model_family": "latent_diffusion_unet",
+  "max_magnification": "40x",
+  "tile_size_40x": [
+    512,
+    512
+  ],
+  "canvas_size_40x": [
+    512,
+    512
+  ],
+  "cascade_levels": [
+    "1/32",
+    "1/16",
+    "1/4",
+    "1/1"
+  ],
+  "structure_anchor": 0.0,
+  "anchor_preset": "fully_de_novo",
+  "style_seed": "auto",
+  "source_wsi_id": null,
+  "sample_steps": 50,
+  "overlap_px_40x": 64,
+  "non_copy_patch_nearest_neighbor_search": false
+}
