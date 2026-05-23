@@ -303,6 +303,72 @@ class JobRunnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not valid JSON", result.stderr)
 
+    def test_cli_lists_local_jobs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_root = Path(tmpdir) / "jobs"
+            runner = JobRunner(job_root)
+            runner.create_job(
+                job_id="job-a",
+                command=[sys.executable, "-c", "print('a')"],
+            )
+            runner.create_job(
+                job_id="job-b",
+                command=[sys.executable, "-c", "print('b')"],
+            )
+            runner.run_job("job-b")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "list-local-jobs",
+                    str(job_root),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            listed = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([record["job_id"] for record in listed], ["job-a", "job-b"])
+        self.assertEqual(listed[0]["status"], "queued")
+        self.assertEqual(listed[1]["status"], "completed")
+
+    def test_cli_rejects_listing_corrupt_local_job_record(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_root = Path(tmpdir) / "jobs"
+            job_dir = job_root / "job-corrupt"
+            job_dir.mkdir(parents=True)
+            (job_dir / "job.json").write_text("{not json", encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "list-local-jobs",
+                    str(job_root),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not valid JSON", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

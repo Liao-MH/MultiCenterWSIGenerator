@@ -533,6 +533,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect_job_parser.add_argument("job_root", help="Directory used to store local job records.")
     inspect_job_parser.add_argument("--job-id", required=True, help="Local job id to inspect.")
+
+    list_job_parser = subparsers.add_parser(
+        "list-local-jobs",
+        help="List persisted local command job records as JSON.",
+    )
+    list_job_parser.add_argument("job_root", help="Directory used to store local job records.")
     return parser
 
 
@@ -949,6 +955,15 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(json.dumps(record, indent=2))
+        return 0
+
+    if args.command == "list-local-jobs":
+        try:
+            records = JobRunner(args.job_root).list_jobs()
+        except JobRunnerError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(json.dumps(records, indent=2))
         return 0
 
     parser.error(f"unknown command {args.command!r}")

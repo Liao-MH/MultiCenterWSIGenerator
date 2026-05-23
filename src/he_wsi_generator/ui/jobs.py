@@ -123,6 +123,22 @@ class JobRunner:
         _validate_record(record)
         return record
 
+    def list_jobs(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for job_dir in sorted(self.job_root.iterdir(), key=lambda path: path.name):
+            if not job_dir.is_dir():
+                continue
+            record_path = job_dir / "job.json"
+            if not record_path.exists():
+                raise JobRunnerError(f"missing job record: {record_path}")
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise JobRunnerError(f"{record_path} is not valid JSON: {exc.msg}") from exc
+            _validate_record(record)
+            records.append(record)
+        return records
+
     def _job_dir(self, job_id: str) -> Path:
         return self.job_root / job_id
 

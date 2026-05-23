@@ -1,5 +1,26 @@
 # DEMANDS
 
+## v0.44.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐本地 job 的批量查看入口：在 `run-local-job`、`cancel-local-job` 和 `inspect-local-job` 之外，再提供一个可复现的 list 命令，直接列出 job_root 下的持久化 job 状态。
+
+### 结构化需求
+
+- 版本号升级为 `v0.44.0`。
+- CLI 新增 `list-local-jobs <job_root>`。
+- `list-local-jobs` 必须读取 job_root 下的持久化 job 记录，并以 JSON 数组输出，便于脚本和人工查看任务状态。
+- `list-local-jobs` 对未知 job、非法 job id 或损坏记录必须显式报错并返回非零退出码，不得静默跳过坏记录。
+- 新增/更新测试覆盖 list 成功路径和损坏记录失败路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只暴露 job 记录批量查看入口，不实现分页、过滤、后台 daemon、并发调度或状态订阅。
+- `list-local-jobs` 只读 job_root 中的持久化记录，不会修改 job 状态。
+
 ## v0.43.0 - 2026-05-23
 
 ### 用户需求

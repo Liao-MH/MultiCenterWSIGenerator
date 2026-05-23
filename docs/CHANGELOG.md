@@ -1,5 +1,44 @@
 # CHANGELOG
 
+## v0.44.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐本地 job 的批量查看入口：在 `run-local-job`、`cancel-local-job` 和 `inspect-local-job` 之外，再提供一个可复现的 list 命令，直接列出 job_root 下的持久化 job 状态。
+
+### 已做改动
+
+- 版本号升级到 `v0.44.0`。
+- CLI 新增 `list-local-jobs <job_root>`。
+- `list-local-jobs` 复用 `JobRunner.list_jobs()` 读取持久化 job record，并以 JSON 数组输出；坏记录不会被静默跳过。
+- 新增 CLI list 成功路径和损坏记录失败路径测试。
+- 同步更新 README、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/ui/jobs.py`
+- `tests/test_job_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.44.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_job_runner.JobRunnerTests.test_cli_lists_local_jobs tests.test_job_runner.JobRunnerTests.test_cli_rejects_listing_corrupt_local_job_record -v`
+- `PYTHONPATH=src python -m unittest tests.test_job_runner tests.test_version tests.test_cli -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`（134 tests passed, 21 skipped）
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+
 ## v0.43.0 - 2026-05-23
 
 ### 用户需求
