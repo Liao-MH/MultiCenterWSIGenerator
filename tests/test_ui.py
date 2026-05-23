@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import he_wsi_generator.cli as cli_module
 from he_wsi_generator.ui.config import (
     create_default_ui_config,
     load_ui_config,
@@ -181,6 +182,36 @@ class UITests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
         self.assertEqual(config["schema_version"], "v0.47.0")
+
+    def test_cli_writes_yaml_ui_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ui-config.yaml"
+            yaml_module = types.ModuleType("yaml")
+            yaml_module.safe_dump = lambda data, sort_keys=False: json.dumps(data, indent=2)  # type: ignore[assignment]
+            yaml_module.safe_load = lambda text: json.loads(text)  # type: ignore[assignment]
+
+            with patch.dict(sys.modules, {"yaml": yaml_module}):
+                result = cli_module.main(["write-ui-config", str(path)])
+                config = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(config["schema_version"], "v0.47.0")
+
+    def test_cli_launches_ui_with_yaml_config(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "ui-config.yaml"
+            yaml_module = types.ModuleType("yaml")
+            yaml_module.safe_dump = lambda data, sort_keys=False: json.dumps(data, indent=2)  # type: ignore[assignment]
+            yaml_module.safe_load = lambda text: json.loads(text)  # type: ignore[assignment]
+
+            with patch.dict(sys.modules, {"yaml": yaml_module}):
+                save_ui_config(create_default_ui_config(), path)
+                with patch.object(cli_module, "launch_ui", return_value=0) as launch_mock:
+                    result = cli_module.main(["launch-ui", "--config", str(path)])
+
+        self.assertEqual(result, 0)
+        self.assertTrue(launch_mock.called)
+        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.47.0")
 
     def test_cli_inspects_output_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
