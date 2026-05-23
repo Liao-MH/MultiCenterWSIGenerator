@@ -29,7 +29,7 @@ class UITests(unittest.TestCase):
     def test_default_ui_config_contains_single_page_sections(self):
         config = create_default_ui_config()
 
-        self.assertEqual(config["schema_version"], "v0.61.0")
+        self.assertEqual(config["schema_version"], "v0.62.0")
         self.assertEqual(
             list(config["sections"]),
             [
@@ -71,7 +71,7 @@ class UITests(unittest.TestCase):
                 save_ui_config(config, path)
                 loaded = load_ui_config(path)
 
-        self.assertEqual(loaded["schema_version"], "v0.61.0")
+        self.assertEqual(loaded["schema_version"], "v0.62.0")
         self.assertEqual(loaded["sections"]["qc_output"]["status_levels"], ["pass", "warning", "fail"])
 
     def test_ui_config_yaml_requires_optional_dependency(self):
@@ -111,7 +111,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.61.0",
+                        "schema_version": "v0.62.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -148,6 +148,96 @@ class UITests(unittest.TestCase):
         self.assertEqual(summary["qc_status"], "warning")
         self.assertEqual(summary["outputs"]["wsi_path"], "generated.ome.tiff")
 
+    def test_collect_output_summary_includes_qc_review_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path = root / "metadata.json"
+            qc_path = root / "qc.json"
+            review_path = root / "qc_review.json"
+            qc_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v0.62.0",
+                        "generated_id": "gen-001",
+                        "overall_status": "warning",
+                        "levels": {
+                            "wsi": {"status": "pass", "metrics": []},
+                            "tile": {
+                                "status": "warning",
+                                "metrics": [
+                                    {
+                                        "name": "sharpness_laplacian_proxy",
+                                        "status": "warning",
+                                        "value": 1.25,
+                                    }
+                                ],
+                            },
+                            "mask_region": {"status": "pass", "metrics": []},
+                        },
+                        "non_copy_report": {
+                            "enabled": True,
+                            "patch_nearest_neighbor_search": False,
+                            "items": [],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "generated_id": "gen-001",
+                        "output": {
+                            "wsi_path": "generated.ome.tiff",
+                            "mask_path": "generated_mask/mask.npy",
+                            "qc_json_path": str(qc_path),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            review_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v0.62.0",
+                        "artifact_type": "qc_review",
+                        "generated_id": "gen-001",
+                        "created_at": "2026-05-23T09:00:00+00:00",
+                        "inputs": {
+                            "metadata_path": str(metadata_path),
+                            "metadata_sha256": "0" * 64,
+                            "qc_path": str(qc_path),
+                            "qc_sha256": "1" * 64,
+                        },
+                        "qc_status": {
+                            "overall_status": "warning",
+                            "levels": {"wsi": "pass", "tile": "warning", "mask_region": "pass"},
+                        },
+                        "review_required": True,
+                        "decision": "pending",
+                        "reviewer": None,
+                        "note": "",
+                        "reviewed_at": None,
+                        "review_items": [
+                            {
+                                "level": "tile",
+                                "name": "sharpness_laplacian_proxy",
+                                "status": "warning",
+                                "value": 1.25,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = collect_output_summary(metadata_path, qc_path, qc_review_path=review_path)
+
+        self.assertEqual(summary["review"]["review_required"], True)
+        self.assertEqual(summary["review"]["decision"], "pending")
+        self.assertIsNone(summary["review"]["reviewer"])
+        self.assertEqual(summary["review"]["review_item_count"], 1)
+
     def test_ensure_pyside_available_reports_missing_dependency(self):
         try:
             import PySide6  # noqa: F401
@@ -181,7 +271,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
-        self.assertEqual(config["schema_version"], "v0.61.0")
+        self.assertEqual(config["schema_version"], "v0.62.0")
 
     def test_cli_writes_yaml_ui_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -195,7 +285,7 @@ class UITests(unittest.TestCase):
                 config = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(result, 0)
-        self.assertEqual(config["schema_version"], "v0.61.0")
+        self.assertEqual(config["schema_version"], "v0.62.0")
 
     def test_cli_launches_ui_with_yaml_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -211,7 +301,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertTrue(launch_mock.called)
-        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.61.0")
+        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.62.0")
 
     def test_cli_inspects_output_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -221,7 +311,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.61.0",
+                        "schema_version": "v0.62.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {
@@ -279,6 +369,103 @@ class UITests(unittest.TestCase):
         self.assertEqual(summary["qc_status"], "warning")
         self.assertEqual(summary["outputs"]["wsi_path"], "generated.ome.tiff")
 
+    def test_cli_inspects_output_summary_with_qc_review(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path = root / "metadata.json"
+            qc_path = root / "qc.json"
+            review_path = root / "qc_review.json"
+            qc_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v0.62.0",
+                        "generated_id": "gen-001",
+                        "overall_status": "warning",
+                        "levels": {
+                            "wsi": {"status": "pass", "metrics": []},
+                            "tile": {"status": "warning", "metrics": []},
+                            "mask_region": {"status": "pass", "metrics": []},
+                        },
+                        "non_copy_report": {
+                            "enabled": True,
+                            "patch_nearest_neighbor_search": False,
+                            "items": [],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "generated_id": "gen-001",
+                        "output": {
+                            "wsi_path": "generated.ome.tiff",
+                            "mask_path": "generated_mask/mask.npy",
+                            "qc_json_path": str(qc_path),
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            review_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v0.62.0",
+                        "artifact_type": "qc_review",
+                        "generated_id": "gen-001",
+                        "created_at": "2026-05-23T09:00:00+00:00",
+                        "inputs": {
+                            "metadata_path": str(metadata_path),
+                            "metadata_sha256": "0" * 64,
+                            "qc_path": str(qc_path),
+                            "qc_sha256": "1" * 64,
+                        },
+                        "qc_status": {
+                            "overall_status": "warning",
+                            "levels": {"wsi": "pass", "tile": "warning", "mask_region": "pass"},
+                        },
+                        "review_required": True,
+                        "decision": "accepted",
+                        "reviewer": "Dr. Chen",
+                        "note": "Reviewed.",
+                        "reviewed_at": "2026-05-23T09:05:00+00:00",
+                        "review_items": [{"level": "tile", "name": "sharpness", "status": "warning"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "inspect-output-summary",
+                    "--metadata",
+                    str(metadata_path),
+                    "--qc",
+                    str(qc_path),
+                    "--qc-review",
+                    str(review_path),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            summary = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(summary["review"]["review_required"], True)
+        self.assertEqual(summary["review"]["decision"], "accepted")
+        self.assertEqual(summary["review"]["reviewer"], "Dr. Chen")
+        self.assertEqual(summary["review"]["review_item_count"], 1)
+
     def test_cli_rejects_invalid_output_summary_qc(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -287,7 +474,7 @@ class UITests(unittest.TestCase):
             qc_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.61.0",
+                        "schema_version": "v0.62.0",
                         "generated_id": "gen-001",
                         "overall_status": "warning",
                         "levels": {

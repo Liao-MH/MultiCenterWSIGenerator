@@ -30,7 +30,7 @@ class AnnotationTests(unittest.TestCase):
     def test_apply_label_mapping_outputs_project_class_ids(self):
         mask = np.array([[0, 1, 2], [5, 0, 1]], dtype=np.uint8)
         mapping = {
-            "schema_version": "v0.61.0",
+            "schema_version": "v0.62.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -55,7 +55,7 @@ class AnnotationTests(unittest.TestCase):
     def test_apply_label_mapping_rejects_unmapped_label(self):
         mask = np.array([[0, 1, 3]], dtype=np.uint8)
         mapping = {
-            "schema_version": "v0.61.0",
+            "schema_version": "v0.62.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {

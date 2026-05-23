@@ -41,6 +41,7 @@ from .priors.style import StylePriorBuildError, build_style_prior_from_training_
 from .priors.tissue import WSITissueOverviewBuildError, build_wsi_tissue_overview_from_manifest
 from .priors.texture import TexturePriorBuildError, build_texture_prior_from_embedding_cache
 from .qc.reference import QCReferenceBuildError, build_qc_reference_distribution
+from .qc.review import QCReviewError, apply_qc_review_decision, build_qc_review
 from .schemas import ValidationError, load_document, validate_file
 from .ui.config import create_default_ui_config, load_ui_config, save_ui_config
 from .ui.controller import collect_output_summary
@@ -572,6 +573,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     output_summary_parser.add_argument("--metadata", required=True, help="Input metadata JSON.")
     output_summary_parser.add_argument("--qc", required=True, help="Input QC JSON.")
+    output_summary_parser.add_argument(
+        "--qc-review",
+        help="Optional qc_review JSON included in the output summary.",
+    )
+
+    qc_review_parser = subparsers.add_parser(
+        "create-qc-review",
+        help="Build a qc_review JSON from metadata.json and qc.json.",
+    )
+    qc_review_parser.add_argument("--metadata", required=True, help="Input metadata JSON.")
+    qc_review_parser.add_argument("--qc", required=True, help="Input QC JSON.")
+    qc_review_parser.add_argument("--output", required=True, help="Path to write qc_review JSON.")
+
+    qc_review_decision_parser = subparsers.add_parser(
+        "apply-qc-review-decision",
+        help="Apply a final decision to a pending qc_review JSON.",
+    )
+    qc_review_decision_parser.add_argument("--review", required=True, help="Input qc_review JSON.")
+    qc_review_decision_parser.add_argument(
+        "--decision",
+        required=True,
+        choices=["accepted", "rejected", "needs_rerun"],
+        help="Final reviewer decision.",
+    )
+    qc_review_decision_parser.add_argument("--reviewer", required=True, help="Reviewer name/id.")
+    qc_review_decision_parser.add_argument("--note", default="", help="Optional reviewer note.")
 
     ui_config_parser = subparsers.add_parser(
         "write-ui-config",
@@ -1047,11 +1074,34 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "inspect-output-summary":
         try:
-            summary = collect_output_summary(args.metadata, args.qc)
+            summary = collect_output_summary(args.metadata, args.qc, qc_review_path=args.qc_review)
         except (ValidationError, ValueError, OSError) as exc:
             print(str(exc), file=sys.stderr)
             return 1
         print(json.dumps(summary, indent=2))
+        return 0
+
+    if args.command == "create-qc-review":
+        try:
+            review = build_qc_review(args.metadata, args.qc, output_path=args.output)
+        except (QCReviewError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"qc review written: {args.output} ({len(review['review_items'])} review items)")
+        return 0
+
+    if args.command == "apply-qc-review-decision":
+        try:
+            review = apply_qc_review_decision(
+                args.review,
+                decision=args.decision,
+                reviewer=args.reviewer,
+                note=args.note,
+            )
+        except (QCReviewError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"qc review decision applied: {args.review} ({review['decision']})")
         return 0
 
     if args.command == "write-ui-config":

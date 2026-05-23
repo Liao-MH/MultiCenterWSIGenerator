@@ -1,5 +1,87 @@
 # CHANGELOG
 
+## v0.62.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 用户要求代码开发完成后使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 验证，并确保所有输出能正常交付。
+- 本次版本需要把自动 QC 的 warning/fail 结果落盘为可追踪、可更新决策的 `qc_review` artifact，并让输出摘要能合并审阅状态。
+
+### 已做改动
+
+- 版本号升级到 `v0.62.0`。
+- 新增 `src/he_wsi_generator/qc/review.py`，实现 `qc_review` artifact 的构建、读取、验证与决策更新。
+- `build_qc_review()` 读取 `metadata.json` 与 `qc.json`，输出 `schema_version`、`artifact_type=qc_review`、`generated_id`、输入路径与 sha256、QC overall/level 状态、`review_required`、`decision=pending`、`created_at` 和待审阅 metric 列表。
+- `review_required` 现在与 QC `overall_status` 强一致：`warning`/`fail` 为 `true`，`pass` 为 `false`。
+- warning/fail metric 会保留 level、metric name、status、value、reference、message/reason（若存在）。
+- `apply_qc_review_decision()` 仅接受 `accepted`、`rejected`、`needs_rerun`，只允许更新 `pending` 审阅单，并记录 `reviewer`、`note`、`reviewed_at`。
+- CLI 新增 `create-qc-review` 与 `apply-qc-review-decision`，`inspect-output-summary` 新增可选 `--qc-review`。
+- `collect_output_summary()` 现在可合并 `qc_review` 状态，输出 `review_required`、`decision`、`reviewer` 和 `review_item_count`。
+- README 补充 `qc_review` 命令、输出摘要的 review 合并行为和本次边界说明。
+- 需求记录 `docs/DEMANDS.MD` 顶部补充 v0.62.0 结构化需求。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `docs/CHANGELOG.md`
+- `docs/DEMANDS.MD`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/qc/__init__.py`
+- `src/he_wsi_generator/qc/review.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/ui/controller.py`
+- `tests/test_qc_review.py`
+- `tests/test_ui.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.62.0`）
+
+### 验证结果
+
+- TDD 红灯记录：
+  - 新增 `tests/test_qc_review.py` 初次运行因 `he_wsi_generator.qc.review` 模块不存在而失败。
+  - 新增 `collect_output_summary(..., qc_review_path=...)` 测试初次运行因函数签名不支持 `qc_review_path` 而失败。
+  - 新增 `inspect-output-summary --qc-review` 测试初次运行因 CLI 参数未实现而失败。
+  - 新增 `review_required` 强一致性测试初次运行因校验逻辑未实现而失败。
+- `PYTHONPATH=src python -m unittest tests.test_qc_review -v`
+  - 结果：8 个测试通过。
+- `PYTHONPATH=src python -m unittest tests.test_ui.UITests.test_collect_output_summary_includes_qc_review_status tests.test_ui.UITests.test_cli_inspects_output_summary_with_qc_review -v`
+  - 结果：2 个测试通过。
+- `PYTHONPATH=src python -m unittest tests.test_qc_review.QCReviewTests.test_validate_qc_review_rejects_mismatched_review_required -v`
+  - 结果：初次失败，随后补齐 `review_required` 一致性校验并转绿。
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：187 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 PyTorch 被跳过。
+- `python -m compileall src tests`
+  - 结果：通过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无 whitespace error。
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新构建 v0.62.0 验证链路：
+  - `validate manifest build/validation/v0.62.0-291288/input_manifest.json`
+  - `validate qc build/validation/v0.62.0-291288/reference-qc/qc-reference-291288.json`
+  - `build-wsi-tissue-overview build/validation/v0.62.0-291288/input_manifest.json --backend openslide --thumbnail-max-size 512 --output build/validation/v0.62.0-291288/wsi_tissue_overview.json`
+  - `build-qc-reference build/validation/v0.62.0-291288/reference-qc/qc-reference-291288.json --metric mean_red --metric mask_tissue_fraction --min-samples 1 --estimator robust_mad_z_score --outlier-policy robust_iqr_filter --stratify-by metadata.cancer_type --output build/validation/v0.62.0-291288/qc_reference_distribution.json`
+  - `build-prior-manifest --output-dir build/validation/v0.62.0-291288/prior --prior-id prior-291288-v062 --dataset-id pancancer-fanhong-breast-291288-validation --input-manifest build/validation/v0.62.0-291288/input_manifest.json --training-data-version validation-v0.62.0 --wsi-id 291288 --random-seed 7 --layout-mask-prior build/validation/v0.62.0-291288/layout_mask_prior.json --style-prior build/validation/v0.62.0-291288/style_prior.json --texture-prior build/validation/v0.62.0-291288/texture_prior.json --qc-reference-distribution build/validation/v0.62.0-291288/qc_reference_distribution.json --wsi-tissue-overview build/validation/v0.62.0-291288/wsi_tissue_overview.json`
+  - `validate-prior-manifest build/validation/v0.62.0-291288/prior/prior_manifest.json`
+  - `sample-layout-mask build/validation/v0.62.0-291288/layout_mask_prior.json --output-dir build/validation/v0.62.0-291288/sampled-layout --sample-id 291288-v062-sampled-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview build/validation/v0.62.0-291288/wsi_tissue_overview.json`
+  - `build-condition-packet configs/generation.default.json --prior-manifest build/validation/v0.62.0-291288/prior/prior_manifest.json --output build/validation/v0.62.0-291288/condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask build/validation/v0.62.0-291288/sampled-layout/sampled_layout_mask.json`
+  - `run-generation configs/generation.default.json --backend smoke-cascade --prior-manifest build/validation/v0.62.0-291288/prior/prior_manifest.json --checkpoint-manifest build/validation/v0.62.0-291288/trained-checkpoint.json --output-root build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062 --generated-id gen-291288-smoke-sampled-mask-v062 --condition-packet build/validation/v0.62.0-291288/condition_packet.json`
+  - `validate metadata build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/metadata.json`
+  - `validate qc build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc.json`
+  - `create-qc-review --metadata build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/metadata.json --qc build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc.json --output build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc_review.json`
+  - `apply-qc-review-decision --review build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc_review.json --decision accepted --reviewer "Dr. Chen" --note "Real SVS validation reviewed."`
+  - `inspect-output-summary --metadata build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/metadata.json --qc build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc.json --qc-review build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc_review.json`
+- 真实 SVS 验证结果：
+  - `wsi_tissue_overview.json`、`qc_reference_distribution.json`、`prior_manifest.json`、`sampled_layout_mask.json`、`condition_packet.json`、`generation_run.json`、`metadata.json`、`qc.json` 和 `qc_review.json` 均为 `schema_version=v0.62.0`。
+  - `metadata.json` 与 `qc.json` 均通过当前 schema 校验，`inspect-output-summary` 返回 `qc_status=pass`，三级状态 `wsi/tile/mask_region` 均为 `pass`。
+  - `qc_review.json` 返回 `artifact_type=qc_review`、`review_required=false`、`decision=accepted`、`reviewer=Dr. Chen`，`review_item_count=0`。
+  - `generated_mask/mask.npy` shape 为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+  - `generated.ome.tiff` 可由 `tifffile` 读取，level count 为 4，首层 shape 为 `[512, 512, 3]`。
+  - 输出目录 `build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`qc_review.json`、`generation_run.json` 和 `batch.jsonl`。
+
 ## v0.61.0 - 2026-05-23
 
 ### 用户需求

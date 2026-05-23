@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..qc.review import load_qc_review
 from ..schemas import validate_qc_report
 
 
@@ -39,11 +40,15 @@ class JobStateStore:
         return [dict(value) for value in self._jobs.values()]
 
 
-def collect_output_summary(metadata_path: str | Path, qc_path: str | Path) -> dict:
+def collect_output_summary(
+    metadata_path: str | Path,
+    qc_path: str | Path,
+    qc_review_path: str | Path | None = None,
+) -> dict:
     metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
     qc = validate_qc_report(json.loads(Path(qc_path).read_text(encoding="utf-8")))
     output = metadata.get("output", {})
-    return {
+    summary = {
         "generated_id": metadata.get("generated_id", qc["generated_id"]),
         "qc_status": qc["overall_status"],
         "outputs": {
@@ -58,3 +63,14 @@ def collect_output_summary(metadata_path: str | Path, qc_path: str | Path) -> di
             "mask_region": qc["levels"]["mask_region"]["status"],
         },
     }
+    if qc_review_path is not None:
+        review = load_qc_review(qc_review_path)
+        if review["generated_id"] != summary["generated_id"]:
+            raise ValueError("qc_review.generated_id must match output summary generated_id")
+        summary["review"] = {
+            "review_required": review["review_required"],
+            "decision": review["decision"],
+            "reviewer": review.get("reviewer"),
+            "review_item_count": len(review["review_items"]),
+        }
+    return summary

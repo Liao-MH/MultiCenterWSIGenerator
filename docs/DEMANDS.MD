@@ -1,5 +1,30 @@
 # DEMANDS
 
+## v0.62.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进自动 QC 后的人工审阅工作流第一版：当生成样本出现 warning/fail 或需要用户确认时，系统需要能把 QC 结果转换为可落盘、可追踪、可更新决策的 `qc_review` artifact，便于后续 UI 与批量交付使用。
+
+### 结构化需求
+
+- 版本号升级为 `v0.62.0`。
+- 新增 `qc_review` artifact 构建能力，输入 `metadata.json` 和 `qc.json`，输出 JSON 需记录 `schema_version`、`artifact_type=qc_review`、`generated_id`、输入文件路径与 sha256、QC overall/level 状态、需要审阅的 warning/fail metric 列表、`review_required`、`decision=pending` 和创建时间。
+- `review_required` 必须在 QC overall status 为 `warning` 或 `fail` 时为 `true`，在 `pass` 时为 `false`。
+- warning/fail metric 列表必须保留 metric 所在 level、metric name、status、value、reference 和 message/reason 字段（若存在），让审阅者能复查触发原因。
+- 新增决策更新能力：将 `pending` 的 review artifact 更新为 `accepted`、`rejected` 或 `needs_rerun`，并记录 reviewer、note、reviewed_at；非法决策、空 reviewer、非 pending artifact 必须显式报错。
+- CLI 新增 `create-qc-review --metadata ... --qc ... --output ...` 和 `apply-qc-review-decision --review ... --decision ... --reviewer ... [--note ...]`。
+- `inspect-output-summary` 支持可选 `--qc-review`，输出 review 的 `review_required`、`decision`、`reviewer` 和 `review_item_count`，供后续 UI 控制层展示。
+- 新增/更新测试覆盖：review artifact 从 warning/fail QC 提取待审阅条目、pass QC 不要求审阅、非法决策显式失败、CLI 可生成和更新 review、output summary 可合并 review 状态。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+- 若代码开发完成，必须继续使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 做真实 SVS 验证，并确保生成输出、QC review artifact 和输出摘要都能正常交付。
+
+### 边界说明
+
+- 本次版本只实现本地 JSON 文件级人工审阅工作流，不实现 PySide6 图形审阅界面、不实现权限/签名系统、不实现数据库或远端协作审阅。
+- 本次版本不改变自动 QC 的 pass/warning/fail 判定，也不让人工审阅结果反向修改原始 `qc.json`；审阅决策以独立 `qc_review.json` artifact 记录。
+
 ## v0.61.0 - 2026-05-23
 
 ### 用户需求
