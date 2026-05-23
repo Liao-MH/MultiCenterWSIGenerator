@@ -1608,11 +1608,12 @@ def _load_condition_packet(
 
 def _condition_packet_summary(conditions: dict[str, Any]) -> dict[str, Any]:
     coord = conditions["coord"]
+    layout = conditions["layout"]
     style_seed = conditions["style_seed"]
     texture = conditions["texture_token"]
     source = conditions["source_condition"]
     anchor = conditions["structure_anchor"]
-    return {
+    summary = {
         "cascade_level": coord.get("cascade_level"),
         "tile_origin_40x": list(coord.get("tile_origin_40x", [])),
         "style_seed_value": style_seed.get("value"),
@@ -1621,6 +1622,121 @@ def _condition_packet_summary(conditions: dict[str, Any]) -> dict[str, Any]:
         "source_condition_enabled": bool(source.get("enabled")),
         "structure_anchor": anchor.get("value"),
     }
+    if "wsi_tissue_overview" in layout:
+        summary["wsi_tissue_overview"] = _wsi_tissue_overview_summary(
+            layout["wsi_tissue_overview"]
+        )
+    return summary
+
+
+def _wsi_tissue_overview_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise TorchTrainingError(
+            "condition packet conditions.layout.wsi_tissue_overview must be an object"
+        )
+    source_value = _require_non_empty_condition_str(
+        value,
+        "source",
+        "condition packet conditions.layout.wsi_tissue_overview.source",
+    )
+    artifact_path = _require_non_empty_condition_str(
+        value,
+        "artifact_path",
+        "condition packet conditions.layout.wsi_tissue_overview.artifact_path",
+    )
+    record_count = _require_condition_int(
+        value,
+        "record_count",
+        "condition packet conditions.layout.wsi_tissue_overview.record_count",
+    )
+    source_backend = _require_non_empty_condition_str(
+        value,
+        "source_backend",
+        "condition packet conditions.layout.wsi_tissue_overview.source_backend",
+    )
+    thumbnail_max_size = _require_condition_list(
+        value,
+        "thumbnail_max_size",
+        "condition packet conditions.layout.wsi_tissue_overview.thumbnail_max_size",
+    )
+    records = value.get("records")
+    if not isinstance(records, list):
+        raise TorchTrainingError(
+            "condition packet conditions.layout.wsi_tissue_overview.records must be a list"
+        )
+    summarized_records = []
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise TorchTrainingError(
+                "condition packet conditions.layout.wsi_tissue_overview.records"
+                f"[{index}] must be an object"
+            )
+        summarized_records.append(
+            {
+                "wsi_id": _require_non_empty_condition_str(
+                    record,
+                    "wsi_id",
+                    "condition packet conditions.layout.wsi_tissue_overview.records"
+                    f"[{index}].wsi_id",
+                ),
+                "tissue_fraction": _require_condition_number(
+                    record,
+                    "tissue_fraction",
+                    "condition packet conditions.layout.wsi_tissue_overview.records"
+                    f"[{index}].tissue_fraction",
+                ),
+                "bounding_box_xywh": list(
+                    _require_condition_list(
+                        record,
+                        "bounding_box_xywh",
+                        "condition packet conditions.layout.wsi_tissue_overview.records"
+                        f"[{index}].bounding_box_xywh",
+                    )
+                ),
+                "connected_component_count": _require_condition_int(
+                    record,
+                    "connected_component_count",
+                    "condition packet conditions.layout.wsi_tissue_overview.records"
+                    f"[{index}].connected_component_count",
+                ),
+            }
+        )
+    return {
+        "source": source_value,
+        "artifact_path": artifact_path,
+        "record_count": record_count,
+        "source_backend": source_backend,
+        "thumbnail_max_size": list(thumbnail_max_size),
+        "records": summarized_records,
+    }
+
+
+def _require_non_empty_condition_str(data: dict[str, Any], key: str, path: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or value == "":
+        raise TorchTrainingError(f"{path} must be a non-empty string")
+    return value
+
+
+def _require_condition_list(data: dict[str, Any], key: str, path: str) -> list[Any]:
+    value = data.get(key)
+    if not isinstance(value, list):
+        raise TorchTrainingError(f"{path} must be a list")
+    return value
+
+
+def _require_condition_number(data: dict[str, Any], key: str, path: str) -> int | float:
+    value = data.get(key)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise TorchTrainingError(f"{path} must be a number")
+    return value
+
+
+def _require_condition_int(data: dict[str, Any], key: str, path: str) -> int:
+    value = data.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TorchTrainingError(f"{path} must be an integer")
+    return value
 
 
 class _MaskConditionedRgbReconstructor:

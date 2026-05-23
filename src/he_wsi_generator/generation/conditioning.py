@@ -26,6 +26,7 @@ def build_generation_condition_packet(
     output_path: str | Path,
     cascade_level: str,
     tile_origin_40x: tuple[int, int] | list[int],
+    sampled_layout_mask_path: str | Path | None = None,
 ) -> dict[str, Any]:
     try:
         config = validate_generation_config(generation_config)
@@ -43,7 +44,15 @@ def build_generation_condition_packet(
             "qc_reference_distribution",
         )
     }
-    layout = _layout_condition(prior, artifacts["layout_mask_prior"])
+    tissue_overview = None
+    if "wsi_tissue_overview" in prior["artifacts"]:
+        tissue_overview = _load_artifact_json(prior, "wsi_tissue_overview")
+    layout = _layout_condition(prior, artifacts["layout_mask_prior"], tissue_overview)
+    sampled_layout_mask = (
+        _load_sampled_layout_mask(sampled_layout_mask_path)
+        if sampled_layout_mask_path is not None
+        else None
+    )
     packet = {
         "schema_version": PROJECT_VERSION,
         "condition_packet_type": "generation_condition_packet",
@@ -60,10 +69,13 @@ def build_generation_condition_packet(
             "sample_steps": config["sample_steps"],
             "overlap_px_40x": config["overlap_px_40x"],
         },
-        "artifact_inputs": _artifact_inputs(prior),
+        "artifact_inputs": {
+            **_artifact_inputs(prior),
+            **_sampled_layout_mask_input(sampled_layout_mask),
+        },
         "conditions": {
             "layout": layout,
-            "mask": _mask_condition(layout),
+            "mask": _mask_condition(layout, sampled_layout_mask),
             "style_seed": _style_seed_condition(config, prior, artifacts["style_prior"]),
             "texture_token": _texture_token_condition(
                 config,
@@ -114,10 +126,24 @@ def _load_artifact_json(prior: dict[str, Any], artifact_type: str) -> dict[str, 
             raise GenerationConditionError(
                 "qc_reference_distribution.source must be qc_report_metric_distribution"
             )
+    elif artifact_type == "wsi_tissue_overview":
+        actual = _require_non_empty_str(
+            data,
+            "artifact_type",
+            "wsi_tissue_overview.artifact_type",
+        )
+        if actual != "wsi_tissue_overview":
+            raise GenerationConditionError(
+                "wsi_tissue_overview.artifact_type must be wsi_tissue_overview"
+            )
     return data
 
 
-def _layout_condition(prior: dict[str, Any], layout_prior: dict[str, Any]) -> dict[str, Any]:
+def _layout_condition(
+    prior: dict[str, Any],
+    layout_prior: dict[str, Any],
+    tissue_overview: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     class_names = _require_list(layout_prior, "class_names", "layout_mask_prior.class_names")
     if tuple(class_names) != MASK_CLASSES:
         raise GenerationConditionError("layout_mask_prior.class_names must match project mask classes")
@@ -130,7 +156,7 @@ def _layout_condition(prior: dict[str, Any], layout_prior: dict[str, Any]) -> di
         raise GenerationConditionError(
             "layout_mask_prior.class_fractions_by_id must contain six values"
         )
-    return {
+    condition = {
         "source": "layout_mask_prior",
         "artifact_path": prior["artifacts"]["layout_mask_prior"]["path"],
         "sample_count": layout_prior.get("sample_count"),
@@ -139,9 +165,130 @@ def _layout_condition(prior: dict[str, Any], layout_prior: dict[str, Any]) -> di
         "non_background_fraction": layout_prior.get("non_background_fraction"),
         "adjacency_counts": deepcopy(layout_prior.get("adjacency_counts", {})),
     }
+    if tissue_overview is not None:
+        condition["wsi_tissue_overview"] = _wsi_tissue_overview_condition(
+            prior,
+            tissue_overview,
+        )
+    return condition
 
 
-def _mask_condition(layout: dict[str, Any]) -> dict[str, Any]:
+def _wsi_tissue_overview_condition(
+    prior: dict[str, Any],
+    tissue_overview: dict[str, Any],
+) -> dict[str, Any]:
+    records = _require_list(tissue_overview, "records", "wsi_tissue_overview.records")
+    source = _require_dict(tissue_overview, "source", "wsi_tissue_overview.source")
+    summarized_records = []
+    for index, record_value in enumerate(records):
+        record = _ensure_dict(record_value, f"wsi_tissue_overview.records[{index}]")
+        tissue_proxy = _require_dict(
+            record,
+            "tissue_mask_proxy",
+            f"wsi_tissue_overview.records[{index}].tissue_mask_proxy",
+        )
+        summarized_records.append(
+            {
+                "wsi_id": _require_non_empty_str(
+                    record,
+                    "wsi_id",
+                    f"wsi_tissue_overview.records[{index}].wsi_id",
+                ),
+                "tissue_fraction": _require_number(
+                    tissue_proxy,
+                    "tissue_fraction",
+                    f"wsi_tissue_overview.records[{index}].tissue_mask_proxy.tissue_fraction",
+                ),
+                "bounding_box_xywh": deepcopy(
+                    _require_list(
+                        tissue_proxy,
+                        "bounding_box_xywh",
+                        f"wsi_tissue_overview.records[{index}].tissue_mask_proxy.bounding_box_xywh",
+                    )
+                ),
+                "connected_component_count": _require_int(
+                    tissue_proxy,
+                    "connected_component_count",
+                    f"wsi_tissue_overview.records[{index}].tissue_mask_proxy.connected_component_count",
+                ),
+            }
+        )
+    return {
+        "source": "wsi_tissue_overview",
+        "artifact_path": prior["artifacts"]["wsi_tissue_overview"]["path"],
+        "record_count": tissue_overview.get("record_count"),
+        "source_backend": source.get("backend"),
+        "thumbnail_max_size": deepcopy(source.get("thumbnail_max_size")),
+        "records": summarized_records,
+    }
+
+
+def _load_sampled_layout_mask(path: str | Path) -> dict[str, Any]:
+    manifest_path = Path(path)
+    if not manifest_path.exists():
+        raise GenerationConditionError(f"sampled_layout_mask file does not exist: {manifest_path}")
+    if not manifest_path.is_file():
+        raise GenerationConditionError(f"sampled_layout_mask path is not a file: {manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise GenerationConditionError(f"sampled_layout_mask is not valid JSON: {exc.msg}") from exc
+    if not isinstance(manifest, dict):
+        raise GenerationConditionError("sampled_layout_mask must be a JSON object")
+    if manifest.get("schema_version") != PROJECT_VERSION:
+        raise GenerationConditionError(f"sampled_layout_mask.schema_version must be {PROJECT_VERSION}")
+    if manifest.get("artifact_type") != "sampled_layout_mask":
+        raise GenerationConditionError("sampled_layout_mask.artifact_type must be sampled_layout_mask")
+    class_names = _require_list(manifest, "class_names", "sampled_layout_mask.class_names")
+    if tuple(class_names) != MASK_CLASSES:
+        raise GenerationConditionError("sampled_layout_mask.class_names must match project mask classes")
+    mask_path = _require_non_empty_str(manifest, "mask_path", "sampled_layout_mask.mask_path")
+    mask_shape = _require_list(manifest, "mask_shape", "sampled_layout_mask.mask_shape")
+    if len(mask_shape) != 2 or not all(isinstance(value, int) and value > 0 for value in mask_shape):
+        raise GenerationConditionError("sampled_layout_mask.mask_shape must contain two positive integers")
+    counts = _require_list(
+        manifest,
+        "class_pixel_counts_by_id",
+        "sampled_layout_mask.class_pixel_counts_by_id",
+    )
+    fractions = _require_list(
+        manifest,
+        "class_fractions_by_id",
+        "sampled_layout_mask.class_fractions_by_id",
+    )
+    if len(counts) != len(MASK_CLASSES) or len(fractions) != len(MASK_CLASSES):
+        raise GenerationConditionError("sampled_layout_mask class statistics must contain six values")
+    return {
+        "artifact_path": str(manifest_path),
+        "mask_path": mask_path,
+        "sample_id": _require_non_empty_str(manifest, "sample_id", "sampled_layout_mask.sample_id"),
+        "random_seed": _require_int(manifest, "random_seed", "sampled_layout_mask.random_seed"),
+        "mask_shape": list(mask_shape),
+        "class_names": list(class_names),
+        "class_pixel_counts_by_id": deepcopy(counts),
+        "class_fractions_by_id": deepcopy(fractions),
+        "limitations": deepcopy(manifest.get("limitations", [])),
+    }
+
+
+def _mask_condition(
+    layout: dict[str, Any],
+    sampled_layout_mask: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if sampled_layout_mask is not None:
+        return {
+            "source": "sampled_layout_mask",
+            "artifact_path": sampled_layout_mask["artifact_path"],
+            "mask_path": sampled_layout_mask["mask_path"],
+            "sample_id": sampled_layout_mask["sample_id"],
+            "random_seed": sampled_layout_mask["random_seed"],
+            "mask_shape": list(sampled_layout_mask["mask_shape"]),
+            "class_names": list(sampled_layout_mask["class_names"]),
+            "class_pixel_counts_by_id": deepcopy(sampled_layout_mask["class_pixel_counts_by_id"]),
+            "class_fractions_by_id": deepcopy(sampled_layout_mask["class_fractions_by_id"]),
+            "mask_role": "semantic_spatial_condition",
+            "limitations": deepcopy(sampled_layout_mask["limitations"]),
+        }
     return {
         "source": "layout_mask_prior",
         "class_names": list(layout["class_names"]),
@@ -274,6 +421,23 @@ def _artifact_inputs(prior: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _sampled_layout_mask_input(sampled_layout_mask: dict[str, Any] | None) -> dict[str, Any]:
+    if sampled_layout_mask is None:
+        return {}
+    return {
+        "sampled_layout_mask": {
+            "path": sampled_layout_mask["artifact_path"],
+            "kind": "json",
+            "metadata": {
+                "artifact_type": "sampled_layout_mask",
+                "sample_id": sampled_layout_mask["sample_id"],
+                "mask_path": sampled_layout_mask["mask_path"],
+                "mask_shape": list(sampled_layout_mask["mask_shape"]),
+            },
+        }
+    }
+
+
 def _require_non_empty_str(data: dict[str, Any], key: str, path: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or value == "":
@@ -295,11 +459,24 @@ def _require_dict(data: dict[str, Any], key: str, path: str) -> dict[str, Any]:
     return value
 
 
+def _ensure_dict(value: Any, path: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GenerationConditionError(f"{path} must be an object")
+    return value
+
+
 def _require_int(data: dict[str, Any], key: str, path: str) -> int:
     value = data.get(key)
     if not isinstance(value, int) or isinstance(value, bool):
         raise GenerationConditionError(f"{path} must be an integer")
     return value
+
+
+def _require_number(data: dict[str, Any], key: str, path: str) -> float:
+    value = data.get(key)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise GenerationConditionError(f"{path} must be a number")
+    return float(value)
 
 
 def _now_iso() -> str:

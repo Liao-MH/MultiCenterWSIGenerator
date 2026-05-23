@@ -82,7 +82,11 @@ def run_smoke_generation(
             },
         )
         mask_report = write_mask_array(
-            _build_smoke_mask(numpy, levels_by_cascade["1/1"].shape[:2]),
+            _conditioned_or_smoke_mask(
+                numpy,
+                condition_packet,
+                levels_by_cascade["1/1"].shape[:2],
+            ),
             mask_dir,
             "mask",
         )
@@ -104,6 +108,8 @@ def run_smoke_generation(
                 }
             ],
             qc_reference_distribution=_load_qc_reference_distribution(prior_manifest_path),
+            wsi_tissue_overview_summary=_condition_wsi_tissue_overview(condition_packet),
+            sampled_layout_mask_summary=_condition_sampled_layout_mask(condition_packet),
         )
     except QCReferenceError as exc:
         raise GenerationExecutionError(str(exc)) from exc
@@ -238,6 +244,8 @@ def run_torch_diffusion_smoke_generation(
                 }
             ],
             qc_reference_distribution=_load_qc_reference_distribution(prior_manifest_path),
+            wsi_tissue_overview_summary=_condition_wsi_tissue_overview(condition_packet),
+            sampled_layout_mask_summary=_condition_sampled_layout_mask(condition_packet),
         )
     except QCReferenceError as exc:
         raise GenerationExecutionError(str(exc)) from exc
@@ -436,11 +444,13 @@ def _load_generation_condition_packet(
 
 def _condition_packet_summary(conditions: dict[str, Any]) -> dict[str, Any]:
     coord = conditions["coord"]
+    layout = conditions["layout"]
+    mask = conditions["mask"]
     style_seed = conditions["style_seed"]
     texture = conditions["texture_token"]
     source = conditions["source_condition"]
     anchor = conditions["structure_anchor"]
-    return {
+    summary = {
         "cascade_level": coord.get("cascade_level"),
         "tile_origin_40x": list(coord.get("tile_origin_40x", [])),
         "style_seed_value": style_seed.get("value"),
@@ -449,12 +459,225 @@ def _condition_packet_summary(conditions: dict[str, Any]) -> dict[str, Any]:
         "source_condition_enabled": bool(source.get("enabled")),
         "structure_anchor": anchor.get("value"),
     }
+    if mask.get("source") == "sampled_layout_mask":
+        summary["sampled_layout_mask"] = _sampled_layout_mask_summary(mask)
+    if "wsi_tissue_overview" in layout:
+        summary["wsi_tissue_overview"] = _wsi_tissue_overview_summary(
+            layout["wsi_tissue_overview"]
+        )
+    return summary
+
+
+def _sampled_layout_mask_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GenerationExecutionError("condition packet conditions.mask must be an object")
+    return {
+        "source": "sampled_layout_mask",
+        "artifact_path": _require_non_empty_condition_str(
+            value,
+            "artifact_path",
+            "condition packet conditions.mask.artifact_path",
+        ),
+        "mask_path": _require_non_empty_condition_str(
+            value,
+            "mask_path",
+            "condition packet conditions.mask.mask_path",
+        ),
+        "sample_id": _require_non_empty_condition_str(
+            value,
+            "sample_id",
+            "condition packet conditions.mask.sample_id",
+        ),
+        "mask_shape": list(
+            _require_condition_list(
+                value,
+                "mask_shape",
+                "condition packet conditions.mask.mask_shape",
+            )
+        ),
+        "class_pixel_counts_by_id": list(
+            _require_condition_list(
+                value,
+                "class_pixel_counts_by_id",
+                "condition packet conditions.mask.class_pixel_counts_by_id",
+            )
+        ),
+        "class_fractions_by_id": list(
+            _require_condition_list(
+                value,
+                "class_fractions_by_id",
+                "condition packet conditions.mask.class_fractions_by_id",
+            )
+        ),
+    }
+
+
+def _wsi_tissue_overview_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GenerationExecutionError(
+            "condition packet conditions.layout.wsi_tissue_overview must be an object"
+        )
+    source_value = _require_non_empty_condition_str(
+        value,
+        "source",
+        "condition packet conditions.layout.wsi_tissue_overview.source",
+    )
+    artifact_path = _require_non_empty_condition_str(
+        value,
+        "artifact_path",
+        "condition packet conditions.layout.wsi_tissue_overview.artifact_path",
+    )
+    record_count = _require_condition_int(
+        value,
+        "record_count",
+        "condition packet conditions.layout.wsi_tissue_overview.record_count",
+    )
+    source_backend = _require_non_empty_condition_str(
+        value,
+        "source_backend",
+        "condition packet conditions.layout.wsi_tissue_overview.source_backend",
+    )
+    thumbnail_max_size = _require_condition_list(
+        value,
+        "thumbnail_max_size",
+        "condition packet conditions.layout.wsi_tissue_overview.thumbnail_max_size",
+    )
+    records = value.get("records")
+    if not isinstance(records, list):
+        raise GenerationExecutionError(
+            "condition packet conditions.layout.wsi_tissue_overview.records must be a list"
+        )
+    summarized_records = []
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise GenerationExecutionError(
+                "condition packet conditions.layout.wsi_tissue_overview.records"
+                f"[{index}] must be an object"
+            )
+        summarized_records.append(
+            {
+                "wsi_id": _require_non_empty_condition_str(
+                    record,
+                    "wsi_id",
+                    "condition packet conditions.layout.wsi_tissue_overview.records"
+                    f"[{index}].wsi_id",
+                ),
+                "tissue_fraction": _require_condition_number(
+                    record,
+                    "tissue_fraction",
+                    "condition packet conditions.layout.wsi_tissue_overview.records"
+                    f"[{index}].tissue_fraction",
+                ),
+                "bounding_box_xywh": list(
+                    _require_condition_list(
+                        record,
+                        "bounding_box_xywh",
+                        "condition packet conditions.layout.wsi_tissue_overview.records"
+                        f"[{index}].bounding_box_xywh",
+                    )
+                ),
+                "connected_component_count": _require_condition_int(
+                    record,
+                    "connected_component_count",
+                    "condition packet conditions.layout.wsi_tissue_overview.records"
+                    f"[{index}].connected_component_count",
+                ),
+            }
+        )
+    return {
+        "source": source_value,
+        "artifact_path": artifact_path,
+        "record_count": record_count,
+        "source_backend": source_backend,
+        "thumbnail_max_size": list(thumbnail_max_size),
+        "records": summarized_records,
+    }
+
+
+def _require_non_empty_condition_str(data: dict[str, Any], key: str, path: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or value == "":
+        raise GenerationExecutionError(f"{path} must be a non-empty string")
+    return value
+
+
+def _require_condition_list(data: dict[str, Any], key: str, path: str) -> list[Any]:
+    value = data.get(key)
+    if not isinstance(value, list):
+        raise GenerationExecutionError(f"{path} must be a list")
+    return value
+
+
+def _require_condition_number(data: dict[str, Any], key: str, path: str) -> int | float:
+    value = data.get(key)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise GenerationExecutionError(f"{path} must be a number")
+    return value
+
+
+def _require_condition_int(data: dict[str, Any], key: str, path: str) -> int:
+    value = data.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise GenerationExecutionError(f"{path} must be an integer")
+    return value
 
 
 def _condition_packet_return(condition_packet: dict[str, Any] | None) -> dict[str, Any]:
     if condition_packet is None:
         return {}
     return {"condition_packet_path": condition_packet["path"]}
+
+
+def _condition_wsi_tissue_overview(condition_packet: dict[str, Any] | None) -> dict[str, Any] | None:
+    if condition_packet is None:
+        return None
+    return condition_packet["summary"].get("wsi_tissue_overview")
+
+
+def _condition_sampled_layout_mask(condition_packet: dict[str, Any] | None) -> dict[str, Any] | None:
+    if condition_packet is None:
+        return None
+    return condition_packet["summary"].get("sampled_layout_mask")
+
+
+def _conditioned_or_smoke_mask(
+    numpy,
+    condition_packet: dict[str, Any] | None,
+    shape: tuple[int, int],
+):
+    if condition_packet is None:
+        return _build_smoke_mask(numpy, shape)
+    sampled_layout_mask = condition_packet["summary"].get("sampled_layout_mask")
+    if sampled_layout_mask is None:
+        return _build_smoke_mask(numpy, shape)
+    return _load_condition_sampled_layout_mask(
+        numpy,
+        sampled_layout_mask,
+        shape,
+    )
+
+
+def _load_condition_sampled_layout_mask(
+    numpy,
+    sampled_layout_mask: dict[str, Any],
+    shape: tuple[int, int],
+):
+    mask_path = Path(sampled_layout_mask["mask_path"])
+    if not mask_path.exists():
+        raise GenerationExecutionError(f"sampled layout mask file does not exist: {mask_path}")
+    try:
+        mask = numpy.load(mask_path)
+    except Exception as exc:
+        raise GenerationExecutionError(f"sampled layout mask cannot be loaded: {mask_path}") from exc
+    if mask.ndim != 2:
+        raise GenerationExecutionError("sampled layout mask must be 2D")
+    unique_values = [int(value) for value in numpy.unique(mask).tolist()]
+    invalid_values = [value for value in unique_values if value < 0 or value >= len(MASK_CLASSES)]
+    if invalid_values:
+        raise GenerationExecutionError("sampled layout mask contains invalid class ids")
+    if tuple(int(value) for value in mask.shape) != tuple(int(value) for value in shape):
+        mask = _resize_nearest(numpy, mask.astype(numpy.uint8), int(shape[0]), int(shape[1]))
+    return mask.astype(numpy.uint8)
 
 
 def _torch_diffusion_smoke_plan(

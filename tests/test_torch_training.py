@@ -44,7 +44,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.47.0",
+            "schema_version": "v0.59.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -79,7 +79,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.47.0",
+            "schema_version": "v0.59.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -105,7 +105,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.47.0",
+            "schema_version": "v0.59.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -150,7 +150,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.47.0",
+                "schema_version": "v0.59.0",
                 "prior_id": "prior-torch-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -166,7 +166,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def generation_config(self) -> dict:
         return {
-            "schema_version": "v0.47.0",
+            "schema_version": "v0.59.0",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -181,18 +181,40 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             "non_copy_patch_nearest_neighbor_search": False,
         }
 
-    def write_condition_packet(self, root: Path, prior_id: str = "prior-torch-smoke") -> Path:
+    def write_condition_packet(
+        self,
+        root: Path,
+        prior_id: str = "prior-torch-smoke",
+        include_tissue_overview: bool = False,
+    ) -> Path:
         path = root / "condition_packet.json"
+        layout = {"source": "layout_mask_prior"}
+        if include_tissue_overview:
+            layout["wsi_tissue_overview"] = {
+                "source": "wsi_tissue_overview",
+                "artifact_path": str(root / "wsi_tissue_overview.json"),
+                "record_count": 1,
+                "source_backend": "openslide",
+                "thumbnail_max_size": [512, 512],
+                "records": [
+                    {
+                        "wsi_id": "slide-001",
+                        "tissue_fraction": 0.625,
+                        "bounding_box_xywh": [2, 3, 64, 48],
+                        "connected_component_count": 4,
+                    }
+                ],
+            }
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.47.0",
+                    "schema_version": "v0.59.0",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T16:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
                     "prior_id": prior_id,
                     "conditions": {
-                        "layout": {"source": "layout_mask_prior"},
+                        "layout": layout,
                         "mask": {"source": "layout_mask_prior"},
                         "style_seed": {"value": 19, "source": "generation_config"},
                         "texture_token": {
@@ -222,6 +244,29 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             encoding="utf-8",
         )
         return path
+
+    def test_torch_condition_packet_loader_records_wsi_tissue_overview_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                include_tissue_overview=True,
+            )
+
+            condition_packet = torch_training._load_condition_packet(
+                condition_packet_path,
+                expected_prior_id="prior-torch-smoke",
+            )
+
+        tissue_summary = condition_packet["summary"]["wsi_tissue_overview"]
+        self.assertEqual(tissue_summary["source"], "wsi_tissue_overview")
+        self.assertEqual(tissue_summary["record_count"], 1)
+        self.assertEqual(tissue_summary["source_backend"], "openslide")
+        self.assertEqual(tissue_summary["thumbnail_max_size"], [512, 512])
+        self.assertEqual(tissue_summary["records"][0]["wsi_id"], "slide-001")
+        self.assertEqual(tissue_summary["records"][0]["tissue_fraction"], 0.625)
+        self.assertEqual(tissue_summary["records"][0]["bounding_box_xywh"], [2, 3, 64, 48])
+        self.assertEqual(tissue_summary["records"][0]["connected_component_count"], 4)
 
     def write_training_index(self, root: Path) -> Path:
         slide_path = self.create_fixture_slide(root)
@@ -263,7 +308,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             log_exists = Path(run["training_log_path"]).exists()
             checkpoint_exists = Path(run["checkpoint_path"]).exists()
 
-        self.assertEqual(run["schema_version"], "v0.47.0")
+        self.assertEqual(run["schema_version"], "v0.59.0")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["status"], "trained")
         self.assertFalse(manifest["usable_for_inference"])
@@ -520,7 +565,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             latent_preview = np.load(run["latent_preview_path"])
             reconstruction_preview = np.load(run["reconstruction_preview_path"])
 
-        self.assertEqual(run["schema_version"], "v0.47.0")
+        self.assertEqual(run["schema_version"], "v0.59.0")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["training_backend"], "torch-smoke-rgb-vae-latent-autoencoder")
         self.assertEqual(manifest["target_type"], "vae_rgb_reconstruction")

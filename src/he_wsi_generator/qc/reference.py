@@ -16,6 +16,8 @@ def build_qc_reference_distribution(
     output_path: str | Path | None,
     metric_names: list[str],
     min_samples: int = 2,
+    estimator: str = "observed_min_max_with_range_margin",
+    outlier_policy: str = "none",
 ) -> dict[str, Any]:
     if not isinstance(qc_reports, list) or not qc_reports:
         raise QCReferenceBuildError("qc_reports must contain at least one report")
@@ -23,8 +25,19 @@ def build_qc_reference_distribution(
         raise QCReferenceBuildError("metric_names must contain at least one metric")
     if not isinstance(min_samples, int) or isinstance(min_samples, bool) or min_samples <= 0:
         raise QCReferenceBuildError("min_samples must be a positive integer")
+    if estimator not in {
+        "observed_min_max_with_range_margin",
+        "robust_iqr",
+        "robust_mad_z_score",
+    }:
+        raise QCReferenceBuildError(
+            "estimator must be observed_min_max_with_range_margin, robust_iqr, "
+            "or robust_mad_z_score"
+        )
+    if outlier_policy not in {"none", "robust_iqr_filter"}:
+        raise QCReferenceBuildError("outlier_policy must be none or robust_iqr_filter")
 
-    values_by_metric = {name: [] for name in metric_names}
+    samples_by_metric = {name: [] for name in metric_names}
     for report in qc_reports:
         validated = validate_qc_report(report)
         numeric_metrics = _numeric_metrics(validated)
@@ -33,19 +46,36 @@ def build_qc_reference_distribution(
                 raise QCReferenceBuildError(
                     f"missing metric {name} in QC report {validated['generated_id']}"
                 )
-            values_by_metric[name].append(numeric_metrics[name])
+            samples_by_metric[name].append(
+                {
+                    "generated_id": validated["generated_id"],
+                    "value": numeric_metrics[name],
+                }
+            )
 
     metrics = {}
-    for name, values in values_by_metric.items():
+    outlier_audit = {"policy": outlier_policy, "metrics": {}}
+    filtered_by_metric = _apply_outlier_policy(samples_by_metric, outlier_policy)
+    for name, result in filtered_by_metric.items():
+        values = [sample["value"] for sample in result["kept_samples"]]
         if len(values) < min_samples:
             raise QCReferenceBuildError(f"metric {name} requires at least {min_samples} samples")
-        metrics[name] = _thresholds(values)
+        metrics[name] = _thresholds(values, estimator)
+        outlier_audit["metrics"][name] = {
+            "original_sample_count": result["original_sample_count"],
+            "kept_sample_count": len(result["kept_samples"]),
+            "excluded_sample_count": len(result["excluded_samples"]),
+            "filter": result["filter"],
+            "excluded_samples": result["excluded_samples"],
+        }
 
     reference = {
         "schema_version": PROJECT_VERSION,
         "created_at": _now_iso(),
         "source": "qc_report_metric_distribution",
         "sample_count": len(qc_reports),
+        "outlier_policy": outlier_policy,
+        "outlier_audit": outlier_audit,
         "metrics": metrics,
     }
     if output_path is not None:
@@ -65,7 +95,78 @@ def _numeric_metrics(qc_report: dict[str, Any]) -> dict[str, float]:
     return metrics
 
 
-def _thresholds(values: list[float]) -> dict[str, Any]:
+def _thresholds(values: list[float], estimator: str) -> dict[str, Any]:
+    if estimator == "robust_iqr":
+        return _robust_iqr_thresholds(values)
+    if estimator == "robust_mad_z_score":
+        return _robust_mad_z_score_thresholds(values)
+    return _observed_min_max_thresholds(values)
+
+
+def _apply_outlier_policy(
+    samples_by_metric: dict[str, list[dict[str, Any]]],
+    outlier_policy: str,
+) -> dict[str, dict[str, Any]]:
+    if outlier_policy == "none":
+        return {
+            name: {
+                "original_sample_count": len(samples),
+                "kept_samples": list(samples),
+                "excluded_samples": [],
+                "filter": None,
+            }
+            for name, samples in samples_by_metric.items()
+        }
+    return {
+        name: _robust_iqr_filter_samples(name, samples)
+        for name, samples in samples_by_metric.items()
+    }
+
+
+def _robust_iqr_filter_samples(
+    metric_name: str,
+    samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    values = [float(sample["value"]) for sample in samples]
+    ordered = sorted(values)
+    q1 = _percentile(ordered, 0.25)
+    q3 = _percentile(ordered, 0.75)
+    iqr = q3 - q1
+    margin_source = iqr if iqr > 0 else max(abs(_percentile(ordered, 0.5)) * 0.1, 1.0)
+    lower = q1 - 1.5 * margin_source
+    upper = q3 + 1.5 * margin_source
+    kept_samples = []
+    excluded_samples = []
+    for sample in samples:
+        value = float(sample["value"])
+        if lower <= value <= upper:
+            kept_samples.append(sample)
+        else:
+            excluded_samples.append(
+                {
+                    "generated_id": sample["generated_id"],
+                    "metric": metric_name,
+                    "value": round(value, 6),
+                    "lower_fence": round(lower, 6),
+                    "upper_fence": round(upper, 6),
+                }
+            )
+    return {
+        "original_sample_count": len(samples),
+        "kept_samples": kept_samples,
+        "excluded_samples": excluded_samples,
+        "filter": {
+            "method": "robust_iqr_filter",
+            "q1": round(q1, 6),
+            "q3": round(q3, 6),
+            "iqr": round(iqr, 6),
+            "lower_fence": round(lower, 6),
+            "upper_fence": round(upper, 6),
+        },
+    }
+
+
+def _observed_min_max_thresholds(values: list[float]) -> dict[str, Any]:
     ordered = sorted(float(value) for value in values)
     observed_min = ordered[0]
     observed_max = ordered[-1]
@@ -81,6 +182,83 @@ def _thresholds(values: list[float]) -> dict[str, Any]:
         "observed_max": round(observed_max, 6),
         "estimator": "observed_min_max_with_range_margin",
     }
+
+
+def _robust_iqr_thresholds(values: list[float]) -> dict[str, Any]:
+    ordered = sorted(float(value) for value in values)
+    observed_min = ordered[0]
+    observed_max = ordered[-1]
+    q1 = _percentile(ordered, 0.25)
+    median = _percentile(ordered, 0.5)
+    q3 = _percentile(ordered, 0.75)
+    iqr = q3 - q1
+    margin_source = iqr if iqr > 0 else max(abs(median) * 0.1, 1.0)
+    warning_min = q1 - 1.5 * margin_source
+    warning_max = q3 + 1.5 * margin_source
+    fail_min = q1 - 3.0 * margin_source
+    fail_max = q3 + 3.0 * margin_source
+    return {
+        "warning_min": round(warning_min, 6),
+        "warning_max": round(warning_max, 6),
+        "fail_min": round(fail_min, 6),
+        "fail_max": round(fail_max, 6),
+        "sample_count": len(values),
+        "observed_min": round(observed_min, 6),
+        "observed_max": round(observed_max, 6),
+        "q1": round(q1, 6),
+        "median": round(median, 6),
+        "q3": round(q3, 6),
+        "iqr": round(iqr, 6),
+        "estimator": "robust_iqr",
+    }
+
+
+def _robust_mad_z_score_thresholds(values: list[float]) -> dict[str, Any]:
+    ordered = sorted(float(value) for value in values)
+    observed_min = ordered[0]
+    observed_max = ordered[-1]
+    median = _percentile(ordered, 0.5)
+    deviations = sorted(abs(value - median) for value in ordered)
+    mad = _percentile(deviations, 0.5)
+    # 1.4826 scales MAD to match a normal-distribution standard deviation.
+    # If all reference values are identical, keep a finite margin so warning/fail
+    # intervals still expose future drift instead of collapsing to one point.
+    scaled_mad = 1.4826 * mad if mad > 0 else max(abs(median) * 0.1, 1.0)
+    warning_z_score = 3.0
+    fail_z_score = 6.0
+    warning_min = median - warning_z_score * scaled_mad
+    warning_max = median + warning_z_score * scaled_mad
+    fail_min = median - fail_z_score * scaled_mad
+    fail_max = median + fail_z_score * scaled_mad
+    return {
+        "warning_min": round(warning_min, 6),
+        "warning_max": round(warning_max, 6),
+        "fail_min": round(fail_min, 6),
+        "fail_max": round(fail_max, 6),
+        "sample_count": len(values),
+        "observed_min": round(observed_min, 6),
+        "observed_max": round(observed_max, 6),
+        "median": round(median, 6),
+        "mad": round(mad, 6),
+        "scaled_mad": round(scaled_mad, 6),
+        "warning_z_score": warning_z_score,
+        "fail_z_score": fail_z_score,
+        "estimator": "robust_mad_z_score",
+    }
+
+
+def _percentile(ordered_values: list[float], fraction: float) -> float:
+    if not ordered_values:
+        raise QCReferenceBuildError("percentile requires at least one value")
+    if len(ordered_values) == 1:
+        return float(ordered_values[0])
+    position = (len(ordered_values) - 1) * fraction
+    lower_index = int(position)
+    upper_index = min(lower_index + 1, len(ordered_values) - 1)
+    weight = position - lower_index
+    lower = ordered_values[lower_index]
+    upper = ordered_values[upper_index]
+    return float(lower + (upper - lower) * weight)
 
 
 def _now_iso() -> str:

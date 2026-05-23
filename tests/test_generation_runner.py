@@ -41,7 +41,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.47.0",
+                "schema_version": "v0.59.0",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -60,7 +60,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.47.0",
+                    "schema_version": "v0.59.0",
                     "model_family": "latent_diffusion_unet",
                     "status": "trained",
                     "usable_for_inference": True,
@@ -75,7 +75,7 @@ class GenerationRunnerTests(unittest.TestCase):
 
     def generation_config(self, canvas_size_40x: list[int] | None = None) -> dict:
         config = {
-            "schema_version": "v0.47.0",
+            "schema_version": "v0.59.0",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -92,19 +92,56 @@ class GenerationRunnerTests(unittest.TestCase):
         }
         return config
 
-    def write_condition_packet(self, root: Path, prior_id: str = "prior-smoke") -> Path:
+    def write_condition_packet(
+        self,
+        root: Path,
+        prior_id: str = "prior-smoke",
+        include_tissue_overview: bool = False,
+        sampled_layout_mask_path: Path | None = None,
+    ) -> Path:
         path = root / "condition_packet.json"
+        layout = {"source": "layout_mask_prior"}
+        mask_condition = {"source": "layout_mask_prior"}
+        if include_tissue_overview:
+            layout["wsi_tissue_overview"] = {
+                "source": "wsi_tissue_overview",
+                "artifact_path": str(root / "wsi_tissue_overview.json"),
+                "record_count": 1,
+                "source_backend": "openslide",
+                "thumbnail_max_size": [512, 512],
+                "records": [
+                    {
+                        "wsi_id": "slide-001",
+                        "tissue_fraction": 0.375,
+                        "bounding_box_xywh": [8, 4, 32, 24],
+                        "connected_component_count": 3,
+                    }
+                ],
+            }
+        if sampled_layout_mask_path is not None:
+            sampled_manifest = json.loads(sampled_layout_mask_path.read_text(encoding="utf-8"))
+            mask_condition = {
+                "source": "sampled_layout_mask",
+                "artifact_path": str(sampled_layout_mask_path),
+                "mask_path": sampled_manifest["mask_path"],
+                "sample_id": sampled_manifest["sample_id"],
+                "mask_shape": sampled_manifest["mask_shape"],
+                "class_names": sampled_manifest["class_names"],
+                "class_pixel_counts_by_id": sampled_manifest["class_pixel_counts_by_id"],
+                "class_fractions_by_id": sampled_manifest["class_fractions_by_id"],
+                "mask_role": "semantic_spatial_condition",
+            }
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.47.0",
+                    "schema_version": "v0.59.0",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T15:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
                     "prior_id": prior_id,
                     "conditions": {
-                        "layout": {"source": "layout_mask_prior"},
-                        "mask": {"source": "layout_mask_prior"},
+                        "layout": layout,
+                        "mask": mask_condition,
                         "style_seed": {
                             "value": 22,
                             "source": "generation_config",
@@ -136,6 +173,47 @@ class GenerationRunnerTests(unittest.TestCase):
             encoding="utf-8",
         )
         return path
+
+    def write_sampled_layout_mask(self, root: Path) -> Path:
+        mask_path = root / "sampled_layout_mask.npy"
+        manifest_path = root / "sampled_layout_mask.json"
+        mask = np.zeros((512, 512), dtype=np.uint8)
+        mask[64:256, 64:256] = 2
+        mask[256:448, 64:256] = 3
+        np.save(mask_path, mask)
+        counts = [int((mask == class_id).sum()) for class_id in range(6)]
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v0.59.0",
+                    "artifact_type": "sampled_layout_mask",
+                    "created_at": "2026-05-23T16:00:00Z",
+                    "sample_id": "layout-smoke-001",
+                    "random_seed": 13,
+                    "mask_path": str(mask_path),
+                    "mask_shape": [512, 512],
+                    "source": {
+                        "source_type": "statistical_layout_mask_prior_sampler",
+                        "layout_mask_prior_path": str(root / "layout_mask_prior.json"),
+                        "wsi_tissue_overview_path": None,
+                    },
+                    "class_names": [
+                        "background",
+                        "tissue",
+                        "target_pathology",
+                        "supporting_tissue",
+                        "necrosis_debris",
+                        "artifact",
+                    ],
+                    "class_pixel_counts_by_id": counts,
+                    "class_fractions_by_id": [round(count / mask.size, 9) for count in counts],
+                    "tissue_overview_reference": None,
+                    "limitations": ["statistical_layout_sampler_only"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return manifest_path
 
     def test_run_smoke_generation_writes_complete_output_object(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -183,6 +261,15 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertEqual(run_summary["plan"]["stages"][0]["status"], "completed")
         self.assertEqual(run_summary["plan"]["tile_traversal_plan"]["completed_tile_count"], 1)
         self.assertEqual(run_summary["plan"]["tile_traversal_plan"]["pending_tile_count"], 0)
+        self.assertEqual(run_summary["pyramid_report"]["write_mode"], "chunked_pyramid_write")
+        self.assertIn("chunked_write_audit", run_summary["pyramid_report"])
+        self.assertFalse(
+            run_summary["pyramid_report"]["chunked_write_audit"]["production_streaming"]
+        )
+        self.assertEqual(
+            run_summary["pyramid_report"]["chunked_write_audit"]["levels"][0]["chunk_shape"],
+            [512, 512],
+        )
         self.assertEqual(qc["overall_status"], "fail")
         self.assertEqual(batch_line["generated_id"], "gen-smoke")
         self.assertEqual(batch_line["status"], "fail")
@@ -246,6 +333,164 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertEqual(run_summary["condition_packet"]["path"], str(condition_packet_path))
         self.assertEqual(run_summary["condition_packet"]["summary"]["cascade_level"], "1/1")
 
+    def test_run_smoke_generation_uses_sampled_layout_mask_condition(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            sampled_layout_mask_path = self.write_sampled_layout_mask(root)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                sampled_layout_mask_path=sampled_layout_mask_path,
+            )
+            output_root = root / "generated" / "gen-sampled-layout"
+
+            result = run_smoke_generation(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-sampled-layout",
+                condition_packet_path=condition_packet_path,
+            )
+            metadata = json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+            generated_mask = np.load(metadata["output"]["mask_path"])
+            source_mask = np.load(root / "sampled_layout_mask.npy")
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+
+        np.testing.assert_array_equal(generated_mask, source_mask)
+        self.assertEqual(
+            metadata["generation"]["condition_summary"]["sampled_layout_mask"]["sample_id"],
+            "layout-smoke-001",
+        )
+        self.assertEqual(
+            run_summary["condition_packet"]["summary"]["sampled_layout_mask"]["mask_shape"],
+            [512, 512],
+        )
+
+    def test_run_smoke_generation_records_sampled_layout_mask_qc_proxy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            sampled_layout_mask_path = self.write_sampled_layout_mask(root)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                sampled_layout_mask_path=sampled_layout_mask_path,
+            )
+            output_root = root / "generated" / "gen-sampled-layout-qc"
+
+            result = run_smoke_generation(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-sampled-layout-qc",
+                condition_packet_path=condition_packet_path,
+            )
+            qc = json.loads(Path(result["qc_json_path"]).read_text(encoding="utf-8"))
+
+        metrics = {metric["name"]: metric for metric in qc["non_copy_report"]["metrics"]}
+        self.assertEqual(metrics["sampled_layout_mask_match_proxy"]["status"], "pass")
+        self.assertEqual(metrics["sampled_layout_mask_match_proxy"]["value"], 1.0)
+        self.assertEqual(
+            metrics["sampled_layout_mask_match_proxy"]["reference"]["sample_id"],
+            "layout-smoke-001",
+        )
+
+    def test_run_smoke_generation_records_wsi_tissue_overview_condition_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                include_tissue_overview=True,
+            )
+            output_root = root / "generated" / "gen-conditioned-tissue"
+
+            result = run_smoke_generation(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-conditioned-tissue",
+                condition_packet_path=condition_packet_path,
+            )
+            metadata = json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+
+        tissue_summary = metadata["generation"]["condition_summary"]["wsi_tissue_overview"]
+        self.assertEqual(tissue_summary["source"], "wsi_tissue_overview")
+        self.assertEqual(tissue_summary["record_count"], 1)
+        self.assertEqual(tissue_summary["source_backend"], "openslide")
+        self.assertEqual(tissue_summary["thumbnail_max_size"], [512, 512])
+        self.assertEqual(tissue_summary["records"][0]["wsi_id"], "slide-001")
+        self.assertEqual(tissue_summary["records"][0]["tissue_fraction"], 0.375)
+        self.assertEqual(tissue_summary["records"][0]["bounding_box_xywh"], [8, 4, 32, 24])
+        self.assertEqual(tissue_summary["records"][0]["connected_component_count"], 3)
+        self.assertEqual(
+            run_summary["condition_packet"]["summary"]["wsi_tissue_overview"],
+            tissue_summary,
+        )
+
+    def test_run_smoke_generation_records_wsi_tissue_overview_qc_proxy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                include_tissue_overview=True,
+            )
+            output_root = root / "generated" / "gen-conditioned-tissue-qc"
+
+            result = run_smoke_generation(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-conditioned-tissue-qc",
+                condition_packet_path=condition_packet_path,
+            )
+            qc = json.loads(Path(result["qc_json_path"]).read_text(encoding="utf-8"))
+
+        metrics = {metric["name"]: metric for metric in qc["non_copy_report"]["metrics"]}
+        self.assertIn("wsi_tissue_fraction_reference_proxy", metrics)
+        self.assertEqual(
+            metrics["wsi_tissue_fraction_reference_proxy"]["reference"]["wsi_id"],
+            "slide-001",
+        )
+        self.assertEqual(
+            metrics["wsi_tissue_fraction_reference_proxy"]["reference"]["tissue_fraction"],
+            0.375,
+        )
+
+    def test_run_smoke_generation_rejects_invalid_wsi_tissue_overview_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                include_tissue_overview=True,
+            )
+            packet = json.loads(condition_packet_path.read_text(encoding="utf-8"))
+            del packet["conditions"]["layout"]["wsi_tissue_overview"]["records"][0][
+                "tissue_fraction"
+            ]
+            condition_packet_path.write_text(json.dumps(packet), encoding="utf-8")
+
+            with self.assertRaisesRegex(GenerationExecutionError, "tissue_fraction"):
+                run_smoke_generation(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=root / "generated" / "gen-invalid-tissue",
+                    generated_id="gen-invalid-tissue",
+                    condition_packet_path=condition_packet_path,
+                )
+
     def test_run_smoke_generation_rejects_condition_packet_prior_mismatch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -271,7 +516,7 @@ class GenerationRunnerTests(unittest.TestCase):
             checkpoint_manifest_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.47.0",
+                        "schema_version": "v0.59.0",
                         "model_family": "latent_diffusion_unet",
                         "status": "not_trained",
                         "usable_for_inference": False,

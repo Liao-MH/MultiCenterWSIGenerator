@@ -25,25 +25,25 @@ class PriorArtifactTests(unittest.TestCase):
         paths = {}
         for name, payload in {
             "layout_mask_prior": {
-                "schema_version": "v0.47.0",
+                "schema_version": "v0.59.0",
                 "prior_type": "layout_mask_prior",
                 "sample_count": 2,
                 "non_background_fraction": 0.75,
             },
             "style_prior": {
-                "schema_version": "v0.47.0",
+                "schema_version": "v0.59.0",
                 "prior_type": "style_prior",
                 "sample_count": 2,
                 "rgb_statistics": {"mean_rgb": [180.0, 120.0, 160.0]},
             },
             "texture_prior": {
-                "schema_version": "v0.47.0",
+                "schema_version": "v0.59.0",
                 "prior_type": "texture_prior",
                 "embedding_count": 4,
                 "cluster_count": 2,
             },
             "qc_reference_distribution": {
-                "schema_version": "v0.47.0",
+                "schema_version": "v0.59.0",
                 "source": "qc_report_metric_distribution",
                 "sample_count": 3,
                 "metrics": {
@@ -54,6 +54,16 @@ class PriorArtifactTests(unittest.TestCase):
                     }
                 },
             },
+            "wsi_tissue_overview": {
+                "schema_version": "v0.59.0",
+                "artifact_type": "wsi_tissue_overview",
+                "record_count": 2,
+                "source": {
+                    "backend": "openslide",
+                    "thumbnail_max_size": [512, 512],
+                },
+                "records": [],
+            },
         }.items():
             path = root / f"{name}.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
@@ -63,7 +73,7 @@ class PriorArtifactTests(unittest.TestCase):
     def build_manifest(self, root: Path) -> dict:
         artifact_paths = self.write_artifacts(root)
         return {
-            "schema_version": "v0.47.0",
+            "schema_version": "v0.59.0",
             "prior_id": "prior-demo",
             "created_at": "2026-05-23T10:00:00Z",
             "random_seed": 7,
@@ -76,6 +86,7 @@ class PriorArtifactTests(unittest.TestCase):
             "artifacts": {
                 name: create_prior_artifact_entry(path, kind="json", metadata={"stage": name})
                 for name, path in artifact_paths.items()
+                if name != "wsi_tissue_overview"
             },
         }
 
@@ -87,7 +98,7 @@ class PriorArtifactTests(unittest.TestCase):
 
             loaded = load_prior_manifest(manifest_path, verify_files=True)
 
-        self.assertEqual(loaded["schema_version"], "v0.47.0")
+        self.assertEqual(loaded["schema_version"], "v0.59.0")
         self.assertEqual(loaded["prior_id"], "prior-demo")
         self.assertEqual(loaded["random_seed"], 7)
         self.assertEqual(
@@ -179,7 +190,7 @@ class PriorArtifactTests(unittest.TestCase):
             manifest_path = output_dir / "prior_manifest.json"
             loaded = load_prior_manifest(manifest_path, verify_files=True)
 
-        self.assertEqual(manifest["schema_version"], "v0.47.0")
+        self.assertEqual(manifest["schema_version"], "v0.59.0")
         self.assertEqual(loaded["created_at"], "2026-05-23T12:00:00Z")
         self.assertEqual(loaded["input_data"]["dataset_id"], "demo")
         self.assertEqual(loaded["input_data"]["manifest_path"], "inputs/manifest.json")
@@ -190,7 +201,7 @@ class PriorArtifactTests(unittest.TestCase):
         )
         self.assertEqual(
             loaded["artifacts"]["style_prior"]["metadata"]["artifact_schema_version"],
-            "v0.47.0",
+            "v0.59.0",
         )
         self.assertEqual(
             loaded["artifacts"]["texture_prior"]["metadata"]["cluster_count"],
@@ -201,6 +212,36 @@ class PriorArtifactTests(unittest.TestCase):
             1,
         )
 
+    def test_build_prior_manifest_from_artifacts_records_optional_wsi_tissue_overview(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            artifact_paths = self.write_artifacts(root / "artifacts")
+            output_dir = root / "prior"
+
+            manifest = build_prior_manifest_from_artifacts(
+                output_dir=output_dir,
+                prior_id="prior-demo",
+                dataset_id="demo",
+                input_manifest_path="inputs/manifest.json",
+                training_data_version="train-v1",
+                wsi_ids=["slide-001", "slide-002"],
+                random_seed=7,
+                layout_mask_prior_path=artifact_paths["layout_mask_prior"],
+                style_prior_path=artifact_paths["style_prior"],
+                texture_prior_path=artifact_paths["texture_prior"],
+                qc_reference_distribution_path=artifact_paths["qc_reference_distribution"],
+                wsi_tissue_overview_path=artifact_paths["wsi_tissue_overview"],
+                created_at="2026-05-23T12:00:00Z",
+            )
+
+        artifact = manifest["artifacts"]["wsi_tissue_overview"]
+        self.assertEqual(artifact["kind"], "json")
+        self.assertEqual(artifact["metadata"]["artifact_type"], "wsi_tissue_overview")
+        self.assertEqual(artifact["metadata"]["artifact_schema_version"], "v0.59.0")
+        self.assertEqual(artifact["metadata"]["record_count"], 2)
+        self.assertEqual(artifact["metadata"]["source_backend"], "openslide")
+        self.assertEqual(artifact["metadata"]["thumbnail_max_size"], [512, 512])
+
     def test_build_prior_manifest_from_artifacts_rejects_artifact_type_mismatch(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -208,7 +249,7 @@ class PriorArtifactTests(unittest.TestCase):
             artifact_paths["style_prior"].write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.47.0",
+                        "schema_version": "v0.59.0",
                         "prior_type": "layout_mask_prior",
                     }
                 ),
@@ -269,6 +310,8 @@ class PriorArtifactTests(unittest.TestCase):
                     str(artifact_paths["texture_prior"]),
                     "--qc-reference-distribution",
                     str(artifact_paths["qc_reference_distribution"]),
+                    "--wsi-tissue-overview",
+                    str(artifact_paths["wsi_tissue_overview"]),
                 ],
                 cwd=REPO_ROOT,
                 env=env,
@@ -283,6 +326,7 @@ class PriorArtifactTests(unittest.TestCase):
         self.assertIn("prior manifest written", result.stdout)
         self.assertEqual(manifest["prior_id"], "prior-demo")
         self.assertEqual(manifest["input_data"]["wsi_ids"], ["slide-001", "slide-002"])
+        self.assertIn("wsi_tissue_overview", manifest["artifacts"])
 
 
 if __name__ == "__main__":

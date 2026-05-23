@@ -17,6 +17,8 @@ def build_qc_report(
     pyramid_report: dict[str, Any],
     non_copy_items: list[dict[str, Any]],
     qc_reference_distribution: dict[str, Any] | None = None,
+    wsi_tissue_overview_summary: dict[str, Any] | None = None,
+    sampled_layout_mask_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     wsi_path = Path(wsi_path)
     mask_path = Path(mask_path)
@@ -47,6 +49,20 @@ def build_qc_report(
     mask_metrics.extend(_mask_quality_metrics(mask_path, image_shape))
     _apply_reference_thresholds(mask_metrics, reference)
     non_copy_metrics = _non_copy_similarity_metrics(wsi_path, mask_path)
+    if wsi_tissue_overview_summary is not None:
+        non_copy_metrics.append(
+            _wsi_tissue_fraction_reference_metric(
+                mask_metrics,
+                wsi_tissue_overview_summary,
+            )
+        )
+    if sampled_layout_mask_summary is not None:
+        non_copy_metrics.append(
+            _sampled_layout_mask_match_metric(
+                mask_path,
+                sampled_layout_mask_summary,
+            )
+        )
     overall = _combine_status(file_metrics + tile_metrics + mask_metrics)
     report = {
         "schema_version": PROJECT_VERSION,
@@ -322,6 +338,112 @@ def _non_copy_similarity_metrics(wsi_path: Path, mask_path: Path) -> list[dict[s
         _similarity_metric("mask_layout_similarity_proxy", mask_layout_similarity),
         _similarity_metric("global_embedding_similarity_proxy", global_embedding_similarity),
     ]
+
+
+def _wsi_tissue_fraction_reference_metric(
+    mask_metrics: list[dict[str, Any]],
+    overview: dict[str, Any],
+) -> dict[str, Any]:
+    reference_record = _first_wsi_tissue_overview_record(overview)
+    reference_fraction = _require_number(
+        reference_record,
+        "tissue_fraction",
+        "wsi_tissue_overview_summary.records[0].tissue_fraction",
+    )
+    generated_fraction = _mask_tissue_fraction_from_metrics(mask_metrics)
+    difference = abs(float(generated_fraction) - float(reference_fraction))
+    proxy = max(0.0, min(1.0, 1.0 - difference))
+    metric = _similarity_metric("wsi_tissue_fraction_reference_proxy", proxy)
+    metric["generated_mask_fraction"] = round(float(generated_fraction), 6)
+    metric["reference"] = {
+        "source": "wsi_tissue_overview",
+        "wsi_id": reference_record.get("wsi_id"),
+        "tissue_fraction": float(reference_fraction),
+        "bounding_box_xywh": list(reference_record.get("bounding_box_xywh", [])),
+        "connected_component_count": reference_record.get("connected_component_count"),
+    }
+    return metric
+
+
+def _first_wsi_tissue_overview_record(overview: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(overview, dict):
+        raise QCReferenceError("wsi_tissue_overview_summary must be an object")
+    records = overview.get("records")
+    if not isinstance(records, list) or not records:
+        raise QCReferenceError("wsi_tissue_overview_summary.records must be a non-empty list")
+    record = records[0]
+    if not isinstance(record, dict):
+        raise QCReferenceError("wsi_tissue_overview_summary.records[0] must be an object")
+    return record
+
+
+def _sampled_layout_mask_match_metric(
+    generated_mask_path: Path,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(summary, dict):
+        raise QCReferenceError("sampled_layout_mask_summary must be an object")
+    sampled_mask_path = Path(
+        _require_string(
+            summary,
+            "mask_path",
+            "sampled_layout_mask_summary.mask_path",
+        )
+    )
+    if not sampled_mask_path.exists():
+        raise QCReferenceError(f"sampled layout mask file does not exist: {sampled_mask_path}")
+    try:
+        numpy = _import_numpy()
+        generated_mask = numpy.load(generated_mask_path)
+        sampled_mask = numpy.load(sampled_mask_path)
+    except Exception as exc:
+        raise QCReferenceError("sampled layout mask comparison requires readable .npy masks") from exc
+    if generated_mask.ndim != 2 or sampled_mask.ndim != 2:
+        raise QCReferenceError("sampled layout mask comparison requires 2D masks")
+    if generated_mask.shape != sampled_mask.shape:
+        sampled_mask = _resize_nearest(
+            numpy,
+            sampled_mask.astype(numpy.uint8),
+            int(generated_mask.shape[0]),
+            int(generated_mask.shape[1]),
+        )
+    matched_fraction = float((generated_mask == sampled_mask).mean())
+    metric = _similarity_metric("sampled_layout_mask_match_proxy", matched_fraction)
+    metric["matched_pixel_fraction"] = round(matched_fraction, 6)
+    metric["reference"] = {
+        "source": "sampled_layout_mask",
+        "artifact_path": summary.get("artifact_path"),
+        "mask_path": str(sampled_mask_path),
+        "sample_id": summary.get("sample_id"),
+        "mask_shape": list(summary.get("mask_shape", [])),
+        "class_pixel_counts_by_id": list(summary.get("class_pixel_counts_by_id", [])),
+        "class_fractions_by_id": list(summary.get("class_fractions_by_id", [])),
+    }
+    return metric
+
+
+def _mask_tissue_fraction_from_metrics(mask_metrics: list[dict[str, Any]]) -> float:
+    for metric in mask_metrics:
+        if metric.get("name") == "mask_tissue_fraction":
+            value = metric.get("value")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+            raise QCReferenceError("mask_tissue_fraction metric must be numeric")
+    raise QCReferenceError("mask_tissue_fraction metric is required for tissue overview QC")
+
+
+def _require_number(data: dict[str, Any], key: str, path: str) -> int | float:
+    value = data.get(key)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise QCReferenceError(f"{path} must be a number")
+    return value
+
+
+def _require_string(data: dict[str, Any], key: str, path: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or value == "":
+        raise QCReferenceError(f"{path} must be a non-empty string")
+    return value
 
 
 def _sharpness_proxy(numpy, rgb_float) -> float:

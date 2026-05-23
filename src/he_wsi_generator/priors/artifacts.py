@@ -14,6 +14,8 @@ PRIOR_ARTIFACT_TYPES = (
     "texture_prior",
     "qc_reference_distribution",
 )
+OPTIONAL_PRIOR_ARTIFACT_TYPES = ("wsi_tissue_overview",)
+ALL_PRIOR_ARTIFACT_TYPES = PRIOR_ARTIFACT_TYPES + OPTIONAL_PRIOR_ARTIFACT_TYPES
 
 
 class PriorArtifactError(ValueError):
@@ -33,6 +35,7 @@ def build_prior_manifest_from_artifacts(
     style_prior_path: str | Path,
     texture_prior_path: str | Path,
     qc_reference_distribution_path: str | Path,
+    wsi_tissue_overview_path: str | Path | None = None,
     created_at: str | None = None,
 ) -> dict[str, Any]:
     artifact_paths = {
@@ -41,6 +44,8 @@ def build_prior_manifest_from_artifacts(
         "texture_prior": texture_prior_path,
         "qc_reference_distribution": qc_reference_distribution_path,
     }
+    if wsi_tissue_overview_path is not None:
+        artifact_paths["wsi_tissue_overview"] = wsi_tissue_overview_path
     artifacts = {}
     for artifact_type, artifact_path in artifact_paths.items():
         artifact_json = _load_artifact_json(artifact_path, artifact_type)
@@ -143,12 +148,14 @@ def validate_prior_manifest(
     for artifact_type in PRIOR_ARTIFACT_TYPES:
         if artifact_type not in artifacts:
             raise PriorArtifactError(f"missing required artifact: {artifact_type}")
-    extra = sorted(set(artifacts).difference(PRIOR_ARTIFACT_TYPES))
+    extra = sorted(set(artifacts).difference(ALL_PRIOR_ARTIFACT_TYPES))
     if extra:
         raise PriorArtifactError(f"unknown artifact type: {extra[0]}")
 
     seen_paths: set[str] = set()
-    for artifact_type in PRIOR_ARTIFACT_TYPES:
+    for artifact_type in ALL_PRIOR_ARTIFACT_TYPES:
+        if artifact_type not in artifacts:
+            continue
         artifact = _require_dict(artifacts, artifact_type, f"artifacts.{artifact_type}")
         path = _require_non_empty_str(artifact, "path", f"artifacts.{artifact_type}.path")
         if path in seen_paths:
@@ -244,6 +251,21 @@ def _summarize_artifact_json(artifact_type: str, data: dict[str, Any]) -> dict[s
             "qc_reference_distribution.metrics",
         )
         metadata["metric_count"] = len(metrics)
+    elif artifact_type == "wsi_tissue_overview":
+        actual_type = _require_non_empty_str(
+            data,
+            "artifact_type",
+            "wsi_tissue_overview artifact_type",
+        )
+        if actual_type != "wsi_tissue_overview":
+            raise PriorArtifactError(
+                "wsi_tissue_overview artifact_type must be wsi_tissue_overview"
+            )
+        source = _require_dict(data, "source", "wsi_tissue_overview.source")
+        if "backend" in source:
+            metadata["source_backend"] = deepcopy(source["backend"])
+        if "thumbnail_max_size" in source:
+            metadata["thumbnail_max_size"] = deepcopy(source["thumbnail_max_size"])
 
     for key in (
         "sample_count",
@@ -251,6 +273,7 @@ def _summarize_artifact_json(artifact_type: str, data: dict[str, Any]) -> dict[s
         "embedding_dim",
         "cluster_count",
         "non_background_fraction",
+        "record_count",
     ):
         if key in data:
             metadata[key] = deepcopy(data[key])

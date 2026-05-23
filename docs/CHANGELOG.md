@@ -1,5 +1,634 @@
 # CHANGELOG
 
+## v0.59.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本继续推进自动 QC 的训练分布自适应阈值能力：`qc_reference_distribution` 需要支持 robust z-score 风格的全局阈值估计，让颜色、清晰度、组织比例等数值 metric 能用 median/MAD 生成抗离群的 warning/fail 区间。
+
+### 已做改动
+
+- 版本号升级到 `v0.59.0`。
+- `build_qc_reference_distribution()` 的 `estimator` 新增 `robust_mad_z_score`。
+- `robust_mad_z_score` 基于排序后的参考 QC 数值计算 median、MAD 和 scaled MAD。
+- `robust_mad_z_score` 输出 `median`、`mad`、`scaled_mad`、`warning_z_score`、`fail_z_score`、observed min/max、sample count 和 estimator 字段。
+- Warning 区间使用 `median ± 3.0 * scaled_mad`，fail 区间使用 `median ± 6.0 * scaled_mad`。
+- MAD 为 0 时使用有限非零 margin，避免阈值坍缩到单点。
+- `robust_mad_z_score` 与既有 `outlier_policy` 兼容；显式启用 `robust_iqr_filter` 时会先过滤参考样本，再用保留样本估计 MAD/z-score 阈值。
+- CLI `build-qc-reference --estimator` 新增 `robust_mad_z_score` 可选值。
+- README 同步说明 MAD/z-score estimator 的用法、输出字段和当前边界。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/qc/reference.py`
+- `src/he_wsi_generator/cli.py`
+- `tests/test_qc_reference.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.59.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_qc_reference tests.test_version -v`
+  - 结果：12 个测试通过。
+- TDD 红灯记录：
+  - 新增 MAD/z-score estimator 测试最初因 `build_qc_reference_distribution()` 不支持 `robust_mad_z_score` estimator 而失败。
+  - CLI 测试最初因 `build-qc-reference --estimator` 不支持 `robust_mad_z_score` 而未能写出输出文件。
+- CLI 实测：
+  - `PYTHONPATH=src python -m he_wsi_generator.cli build-qc-reference <tmp>/qc-1.json ... <tmp>/qc-5.json --metric mean_red --estimator robust_mad_z_score --outlier-policy robust_iqr_filter --output <tmp>/qc_reference_distribution.json`
+  - 结果：输出 `schema_version=v0.59.0`，`outlier_policy=robust_iqr_filter`，`mean_red.estimator=robust_mad_z_score`，过滤后 `sample_count=4`、`observed_max=106.0`、`median=103.0`、`mad=2.0`、`scaled_mad=2.9652`、`warning_z_score=3.0`、`fail_z_score=6.0`。
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：172 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 PyTorch 被跳过。
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新构建 v0.59.0 验证链路：
+  - `build-wsi-tissue-overview build/validation/v0.59.0-291288/input_manifest.json --backend openslide --thumbnail-max-size 512 --output build/validation/v0.59.0-291288/wsi_tissue_overview.json`
+  - `build-qc-reference build/validation/v0.59.0-291288/reference-qc/qc-reference-291288.json --metric mean_red --metric mask_tissue_fraction --min-samples 1 --estimator robust_mad_z_score --outlier-policy robust_iqr_filter --output build/validation/v0.59.0-291288/qc_reference_distribution.json`
+  - `build-prior-manifest --output-dir build/validation/v0.59.0-291288/prior ... --qc-reference-distribution build/validation/v0.59.0-291288/qc_reference_distribution.json --wsi-tissue-overview build/validation/v0.59.0-291288/wsi_tissue_overview.json`
+  - `validate-prior-manifest build/validation/v0.59.0-291288/prior/prior_manifest.json`
+  - `sample-layout-mask build/validation/v0.59.0-291288/layout_mask_prior.json --output-dir build/validation/v0.59.0-291288/sampled-layout --sample-id 291288-v059-sampled-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview build/validation/v0.59.0-291288/wsi_tissue_overview.json`
+  - `build-condition-packet configs/generation.default.json --prior-manifest build/validation/v0.59.0-291288/prior/prior_manifest.json --output build/validation/v0.59.0-291288/condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask build/validation/v0.59.0-291288/sampled-layout/sampled_layout_mask.json`
+  - `run-generation configs/generation.default.json --backend smoke-cascade --prior-manifest build/validation/v0.59.0-291288/prior/prior_manifest.json --checkpoint-manifest build/validation/v0.59.0-291288/trained-checkpoint.json --output-root build/validation/v0.59.0-291288/generated/gen-291288-smoke-sampled-mask --generated-id gen-291288-smoke-sampled-mask-v059 --condition-packet build/validation/v0.59.0-291288/condition_packet.json`
+  - `validate metadata build/validation/v0.59.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json`
+  - `validate qc build/validation/v0.59.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+  - `inspect-output-summary --metadata build/validation/v0.59.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json --qc build/validation/v0.59.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+- 真实 SVS 验证结果：
+  - `wsi_tissue_overview.json`、`qc_reference_distribution.json`、`sampled_layout_mask.json`、`condition_packet.json`、`generation_run.json`、`metadata.json` 与 `qc.json` 均为 `schema_version=v0.59.0`。
+  - `qc_reference_distribution.outlier_policy=robust_iqr_filter`，`metrics.mean_red.estimator=robust_mad_z_score`，单样本验证 reference 中 `mean_red.sample_count=1`、`median=127.5`、`mad=0.0`、`scaled_mad=12.75`、`warning_z_score=3.0`、`fail_z_score=6.0`。
+  - `outlier_audit.metrics.mean_red` 记录原始 1 个样本、保留 1 个样本、排除 0 个样本。
+  - 输出目录 `build/validation/v0.59.0-291288/generated/gen-291288-smoke-sampled-mask/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`generation_run.json` 和 `batch.jsonl`。
+  - `metadata.json` 与 `qc.json` 均通过当前 schema 校验，`inspect-output-summary` 返回 `qc_status=pass`，三级状态 `wsi/tile/mask_region` 均为 `pass`。
+  - `sampled_layout_mask_match_proxy.status=pass`，`value=1.0`，`matched_pixel_fraction=1.0`。
+  - 最终 `generated_mask/mask.npy` 与 `sampled_layout_mask.npy` 完全一致，shape 均为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+  - `generation_run.json.pyramid_report.write_mode=chunked_pyramid_write`，并包含 `chunked_write_audit`。
+  - `chunked_write_audit.writer_backend=tifffile`，`production_streaming=false`。
+  - 验证目录大小约 `1.5M`，最终输出目录约 `1.2M`。
+
+## v0.58.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本继续推进自动 QC 的训练分布自适应阈值能力：`qc_reference_distribution` 需要支持显式的参考 QC 异常值过滤策略，在生成阈值前排除少量明显离群参考样本，同时保留完整审计记录，避免静默丢弃数据。
+
+### 已做改动
+
+- 版本号升级到 `v0.58.0`。
+- `build_qc_reference_distribution()` 新增 `outlier_policy` 参数，默认 `none`，保持既有行为兼容。
+- 新增 `robust_iqr_filter` policy：对每个 metric 的参考 QC 数值计算 Q1、Q3 和 IQR，并使用 `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]` 作为保留区间。
+- `robust_iqr_filter` 会在阈值估计前按 metric 排除 fence 外的参考样本；过滤结果只影响当前 metric，不会删除或改写原始 QC 文件。
+- 输出 JSON 新增 `outlier_policy` 和 `outlier_audit`，记录每个 metric 的原始样本数、保留样本数、排除样本数、filter fence 和被排除样本的 `generated_id`、metric name、value。
+- 若过滤后样本数低于 `min_samples`，builder 会显式报错，不会回退到未过滤样本。
+- 非法 `outlier_policy` 会通过 `QCReferenceBuildError` 显式报错。
+- CLI `build-qc-reference` 新增 `--outlier-policy` 参数，支持 `none` 和 `robust_iqr_filter`。
+- README 同步说明 reference outlier filtering 的用法、审计字段和当前边界。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/qc/reference.py`
+- `src/he_wsi_generator/cli.py`
+- `tests/test_qc_reference.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.58.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_qc_reference tests.test_version -v`
+  - 结果：10 个测试通过。
+- TDD 红灯记录：
+  - 新增 outlier policy 测试最初因 `build_qc_reference_distribution()` 不支持 `outlier_policy` 参数而失败。
+  - CLI 测试最初因 `build-qc-reference` 不支持 `--outlier-policy` 而未能写出输出文件。
+- CLI 实测：
+  - `PYTHONPATH=src python -m he_wsi_generator.cli build-qc-reference <tmp>/qc-1.json ... <tmp>/qc-5.json --metric mean_red --estimator robust_iqr --outlier-policy robust_iqr_filter --output <tmp>/qc_reference_distribution.json`
+  - 结果：输出 `schema_version=v0.58.0`，`outlier_policy=robust_iqr_filter`，`mean_red.sample_count=4`，`mean_red.observed_max=106.0`，`outlier_audit` 记录原始 5 个样本、保留 4 个样本、排除 1 个样本，排除样本为 `gen-cli-005` 且数值为 `500.0`。
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：170 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 PyTorch 被跳过。
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新构建 v0.58.0 验证链路：
+  - `build-wsi-tissue-overview build/validation/v0.58.0-291288/input_manifest.json --backend openslide --thumbnail-max-size 512 --output build/validation/v0.58.0-291288/wsi_tissue_overview.json`
+  - `build-qc-reference build/validation/v0.58.0-291288/reference-qc/qc-reference-291288.json --metric mean_red --metric mask_tissue_fraction --min-samples 1 --estimator robust_iqr --outlier-policy robust_iqr_filter --output build/validation/v0.58.0-291288/qc_reference_distribution.json`
+  - `build-prior-manifest --output-dir build/validation/v0.58.0-291288/prior ... --qc-reference-distribution build/validation/v0.58.0-291288/qc_reference_distribution.json --wsi-tissue-overview build/validation/v0.58.0-291288/wsi_tissue_overview.json`
+  - `validate-prior-manifest build/validation/v0.58.0-291288/prior/prior_manifest.json`
+  - `sample-layout-mask build/validation/v0.58.0-291288/layout_mask_prior.json --output-dir build/validation/v0.58.0-291288/sampled-layout --sample-id 291288-v058-sampled-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview build/validation/v0.58.0-291288/wsi_tissue_overview.json`
+  - `build-condition-packet configs/generation.default.json --prior-manifest build/validation/v0.58.0-291288/prior/prior_manifest.json --output build/validation/v0.58.0-291288/condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask build/validation/v0.58.0-291288/sampled-layout/sampled_layout_mask.json`
+  - `run-generation configs/generation.default.json --backend smoke-cascade --prior-manifest build/validation/v0.58.0-291288/prior/prior_manifest.json --checkpoint-manifest build/validation/v0.58.0-291288/trained-checkpoint.json --output-root build/validation/v0.58.0-291288/generated/gen-291288-smoke-sampled-mask --generated-id gen-291288-smoke-sampled-mask-v058 --condition-packet build/validation/v0.58.0-291288/condition_packet.json`
+  - `validate metadata build/validation/v0.58.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json`
+  - `validate qc build/validation/v0.58.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+  - `inspect-output-summary --metadata build/validation/v0.58.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json --qc build/validation/v0.58.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+- 真实 SVS 验证结果：
+  - `wsi_tissue_overview.json`、`qc_reference_distribution.json`、`sampled_layout_mask.json`、`condition_packet.json`、`generation_run.json`、`metadata.json` 与 `qc.json` 均为 `schema_version=v0.58.0`。
+  - `qc_reference_distribution.outlier_policy=robust_iqr_filter`，`metrics.mean_red.estimator=robust_iqr`，单样本验证 reference 中 `mean_red.sample_count=1`。
+  - `outlier_audit.metrics.mean_red` 记录原始 1 个样本、保留 1 个样本、排除 0 个样本。
+  - 输出目录 `build/validation/v0.58.0-291288/generated/gen-291288-smoke-sampled-mask/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`generation_run.json` 和 `batch.jsonl`。
+  - `metadata.json` 与 `qc.json` 均通过当前 schema 校验，`inspect-output-summary` 返回 `qc_status=pass`，三级状态 `wsi/tile/mask_region` 均为 `pass`。
+  - `sampled_layout_mask_match_proxy.status=pass`，`value=1.0`，`matched_pixel_fraction=1.0`。
+  - 最终 `generated_mask/mask.npy` 与 `sampled_layout_mask.npy` 完全一致，shape 均为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+  - `generation_run.json.pyramid_report.write_mode=chunked_pyramid_write`，并包含 `chunked_write_audit`。
+  - `chunked_write_audit.writer_backend=tifffile`，`production_streaming=false`。
+  - 验证目录大小约 `1.5M`，最终输出目录约 `1.2M`。
+
+## v0.57.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进研究设计中“训练分布自适应阈值”的稳健估计能力：`qc_reference_distribution` 需要支持 IQR-based robust threshold estimator，避免少量离群参考 QC 把 warning/fail 区间过度拉宽。
+
+### 已做改动
+
+- 版本号升级到 `v0.57.0`。
+- `build_qc_reference_distribution()` 新增 `estimator` 参数，默认保持既有 `observed_min_max_with_range_margin`，以兼容旧调用。
+- 新增 `robust_iqr` estimator，按排序值计算 Q1、median、Q3 和 IQR。
+- `robust_iqr` 输出 `q1`、`median`、`q3`、`iqr`、observed min/max、sample count 和 estimator 字段。
+- `robust_iqr` 使用 `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]` 生成 warning 区间，使用 `[Q1 - 3.0*IQR, Q3 + 3.0*IQR]` 生成 fail 区间。
+- 零 IQR 时使用有限非零 margin，避免阈值坍缩到单点。
+- 非法 estimator 会通过 `QCReferenceBuildError` 显式报错，不做静默回退。
+- CLI `build-qc-reference` 新增 `--estimator` 参数，并限制为 `observed_min_max_with_range_margin` 或 `robust_iqr`。
+- README 同步说明 robust IQR estimator 的用法、输出字段和当前边界。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/qc/reference.py`
+- `src/he_wsi_generator/cli.py`
+- `tests/test_qc_reference.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.57.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_qc_reference tests.test_version -v`
+  - 结果：7 个测试通过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli build-qc-reference <tmp>/qc-1.json <tmp>/qc-2.json <tmp>/qc-3.json --metric mean_red --metric mask_tissue_fraction --estimator robust_iqr --output <tmp>/qc_reference_distribution.json`
+  - 结果：输出 `schema_version=v0.57.0`，`mean_red.estimator=robust_iqr`，并记录 `q1=101.0`、`median=102.0`、`q3=103.0`、`iqr=2.0`。
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：167 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 PyTorch 被跳过。
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- `git pull --ff-only origin main`
+  - 结果：`Already up to date.`，远端 `origin/main` 与本地 `HEAD` 均为 `59557b19672f4b9806e600c9a1db271280795513`。
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新构建 v0.57.0 验证链路：
+  - `build-wsi-tissue-overview build/validation/v0.57.0-291288/input_manifest.json --backend openslide --thumbnail-max-size 512 --output build/validation/v0.57.0-291288/wsi_tissue_overview.json`
+  - `build-qc-reference build/validation/v0.57.0-291288/reference-qc/qc-reference-291288.json --metric mean_red --metric mask_tissue_fraction --min-samples 1 --estimator robust_iqr --output build/validation/v0.57.0-291288/qc_reference_distribution.json`
+  - `build-prior-manifest --output-dir build/validation/v0.57.0-291288/prior ... --qc-reference-distribution build/validation/v0.57.0-291288/qc_reference_distribution.json --wsi-tissue-overview build/validation/v0.57.0-291288/wsi_tissue_overview.json`
+  - `validate-prior-manifest build/validation/v0.57.0-291288/prior/prior_manifest.json`
+  - `sample-layout-mask build/validation/v0.57.0-291288/layout_mask_prior.json --output-dir build/validation/v0.57.0-291288/sampled-layout --sample-id 291288-v057-sampled-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview build/validation/v0.57.0-291288/wsi_tissue_overview.json`
+  - `build-condition-packet configs/generation.default.json --prior-manifest build/validation/v0.57.0-291288/prior/prior_manifest.json --output build/validation/v0.57.0-291288/condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask build/validation/v0.57.0-291288/sampled-layout/sampled_layout_mask.json`
+  - `run-generation configs/generation.default.json --backend smoke-cascade --prior-manifest build/validation/v0.57.0-291288/prior/prior_manifest.json --checkpoint-manifest build/validation/v0.57.0-291288/trained-checkpoint.json --output-root build/validation/v0.57.0-291288/generated/gen-291288-smoke-sampled-mask --generated-id gen-291288-smoke-sampled-mask-v057 --condition-packet build/validation/v0.57.0-291288/condition_packet.json`
+  - `validate metadata build/validation/v0.57.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json`
+  - `validate qc build/validation/v0.57.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+  - `inspect-output-summary --metadata build/validation/v0.57.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json --qc build/validation/v0.57.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+- 真实 SVS 验证结果：
+  - `wsi_tissue_overview.json`、`qc_reference_distribution.json`、`sampled_layout_mask.json`、`condition_packet.json`、`generation_run.json`、`metadata.json` 与 `qc.json` 均为 `schema_version=v0.57.0`。
+  - `qc_reference_distribution.metrics.mean_red.estimator=robust_iqr`，并记录 robust quartile 字段；单样本验证 reference 中 `mean_red.q1=127.5`。
+  - 输出目录 `build/validation/v0.57.0-291288/generated/gen-291288-smoke-sampled-mask/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`generation_run.json` 和 `batch.jsonl`。
+  - `metadata.json` 与 `qc.json` 均通过当前 schema 校验，`inspect-output-summary` 返回 `qc_status=pass`，三级状态 `wsi/tile/mask_region` 均为 `pass`。
+  - `sampled_layout_mask_match_proxy.status=pass`，`value=1.0`，`matched_pixel_fraction=1.0`。
+  - 最终 `generated_mask/mask.npy` 与 `sampled_layout_mask.npy` 完全一致，shape 均为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+  - `generation_run.json.pyramid_report.write_mode=chunked_pyramid_write`，并包含 `chunked_write_audit`。
+  - `chunked_write_audit.writer_backend=tifffile`，`production_streaming=false`。
+  - 验证目录大小约 `1.5M`，最终输出目录约 `1.2M`。
+
+## v0.56.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进开发附录 7.4 和 README 中 `chunked_pyramid_write` 的输出侧前置能力：OME-TIFF writer 需要输出可审计的 chunked write plan / BigTIFF 决策记录，减少 generation plan 与实际 writer 报告之间的语义落差。
+
+### 已做改动
+
+- 版本号升级到 `v0.56.0`。
+- `write_pyramid_ome_tiff()` 新增 `chunk_shape` 和 `bigtiff_threshold_bytes` 参数。
+- OME-TIFF writer 的 `pyramid_report.write_mode` 现在记录为 `chunked_pyramid_write`。
+- `pyramid_report.chunked_write_audit` 记录 writer backend、BigTIFF 决策、估算总字节数、chunk shape、每层 chunk grid / chunk count / edge chunk shape。
+- 非法 `chunk_shape` 和非法 BigTIFF 阈值会显式报错。
+- Audit 明确记录 `production_streaming=false` 和 `streaming_limitations`，避免把当前内存数组 writer 伪装成生产级 gigapixel streaming writer。
+- Smoke generation 的 `generation_run.json.pyramid_report` 会保留同一份 chunked write audit，便于最终交付物审计。
+- README 同步说明 OME-TIFF writer 的 chunked write audit 能力和当前边界。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_generation_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.56.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_records_chunked_write_audit tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_rejects_invalid_chunk_shape tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_writes_complete_output_object -v`
+  - TDD 红灯：新增测试最初因 `write_pyramid_ome_tiff()` 不支持 `chunk_shape`、`pyramid_report.write_mode` 仍为 `small_pyramid_smoke_writer` 而失败；实现后同一命令通过。
+- `PYTHONPATH=src python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_version tests.test_schemas -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：165 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 PyTorch 被跳过。
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新构建 v0.56.0 验证链路：
+  - `build-wsi-tissue-overview build/validation/v0.56.0-291288/input_manifest.json --backend openslide --thumbnail-max-size 512 --output build/validation/v0.56.0-291288/wsi_tissue_overview.json`
+  - `build-prior-manifest --output-dir build/validation/v0.56.0-291288/prior ... --wsi-tissue-overview build/validation/v0.56.0-291288/wsi_tissue_overview.json`
+  - `validate-prior-manifest build/validation/v0.56.0-291288/prior/prior_manifest.json`
+  - `sample-layout-mask build/validation/v0.56.0-291288/layout_mask_prior.json --output-dir build/validation/v0.56.0-291288/sampled-layout --sample-id 291288-v056-sampled-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview build/validation/v0.56.0-291288/wsi_tissue_overview.json`
+  - `build-condition-packet configs/generation.default.json --prior-manifest build/validation/v0.56.0-291288/prior/prior_manifest.json --output build/validation/v0.56.0-291288/condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask build/validation/v0.56.0-291288/sampled-layout/sampled_layout_mask.json`
+  - `run-generation configs/generation.default.json --backend smoke-cascade --prior-manifest build/validation/v0.56.0-291288/prior/prior_manifest.json --checkpoint-manifest build/validation/v0.56.0-291288/trained-checkpoint.json --output-root build/validation/v0.56.0-291288/generated/gen-291288-smoke-sampled-mask --generated-id gen-291288-smoke-sampled-mask-v056 --condition-packet build/validation/v0.56.0-291288/condition_packet.json`
+  - `validate metadata build/validation/v0.56.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json`
+  - `validate qc build/validation/v0.56.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+  - `inspect-output-summary --metadata build/validation/v0.56.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json --qc build/validation/v0.56.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+- 真实 SVS 验证结果：
+  - `wsi_tissue_overview.schema_version=v0.56.0`，真实 thumbnail tissue fraction 保留为 `0.156499895`。
+  - `sampled_layout_mask.json`、`condition_packet.json`、`generation_run.json`、`metadata.json` 与 `qc.json` 均为 `v0.56.0`。
+  - `metadata.json` 与 `qc.json` 均通过当前 schema 校验，`inspect-output-summary` 返回 `qc_status=pass`。
+  - `sampled_layout_mask_match_proxy.status=pass`，`value=1.0`，`matched_pixel_fraction=1.0`。
+  - 最终 `generated_mask/mask.npy` 与 `sampled_layout_mask.npy` 完全一致，shape 均为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+  - `generation_run.json.pyramid_report.write_mode=chunked_pyramid_write`，并包含 `chunked_write_audit`。
+  - `chunked_write_audit.writer_backend=tifffile`、`production_streaming=false`、`bigtiff=false`、`estimated_total_bytes=839424`、`chunk_shape=[512, 512]`、level0 `chunk_grid=[1, 1]` 且 `chunk_count=1`。
+  - `chunked_write_audit.streaming_limitations` 明确记录 `in_memory_array_writer`、`chunk_plan_is_audit_metadata_only` 和 `not_a_resume_capable_gigapixel_streaming_writer`。
+
+## v0.55.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本为 v0.54.0 的 sampled layout mask 条件输出补齐 QC 审计，确认最终 generated mask 是否忠实保留 sampled mask 条件。
+
+### 已做改动
+
+- 版本号升级到 `v0.55.0`。
+- `build_qc_report()` 新增可选 `sampled_layout_mask_summary` 参数。
+- QC 的 `non_copy_report.metrics` 新增 `sampled_layout_mask_match_proxy`，读取 sampled layout `.npy` 与最终 generated mask 逐像素比较，记录 matched pixel fraction。
+- sampled mask 与 generated mask 尺寸不一致但都是二维时，会用 nearest resize 对齐后计算匹配率。
+- 缺失 sampled mask 文件、不可读 `.npy` 或非二维 mask 会显式报错。
+- `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 在 condition summary 包含 `sampled_layout_mask` 时，会把该摘要传给 QC builder。
+- README 同步说明 sampled mask 条件现在有 QC match proxy 审计。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/qc/engine.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_generation_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.55.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：163 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 PyTorch 被跳过。
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新构建 v0.55.0 验证链路：
+  - `build-wsi-tissue-overview build/validation/v0.55.0-291288/input_manifest.json --backend openslide --thumbnail-max-size 512 --output build/validation/v0.55.0-291288/wsi_tissue_overview.json`
+  - `build-prior-manifest --output-dir build/validation/v0.55.0-291288/prior ... --wsi-tissue-overview build/validation/v0.55.0-291288/wsi_tissue_overview.json`
+  - `validate-prior-manifest build/validation/v0.55.0-291288/prior/prior_manifest.json`
+  - `sample-layout-mask build/validation/v0.55.0-291288/layout_mask_prior.json --output-dir build/validation/v0.55.0-291288/sampled-layout --sample-id 291288-v055-sampled-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview build/validation/v0.55.0-291288/wsi_tissue_overview.json`
+  - `build-condition-packet configs/generation.default.json --prior-manifest build/validation/v0.55.0-291288/prior/prior_manifest.json --output build/validation/v0.55.0-291288/condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask build/validation/v0.55.0-291288/sampled-layout/sampled_layout_mask.json`
+  - `run-generation configs/generation.default.json --backend smoke-cascade --prior-manifest build/validation/v0.55.0-291288/prior/prior_manifest.json --checkpoint-manifest build/validation/v0.55.0-291288/trained-checkpoint.json --output-root build/validation/v0.55.0-291288/generated/gen-291288-smoke-sampled-mask --generated-id gen-291288-smoke-sampled-mask-v055 --condition-packet build/validation/v0.55.0-291288/condition_packet.json`
+  - `validate metadata build/validation/v0.55.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json`
+  - `validate qc build/validation/v0.55.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+  - `inspect-output-summary --metadata build/validation/v0.55.0-291288/generated/gen-291288-smoke-sampled-mask/metadata.json --qc build/validation/v0.55.0-291288/generated/gen-291288-smoke-sampled-mask/qc.json`
+- 真实 SVS 验证结果：
+  - `wsi_tissue_overview.schema_version=v0.55.0`，真实 thumbnail tissue fraction 保留为 `0.156499895`。
+  - `sampled_layout_mask.json`、`condition_packet.json`、`generation_run.json`、`metadata.json` 与 `qc.json` 均为 `v0.55.0`。
+  - 输出目录 `build/validation/v0.55.0-291288/generated/gen-291288-smoke-sampled-mask/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`generation_run.json` 和 `batch.jsonl`。
+  - `metadata.json` 与 `qc.json` 均通过当前 schema 校验，`inspect-output-summary` 返回 `qc_status=pass`。
+  - `sampled_layout_mask_match_proxy.status=pass`，`value=1.0`，`matched_pixel_fraction=1.0`。
+  - 最终 `generated_mask/mask.npy` 与 `sampled_layout_mask.npy` 完全一致，shape 均为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+  - `metadata.json` 和 `generation_run.json` 均记录 `sampled_layout_mask` 与 `wsi_tissue_overview` 条件摘要。
+
+## v0.54.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 v0.53.0 的 `sampled_layout_mask` 从独立 artifact 接入 generation condition packet 和 smoke generation 输出，使统计型 sampled layout mask 能作为实际 mask 条件交付。
+
+### 已做改动
+
+- 版本号升级到 `v0.54.0`。
+- `build_generation_condition_packet()` 新增可选 `sampled_layout_mask_path` 参数；CLI `build-condition-packet` 新增 `--sampled-layout-mask`。
+- Condition packet 的 `artifact_inputs.sampled_layout_mask` 记录 sampled layout artifact path、kind、sample id、mask path 和 mask shape。
+- Condition packet 的 `conditions.mask` 支持 `source=sampled_layout_mask`，记录 mask path、sample id、class counts/fractions 和 limitations。
+- `run_smoke_generation()` 遇到 sampled layout mask 条件时读取 `.npy` mask，校验二维和 0-5 类 id，必要时 nearest resize 到输出 canvas，并写为最终 mask。
+- `metadata.json` 与 `generation_run.json` 的 condition summary 记录 sampled layout mask 摘要，便于追踪最终输出 mask 来源。
+- README 同步说明 sampled layout mask 现在可进入 condition packet 并驱动 smoke generation mask 输出。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/generation/conditioning.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_generation_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.54.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_generation_conditioning tests.test_generation_runner tests.test_layout_mask_sampler tests.test_version -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 对应验证 artifact 重建 v0.54 prior manifest，执行 `sample-layout-mask`、`build-condition-packet --sampled-layout-mask` 和 `run-generation --backend smoke-cascade --condition-packet`，确认最终 `generated_mask/mask.npy` 与 `sampled_layout_mask.npy` 完全一致，且 `metadata.json` / `generation_run.json` 均记录 `sampled_layout_mask` 摘要。
+
+## v0.53.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进 Phase 1 layout/mask prior 的可执行能力：把统计型 `layout_mask_prior` 转成可复现的 sampled layout mask artifact，使低 anchor / fully de novo 路径有可交付的结构条件输入。
+
+### 已做改动
+
+- 版本号升级到 `v0.53.0`。
+- 新增 `sample_layout_mask_from_prior()`，从 `layout_mask_prior.json` 读取 6 类比例和 tile layout records，输出 `.npy` sampled layout mask 与 `sampled_layout_mask.json` manifest。
+- CLI 新增 `sample-layout-mask`，支持指定输出目录、sample id、mask height/width、random seed 和可选 `wsi_tissue_overview`。
+- 可选 tissue overview 会把第一条 thumbnail tissue proxy 的 tissue fraction、bounding box 和 connected component count 记录到 manifest，并用 bounding box 限定 sampled mask 的非背景 footprint。
+- 输出 manifest 记录 class counts/fractions、source prior path、可选 tissue overview path 和 limitations，明确该产物不是 mask diffusion 或语义分割模型。
+- README 同步新增 sampled layout mask 用法和当前边界说明。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/priors/__init__.py`
+- `src/he_wsi_generator/priors/sampler.py`
+- `tests/test_layout_mask_sampler.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.53.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_layout_mask_sampler tests.test_layout_mask_prior tests.test_priors tests.test_generation_conditioning tests.test_generation_runner tests.test_version -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 既有验证 artifact 中的真实 `wsi_tissue_overview.json` 执行 `sample-layout-mask`，生成 `build/validation/v0.53.0-291288/sampled-layout/sampled_layout_mask.npy` 与 `sampled_layout_mask.json`，确认 `tissue_overview_reference.tissue_fraction=0.156499895`、mask shape 为 `[512, 512]` 且 6 类 class counts/fractions 可读取。
+
+## v0.52.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把已进入 generation condition summary 的 `wsi_tissue_overview` 接入 QC 报告，形成生成 mask 组织比例与真实 WSI thumbnail tissue fraction 的轻量一致性审计。
+
+### 已做改动
+
+- 版本号升级到 `v0.52.0`。
+- `build_qc_report()` 新增可选 `wsi_tissue_overview_summary` 参数；传入时会校验 summary 基础结构。
+- QC 的 `non_copy_report.metrics` 新增 `wsi_tissue_fraction_reference_proxy`，记录生成 mask tissue fraction 与真实 thumbnail tissue fraction 的接近程度。
+- `wsi_tissue_fraction_reference_proxy.reference.tissue_fraction` 保留 `wsi_tissue_overview` 源 artifact 的原始数值精度，真实 SVS 验证中确认 `0.156499895` 不再被舍入为 `0.1565`。
+- `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 在 condition packet summary 包含 `wsi_tissue_overview` 时，会把该摘要传入 QC builder。
+- 缺失 `wsi_tissue_overview` 时保持既有 QC 路径兼容。
+- 坏的 tissue overview summary 会显式报错，不会静默写入 QC。
+- README 同步说明 tissue overview 进入 QC non-copy metrics 的审计边界。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/qc/engine.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_generation_runner.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.52.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_records_wsi_tissue_fraction_reference_proxy tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_rejects_invalid_wsi_tissue_overview_summary tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_records_wsi_tissue_overview_qc_proxy -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 生成 `wsi_tissue_overview.json`、组装 prior manifest、构建 condition packet，并运行 `run-generation --backend smoke-cascade --condition-packet`，确认真实 tissue overview 进入最终 QC 的 `wsi_tissue_fraction_reference_proxy`。
+
+## v0.51.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 condition packet 中已记录的可选 `wsi_tissue_overview` 摘要继续写入 generation 交付物，使真实 WSI 低倍组织轮廓 proxy 能从 prior artifact 追踪到 `metadata.json` 和 `generation_run.json`。
+
+### 已做改动
+
+- 版本号升级到 `v0.51.0`。
+- `run_smoke_generation()` 在 condition packet 包含 `conditions.layout.wsi_tissue_overview` 时，会把该摘要写入 `metadata["generation"]["condition_summary"]["wsi_tissue_overview"]`。
+- `generation_run.json` 的 `condition_packet.summary` 会记录同一份 tissue overview 摘要，便于批量审计。
+- PyTorch diffusion smoke 的 condition packet loader 同步保留该摘要，避免 smoke / torch 两条条件包摘要链路分叉。
+- 缺失 `wsi_tissue_overview` 时保持既有 condition packet 兼容路径，不要求该字段。
+- `tests/test_generation_runner.py` 新增 smoke generation metadata/run summary 的 tissue overview 摘要测试。
+- `tests/test_torch_training.py` 新增不依赖 PyTorch 安装的 condition packet loader 摘要测试。
+- README 同步说明 smoke generation 会把 tissue overview proxy 摘要保留到最终交付物。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/models/torch_training.py`
+- `tests/test_generation_runner.py`
+- `tests/test_torch_training.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.51.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_records_wsi_tissue_overview_condition_summary tests.test_torch_training.TorchSmokeTrainingTests.test_torch_condition_packet_loader_records_wsi_tissue_overview_summary -v`
+- `PYTHONPATH=src python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_records_condition_packet tests.test_generation_conditioning.GenerationConditioningTests.test_build_generation_condition_packet_records_wsi_tissue_overview_layout_summary tests.test_priors.PriorArtifactTests.test_build_prior_manifest_from_artifacts_records_optional_wsi_tissue_overview -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 生成 `wsi_tissue_overview.json`、组装 prior manifest、构建 condition packet，并运行 `run-generation --backend smoke-cascade --condition-packet`，确认真实 tissue overview 摘要进入最终 `metadata.json` 和 `generation_run.json`。
+
+## v0.50.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 prior manifest 中可选的 `wsi_tissue_overview` 继续接入 generation condition packet，使真实 WSI 低倍组织轮廓 proxy 能进入生成条件审计链路。
+
+### 已做改动
+
+- 版本号升级到 `v0.50.0`。
+- `build_generation_condition_packet()` 在 prior manifest 包含 `wsi_tissue_overview` 时，会读取并校验该 artifact。
+- `conditions.layout.wsi_tissue_overview` 现在记录 artifact path、record count、source backend、thumbnail max size，以及每张 WSI 的 tissue fraction、bounding box 和 connected component count。
+- `artifact_inputs` 继续记录可选 `wsi_tissue_overview` 的 path/hash/size，便于从 condition packet 追踪源 artifact。
+- 缺失 `wsi_tissue_overview` 时保持旧路径兼容，不要求该 artifact。
+- `tests/test_generation_conditioning.py` 新增带 tissue overview 的 condition packet 测试和坏 artifact 失败路径测试。
+- README 同步更新 condition packet 对 tissue overview 的审计说明。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/generation/conditioning.py`
+- `tests/test_generation_conditioning.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.50.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_generation_conditioning -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 生成 `wsi_tissue_overview.json`，通过 `build-prior-manifest --wsi-tissue-overview` 组装 prior manifest，再用 `build-condition-packet` 确认真实 tissue overview 摘要进入 `conditions.layout`。
+
+## v0.49.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 `v0.48.0` 新增的 `wsi_tissue_overview` 接入 prior manifest，使真实 WSI 低倍组织轮廓 artifact 能被统一 manifest 追踪、校验和复现。
+
+### 已做改动
+
+- 版本号升级到 `v0.49.0`。
+- `build_prior_manifest_from_artifacts()` 新增可选 `wsi_tissue_overview_path` 参数；传入时会校验并写入 `artifacts.wsi_tissue_overview`。
+- `build-prior-manifest` CLI 新增可选 `--wsi-tissue-overview <path>`。
+- `validate_prior_manifest()` 继续要求四类核心 prior artifact，同时允许可选 `wsi_tissue_overview` 并继续拒绝其它未知 artifact type。
+- `wsi_tissue_overview` artifact 校验 `artifact_type=wsi_tissue_overview`，manifest metadata 记录 artifact schema version、record count、source backend 和 thumbnail max size。
+- `tests/test_priors.py` 新增可选 tissue overview manifest 组装测试，并更新 CLI 构建测试覆盖 `--wsi-tissue-overview`。
+- README 同步更新 prior manifest 构建说明和可选 tissue overview 追踪边界。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/priors/artifacts.py`
+- `src/he_wsi_generator/priors/__init__.py`
+- `tests/test_priors.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.49.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_priors -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 生成 `wsi_tissue_overview.json`，再通过 `build-prior-manifest --wsi-tissue-overview` 确认真实 artifact 可被 prior manifest 追踪。
+
+## v0.48.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐真实 WSI 低倍组织概览 artifact：从输入 manifest 读取真实 WSI thumbnail，输出可审计的 tissue contour proxy，为 layout/mask prior、QC 和后续 de novo layout 采样建立 WSI-level 组织轮廓基础。
+
+### 已做改动
+
+- 版本号升级到 `v0.48.0`。
+- 新增 `src/he_wsi_generator/priors/tissue.py`，提供 `build_wsi_tissue_overview_from_manifest()`，可从 OpenSlide 或 fixture reader 读取 WSI metadata / thumbnail 并写出 `wsi_tissue_overview` JSON。
+- CLI 新增 `build-wsi-tissue-overview`，支持指定 reader backend、thumbnail max size 和输出路径。
+- `wsi_tissue_overview` artifact 记录 slide metadata、manifest 摘要、thumbnail RGB 统计、tissue/background pixel count、tissue fraction、bounding box 和 connected component count，并明确其不是语义分割 mask。
+- 新增 `tests/test_wsi_tissue_overview.py`，覆盖函数成功路径、空白 thumbnail 显式失败和 CLI 成功路径。
+- README 同步新增 WSI tissue overview 用法和边界说明。
+
+### 影响文件
+
+- `VERSION`
+- `README.md`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/priors/__init__.py`
+- `src/he_wsi_generator/priors/tissue.py`
+- `tests/test_wsi_tissue_overview.py`
+- `tests/*.py`（版本字符串与断言同步到 `v0.48.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_wsi_tissue_overview -v`
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+- `python -m compileall src tests`
+- `git diff --check`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+- 使用 `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 执行 `build-wsi-tissue-overview --backend openslide`，确认可写出真实 `wsi_tissue_overview.json`。
+
 ## v0.47.0 - 2026-05-23
 
 ### 用户需求

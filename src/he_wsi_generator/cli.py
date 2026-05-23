@@ -36,7 +36,9 @@ from .priors.artifacts import (
     load_prior_manifest,
 )
 from .priors.layout import LayoutMaskPriorBuildError, build_layout_mask_prior_from_training_index
+from .priors.sampler import LayoutMaskSamplerError, sample_layout_mask_from_prior
 from .priors.style import StylePriorBuildError, build_style_prior_from_training_index
+from .priors.tissue import WSITissueOverviewBuildError, build_wsi_tissue_overview_from_manifest
 from .priors.texture import TexturePriorBuildError, build_texture_prior_from_embedding_cache
 from .qc.reference import QCReferenceBuildError, build_qc_reference_distribution
 from .schemas import ValidationError, load_document, validate_file
@@ -146,6 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to qc_reference_distribution JSON.",
     )
+    prior_build_parser.add_argument(
+        "--wsi-tissue-overview",
+        help="Optional path to wsi_tissue_overview JSON.",
+    )
 
     qc_ref_parser = subparsers.add_parser(
         "build-qc-reference",
@@ -163,6 +169,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="Minimum sample count required per metric.",
+    )
+    qc_ref_parser.add_argument(
+        "--estimator",
+        choices=[
+            "observed_min_max_with_range_margin",
+            "robust_iqr",
+            "robust_mad_z_score",
+        ],
+        default="observed_min_max_with_range_margin",
+        help="Threshold estimator used for warning/fail bounds.",
+    )
+    qc_ref_parser.add_argument(
+        "--outlier-policy",
+        choices=["none", "robust_iqr_filter"],
+        default="none",
+        help="Optional reference QC outlier policy applied before threshold estimation.",
     )
     qc_ref_parser.add_argument("--output", required=True, help="Path to write reference JSON.")
 
@@ -213,6 +235,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         required=True,
         help="Path to write texture_prior JSON.",
+    )
+
+    tissue_overview_parser = subparsers.add_parser(
+        "build-wsi-tissue-overview",
+        help="Build a WSI thumbnail tissue overview JSON from an input manifest.",
+    )
+    tissue_overview_parser.add_argument("manifest", help="Path to input manifest JSON/YAML.")
+    tissue_overview_parser.add_argument(
+        "--backend",
+        choices=["openslide", "fixture-image"],
+        default="openslide",
+        help="Slide reader backend. Use fixture-image only for smoke tests.",
+    )
+    tissue_overview_parser.add_argument(
+        "--thumbnail-max-size",
+        type=int,
+        default=1024,
+        help="Maximum thumbnail side length used for tissue proxy metrics.",
+    )
+    tissue_overview_parser.add_argument(
+        "--output",
+        required=True,
+        help="Path to write wsi_tissue_overview JSON.",
+    )
+
+    layout_sample_parser = subparsers.add_parser(
+        "sample-layout-mask",
+        help="Sample a reproducible layout mask artifact from a layout_mask_prior JSON.",
+    )
+    layout_sample_parser.add_argument("layout_mask_prior", help="Path to layout_mask_prior JSON.")
+    layout_sample_parser.add_argument("--output-dir", required=True, help="Output directory.")
+    layout_sample_parser.add_argument("--sample-id", required=True, help="Sample identifier.")
+    layout_sample_parser.add_argument("--height", type=int, required=True, help="Output mask height.")
+    layout_sample_parser.add_argument("--width", type=int, required=True, help="Output mask width.")
+    layout_sample_parser.add_argument("--random-seed", type=int, required=True, help="Random seed.")
+    layout_sample_parser.add_argument(
+        "--wsi-tissue-overview",
+        help="Optional wsi_tissue_overview JSON used to constrain the non-background footprint.",
     )
 
     train_parser = subparsers.add_parser(
@@ -454,6 +514,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="40x level0 tile origin y coordinate.",
     )
+    condition_parser.add_argument(
+        "--sampled-layout-mask",
+        help="Optional sampled_layout_mask JSON used as the mask condition.",
+    )
 
     run_parser = subparsers.add_parser(
         "run-generation",
@@ -659,6 +723,7 @@ def main(argv: list[str] | None = None) -> int:
                 style_prior_path=args.style_prior,
                 texture_prior_path=args.texture_prior,
                 qc_reference_distribution_path=args.qc_reference_distribution,
+                wsi_tissue_overview_path=args.wsi_tissue_overview,
             )
         except PriorArtifactError as exc:
             print(str(exc), file=sys.stderr)
@@ -678,6 +743,8 @@ def main(argv: list[str] | None = None) -> int:
                 output_path=args.output,
                 metric_names=args.metric,
                 min_samples=args.min_samples,
+                estimator=args.estimator,
+                outlier_policy=args.outlier_policy,
             )
         except (ValidationError, QCReferenceBuildError) as exc:
             print(str(exc), file=sys.stderr)
@@ -730,6 +797,39 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"texture prior written: {args.output} ({prior['cluster_count']} clusters)")
+        return 0
+
+    if args.command == "build-wsi-tissue-overview":
+        try:
+            overview = build_wsi_tissue_overview_from_manifest(
+                args.manifest,
+                output_path=args.output,
+                backend=args.backend,
+                thumbnail_max_size=(args.thumbnail_max_size, args.thumbnail_max_size),
+            )
+        except WSITissueOverviewBuildError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(
+            f"WSI tissue overview written: {args.output} "
+            f"({overview['record_count']} records)"
+        )
+        return 0
+
+    if args.command == "sample-layout-mask":
+        try:
+            manifest = sample_layout_mask_from_prior(
+                layout_mask_prior_path=args.layout_mask_prior,
+                output_dir=args.output_dir,
+                sample_id=args.sample_id,
+                mask_shape=(args.height, args.width),
+                random_seed=args.random_seed,
+                wsi_tissue_overview_path=args.wsi_tissue_overview,
+            )
+        except LayoutMaskSamplerError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"sampled layout mask written: {manifest['mask_path']}")
         return 0
 
     if args.command == "init-training-run":
@@ -882,6 +982,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_path=args.output,
                 cascade_level=args.cascade_level,
                 tile_origin_40x=(args.tile_origin_x, args.tile_origin_y),
+                sampled_layout_mask_path=args.sampled_layout_mask,
             )
         except (ValidationError, GenerationConditionError) as exc:
             print(str(exc), file=sys.stderr)

@@ -1,5 +1,295 @@
 # DEMANDS
 
+## v0.59.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本继续推进自动 QC 的训练分布自适应阈值能力：`qc_reference_distribution` 需要支持 robust z-score 风格的全局阈值估计，让颜色、清晰度、组织比例等数值 metric 能用 median/MAD 生成抗离群的 warning/fail 区间。
+
+### 结构化需求
+
+- 版本号升级为 `v0.59.0`。
+- `build_qc_reference_distribution()` 的 `estimator` 新增 `robust_mad_z_score`。
+- `robust_mad_z_score` 必须基于排序后的数值计算 median、MAD、scaled MAD，并输出 `median`、`mad`、`scaled_mad`、`warning_z_score`、`fail_z_score` 和 `estimator=robust_mad_z_score`。
+- `robust_mad_z_score` 的 warning 区间使用 `median ± 3.0 * scaled_mad`，fail 区间使用 `median ± 6.0 * scaled_mad`。
+- MAD 为 0 时必须使用有限非零 margin 生成阈值，避免阈值坍缩到单点。
+- `robust_mad_z_score` 必须兼容既有 `outlier_policy`；若用户显式启用 `robust_iqr_filter`，应先过滤参考样本，再用保留样本计算 MAD/z-score 阈值。
+- CLI `build-qc-reference --estimator` 新增 `robust_mad_z_score` 可选值。
+- 新增/更新测试覆盖：MAD/z-score estimator 不被单个离群值拉宽到 observed max、输出 MAD/z-score 字段、零 MAD 可生成非坍缩区间、CLI 可选择 MAD estimator。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只实现全局 metric 的 MAD-based robust z-score 阈值估计，不实现按组织、癌种、中心或 mask 类别分层 z-score。
+- 本次版本不改变 QC engine 对 reference distribution 的消费逻辑；它仍只消费最终写入的 warning/fail 区间。
+- 本次版本不实现人工复核工作流，也不改变原始 QC 文件。
+
+## v0.58.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本继续推进自动 QC 的训练分布自适应阈值能力：`qc_reference_distribution` 需要支持显式的参考 QC 异常值过滤策略，在生成阈值前排除少量明显离群参考样本，同时保留完整审计记录，避免静默丢弃数据。
+
+### 结构化需求
+
+- 版本号升级为 `v0.58.0`。
+- `build_qc_reference_distribution()` 新增 `outlier_policy` 参数，默认 `none`，保持既有行为兼容。
+- 新增 `robust_iqr_filter` policy：对每个 metric 的参考值计算 Q1、Q3 和 IQR，并使用 `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]` 作为保留区间；区间外样本在该 metric 的阈值估计中排除。
+- `robust_iqr_filter` 必须仅在用户显式选择时生效，不得作为默认静默回退。
+- 输出 JSON 必须记录 `outlier_policy` 和 `outlier_audit`，审计内容至少包含：policy、每个 metric 的原始样本数、保留样本数、排除样本数、filter fence、以及被排除样本的 `generated_id`、metric name 和数值。
+- 若过滤后某个 metric 的样本数低于 `min_samples`，必须显式报错，不能回退到未过滤样本。
+- 非法 `outlier_policy` 必须显式报错。
+- CLI `build-qc-reference` 新增 `--outlier-policy` 参数，支持 `none` 与 `robust_iqr_filter`。
+- 新增/更新测试覆盖：异常样本被排除并写入 audit、过滤后样本不足时报错、非法 policy 报错、CLI 可选择 outlier policy。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只实现全局 metric 的 IQR-based reference QC 异常值过滤，不实现按组织、癌种、中心或 mask 类别分层异常处理。
+- 本次版本不实现稳健 z-score、不实现人工复核工作流、不从磁盘删除或修改原始 QC 文件。
+- 本次版本不改变 QC engine 对 reference distribution 的消费逻辑；它仍只消费最终写入的阈值区间。
+
+## v0.57.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进研究设计中“训练分布自适应阈值”的稳健估计能力：`qc_reference_distribution` 需要支持 IQR-based robust threshold estimator，避免少量离群参考 QC 把 warning/fail 区间过度拉宽。
+
+### 结构化需求
+
+- 版本号升级为 `v0.57.0`。
+- `build_qc_reference_distribution()` 新增 `estimator` 参数，支持既有 `observed_min_max_with_range_margin` 和新增 `robust_iqr`。
+- `robust_iqr` 必须基于排序后的数值计算 Q1、median、Q3 和 IQR。
+- `robust_iqr` 输出每个 metric 的 `warning_min`、`warning_max`、`fail_min`、`fail_max`、`sample_count`、`observed_min`、`observed_max`、`q1`、`median`、`q3`、`iqr` 和 `estimator=robust_iqr`。
+- `robust_iqr` 的 warning 区间使用 `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]`，fail 区间使用 `[Q1 - 3.0*IQR, Q3 + 3.0*IQR]`，并在零 IQR 时使用有限非零 margin，避免所有阈值坍缩到单点。
+- 非法 estimator 必须显式报错，不得静默回退。
+- CLI `build-qc-reference` 新增 `--estimator` 参数，默认保持既有 `observed_min_max_with_range_margin`，以保持兼容。
+- 新增/更新测试覆盖：robust IQR 估计器不会被单个离群值拉宽到 observed max、输出 quartile/IQR 字段、非法 estimator 报错、CLI 可选择 robust estimator。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只实现全局 metric 的 robust IQR 阈值估计，不实现按组织、癌种、中心或 mask 类别分层阈值。
+- 本次版本不自动剔除异常参考样本，也不改变 QC engine 对已有 reference distribution 的消费逻辑。
+
+## v0.56.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进开发附录 7.4 和 README 中 `chunked_pyramid_write` 的输出侧前置能力：OME-TIFF writer 需要输出可审计的 chunked write plan / BigTIFF 决策记录，减少 generation plan 与实际 writer 报告之间的语义落差。
+
+### 结构化需求
+
+- 版本号升级为 `v0.56.0`。
+- `write_pyramid_ome_tiff()` 新增 chunked write audit report：记录 writer backend、实际 `write_mode`、是否 production streaming、BigTIFF 决策、估算字节数和每层 chunk plan。
+- Chunk plan 至少记录每层 level index、shape、dtype、chunk shape、chunk grid、chunk count 和边缘 chunk 尺寸。
+- Chunk shape 必须是两个正整数；非法 chunk shape 必须显式报错。
+- BigTIFF 决策必须基于估算 pyramid 字节数与阈值，不允许静默固定为 false。
+- 当前版本仍可使用内存数组一次性写入小型 OME-TIFF；必须在报告中明确 `production_streaming=false` 与 `streaming_limitations`，不得伪装为 production gigapixel streaming writer。
+- `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 写出的 `generation_run.json.pyramid_report` 必须包含同一 chunked write audit 字段，便于从最终交付物追踪写出计划。
+- 新增/更新测试覆盖：writer 报告 chunked write plan、非法 chunk shape 报错、smoke generation run summary 中保留 writer audit。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只补齐 OME-TIFF 写出计划与审计契约，不实现磁盘级 tile streaming、不实现真正 gigapixel 级增量写入、不实现中断后继续写入 OME-TIFF。
+- BigTIFF 决策在本版本用于 writer 配置和审计记录；是否能承载生产级超大 WSI 仍受当前内存数组 writer 限制。
+
+## v0.55.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本为 v0.54.0 的 sampled layout mask 条件输出补齐 QC 审计，确认最终 generated mask 是否忠实保留 sampled mask 条件。
+
+### 结构化需求
+
+- 版本号升级为 `v0.55.0`。
+- `build_qc_report()` 新增可选 `sampled_layout_mask_summary` 参数。
+- QC 的 `non_copy_report.metrics` 新增 `sampled_layout_mask_match_proxy`，读取 sampled layout `.npy` 与最终 generated mask 逐像素比较，记录 matched pixel fraction。
+- sampled mask 与 generated mask 尺寸不一致但都是二维时，可用 nearest resize 对齐后计算匹配率；非二维、缺文件或不可读必须显式报错。
+- `sampled_layout_mask_match_proxy.reference` 必须记录 sampled artifact path、mask path、sample id、mask shape、class counts/fractions。
+- `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 在 condition summary 包含 `sampled_layout_mask` 时，必须把该摘要传给 QC builder。
+- 本次版本不把 sampled mask 匹配失败作为硬错误之外的新终止条件，仍只作为 QC metric 暴露。
+- 新增/更新测试覆盖：QC builder 记录 sampled mask match proxy、缺失 sampled mask 文件显式失败、smoke generation QC 中包含该 proxy。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 该 QC 指标只审计工程链路是否保留 sampled mask 条件，不判断 sampled mask 本身是否病理合理。
+- 本次版本不实现 mask diffusion、语义一致性模型或 production ControlNet 条件校验。
+
+## v0.54.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 v0.53.0 的 `sampled_layout_mask` 从独立 artifact 接入 generation condition packet 和 smoke generation 输出，使统计型 sampled layout mask 能作为实际 mask 条件交付。
+
+### 结构化需求
+
+- 版本号升级为 `v0.54.0`。
+- `build_generation_condition_packet()` 新增可选 `sampled_layout_mask_path` 参数，传入时必须读取并校验 `sampled_layout_mask.json`。
+- CLI `build-condition-packet` 新增 `--sampled-layout-mask <sampled_layout_mask.json>`。
+- Condition packet 的 `artifact_inputs.sampled_layout_mask` 必须记录 artifact path、kind 和 sample/mask metadata。
+- Condition packet 的 `conditions.mask` 在传入 sampled layout mask 时必须切换为 `source=sampled_layout_mask`，记录 `mask_path`、sample id、mask shape、class counts/fractions 和 limitations。
+- `run_smoke_generation()` 在 condition packet 的 mask 条件来自 sampled layout mask 时，必须读取该 `.npy` mask，校验二维和 0-5 类 id，必要时 nearest resize 到输出 canvas，并写为最终 `generated_mask/mask.npy`。
+- `metadata.json` 与 `generation_run.json` 的 condition summary 必须记录 sampled layout mask 摘要，便于追溯输出 mask 来源。
+- 对缺失 sampled mask 文件、非二维 mask、非法 class id 或坏 sampled layout manifest 必须显式报错。
+- 本次版本不改变 smoke RGB 生成算法，不实现 production mask diffusion、真实 segmentation 或 ControlNet 条件注入。
+- 新增/更新测试覆盖：condition packet 记录 sampled layout mask、smoke generation 使用 sampled layout mask 输出最终 mask。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只把 sampled layout mask 作为工程链路中的 mask 条件接入输出归档。
+- 该能力用于验证结构条件可追踪和可交付，不代表 production de novo layout / mask diffusion 已实现。
+
+## v0.53.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本推进 Phase 1 layout/mask prior 的可执行能力：把统计型 `layout_mask_prior` 转成可复现的 sampled layout mask artifact，使低 anchor / fully de novo 路径有可交付的结构条件输入。
+
+### 结构化需求
+
+- 版本号升级为 `v0.53.0`。
+- 新增 `sample_layout_mask_from_prior()`，从 `layout_mask_prior.json` 读取 6 类比例和 tile layout records，输出 `.npy` sampled layout mask 与 `sampled_layout_mask.json` manifest。
+- CLI 新增 `sample-layout-mask <layout_mask_prior.json> --output-dir <dir> --sample-id <id> --height <n> --width <n> --random-seed <seed>`。
+- 可选 `--wsi-tissue-overview <path>`：传入时读取第一条真实 thumbnail tissue proxy 的 tissue fraction、bounding box 和 connected component count，并用 bounding box 约束 sampled mask 的非背景 footprint。
+- 输出 manifest 必须记录 schema version、artifact type、sample id、random seed、mask path/shape、source prior path、可选 tissue overview path、class counts/fractions、tissue overview reference 和 limitations。
+- 对非法 mask shape、空 sample id、非整数 random seed、坏 prior JSON、prior_type 不匹配、class_fractions 非 6 类或 tissue overview 字段缺失必须显式报错。
+- 本次版本不实现 mask diffusion、语义分割模型、source-anchor layout mixing 或 production layout generator。
+- 新增/更新测试覆盖：函数输出 mask/manifest、seed 确定性、非法 shape 失败和 CLI 成功路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次 sampled layout mask 是统计型结构条件 artifact，用于连接 prior 与后续 generation conditioning。
+- 它只提供可审计、可复现的低倍结构条件，不代表病理语义分割质量或 production 级 de novo layout sampler。
+
+## v0.52.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把已进入 generation condition summary 的 `wsi_tissue_overview` 接入 QC 报告，形成生成 mask 组织比例与真实 WSI thumbnail tissue fraction 的轻量一致性审计。
+
+### 结构化需求
+
+- 版本号升级为 `v0.52.0`。
+- `build_qc_report()` 新增可选 `wsi_tissue_overview_summary` 参数；传入时必须校验该摘要的基础结构。
+- QC 的 `non_copy_report.metrics` 必须新增 `wsi_tissue_fraction_reference_proxy`，记录生成 mask tissue fraction 与真实 WSI tissue overview tissue fraction 的接近程度。
+- `wsi_tissue_fraction_reference_proxy.reference.tissue_fraction` 必须保留 `wsi_tissue_overview` 源 artifact 中的原始数值精度，避免真实 SVS 验证时把 `0.156499895` 这类值舍入为 `0.1565`。
+- `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 在 condition packet summary 包含 `wsi_tissue_overview` 时，必须把该摘要传给 QC builder。
+- 缺失 `wsi_tissue_overview` 时，既有 QC 路径保持兼容。
+- 输入的 tissue overview summary 缺少 records、record 缺少 tissue_fraction 或 tissue_fraction 非数值时必须显式报错。
+- 本次版本不把 tissue fraction reference proxy 作为硬 fail 条件，不改变 smoke/PyTorch smoke 生成算法，也不实现 production layout sampler 或 mask diffusion。
+- 新增/更新测试覆盖：QC builder 记录 tissue fraction reference proxy、坏 tissue overview summary 显式失败、生成输出 QC 中包含该 proxy。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只补齐真实 WSI 低倍组织轮廓 proxy 与 QC 报告之间的审计连接。
+- 该 proxy 是轻量一致性指标，不代表语义分割质量或病理真实性判定。
+
+## v0.51.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 condition packet 中已经记录的可选 `wsi_tissue_overview` 摘要继续写入 generation 交付物，使真实 WSI 低倍组织轮廓 proxy 能从 prior artifact 追踪到 `metadata.json` 和 `generation_run.json`。
+
+### 结构化需求
+
+- 版本号升级为 `v0.51.0`。
+- `run_smoke_generation()` 传入 condition packet 且其 `conditions.layout.wsi_tissue_overview` 存在时，必须把该摘要写入 `metadata["generation"]["condition_summary"]["wsi_tissue_overview"]`。
+- `generation_run.json` 的 `condition_packet.summary` 必须记录同一份 `wsi_tissue_overview` 摘要，便于批量审计。
+- 摘要至少包含 source、artifact path、record count、source backend、thumbnail max size，以及每张 WSI 的 tissue fraction、bounding box 和 connected component count。
+- condition packet 不包含 `wsi_tissue_overview` 时，既有 smoke generation 路径保持兼容。
+- 本次版本不改变 smoke backend 的图像采样算法，不实现 production layout sampler、mask diffusion 或真实 tissue contour 条件注入。
+- 新增/更新测试覆盖：带 tissue overview 的 condition packet 进入 smoke generation metadata/run summary，以及缺失 tissue overview 的旧路径兼容。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只增强生成交付物审计链路，使低倍组织轮廓 proxy 可追溯到最终输出 JSON。
+- `wsi_tissue_overview` 在本版本仍不作为 smoke backend 的像素采样控制输入。
+
+## v0.50.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 prior manifest 中可选的 `wsi_tissue_overview` 继续接入 generation condition packet，使真实 WSI 低倍组织轮廓 proxy 能进入生成条件审计链路。
+
+### 结构化需求
+
+- 版本号升级为 `v0.50.0`。
+- `build_generation_condition_packet()` 在 prior manifest 包含 `wsi_tissue_overview` 时，必须读取并校验该 artifact。
+- `conditions.layout` 必须记录 `wsi_tissue_overview` 摘要，至少包含 artifact path、record count、source backend、thumbnail max size、每张 WSI 的 tissue fraction、bounding box 和 connected component count。
+- `artifact_inputs` 必须继续包含可选 `wsi_tissue_overview` 的 path/hash/size，便于复现。
+- `wsi_tissue_overview` 缺失时，condition packet 仍保持兼容，不要求该 artifact。
+- `wsi_tissue_overview` artifact 非 JSON、`artifact_type` 不匹配、records 非列表或 tissue proxy 字段缺失时必须显式报错。
+- 新增/更新测试覆盖：带 tissue overview 的 condition packet、缺失 tissue overview 的兼容路径和坏 artifact 失败路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只把真实 WSI 组织轮廓 proxy 写入条件包，不改变 smoke/torch generation backend 的采样算法。
+- 本次版本不实现可采样 layout generator、mask diffusion、source-anchor layout mixing 或 production diffusion 条件注入。
+
+## v0.49.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本把 `v0.48.0` 新增的 `wsi_tissue_overview` 接入 prior manifest，使真实 WSI 低倍组织轮廓 artifact 能被统一 manifest 追踪、校验和复现。
+
+### 结构化需求
+
+- 版本号升级为 `v0.49.0`。
+- `build_prior_manifest_from_artifacts()` 新增可选 `wsi_tissue_overview_path` 参数；传入时必须校验该 artifact 并写入 `artifacts.wsi_tissue_overview`。
+- `build-prior-manifest` CLI 新增可选 `--wsi-tissue-overview <path>`。
+- `validate_prior_manifest()` 必须继续要求四类核心 artifact：`layout_mask_prior`、`style_prior`、`texture_prior`、`qc_reference_distribution`；同时允许可选 `wsi_tissue_overview`，并继续拒绝其它未知 artifact type。
+- `wsi_tissue_overview` artifact 必须校验 `artifact_type == "wsi_tissue_overview"`，并在 manifest metadata 中记录 artifact schema version、record count、source backend 和 thumbnail max size。
+- 不传 `wsi_tissue_overview` 时，既有 prior manifest 构建、保存、加载和 CLI 行为必须保持兼容。
+- 新增/更新测试覆盖：可选 tissue overview 被写入 manifest、CLI 可传入该 artifact、未知 artifact 仍被拒绝、未传 tissue overview 的旧路径仍通过。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只把 tissue overview 纳入 prior manifest 追踪，不改变四类核心 prior artifact 的必需性。
+- 本次版本不让 generation condition packet 或 generation backend 直接消费 tissue overview；后续再把它接入 layout prior / QC / de novo layout sampling。
+
+## v0.48.0 - 2026-05-23
+
+### 用户需求
+
+- 用户要求继续根据 `docs/` 中的项目设计和开发指南完成本项目开发。
+- 本次版本补齐真实 WSI 低倍组织概览 artifact：从输入 manifest 读取真实 WSI thumbnail，输出可审计的 tissue contour proxy，为 layout/mask prior、QC 和后续 de novo layout 采样建立 WSI-level 组织轮廓基础。
+
+### 结构化需求
+
+- 版本号升级为 `v0.48.0`。
+- 新增 `build_wsi_tissue_overview_from_manifest()`，必须读取 manifest、通过指定 reader 读取 WSI metadata 和 thumbnail，并写出 `wsi_tissue_overview` JSON。
+- CLI 新增 `build-wsi-tissue-overview <manifest> --backend <openslide|fixture-image> --thumbnail-max-size <n> --output <path>`。
+- 输出 artifact 必须记录 schema version、artifact type、manifest path、dataset id、reader backend、thumbnail max size、record count、每张 WSI 的 slide metadata、manifest 摘要、thumbnail RGB 统计和 tissue mask proxy 指标。
+- Tissue mask proxy 至少包含检测方法、阈值、thumbnail size、tissue/background pixel count、tissue fraction、bounding box 和 connected component count。
+- 对 manifest schema 错误、非法 thumbnail size、reader 失败、空 thumbnail 或未检测到 tissue pixel 必须显式报错，不得静默写出空 artifact。
+- 新增测试覆盖函数成功路径、空白 thumbnail 失败路径和 CLI 成功路径。
+- 同步更新 README、CHANGELOG、VERSION、pyproject、默认配置、版本常量和版本断言。
+
+### 边界说明
+
+- 本次版本只实现基于低倍 thumbnail 的轻量 tissue contour proxy，不实现语义分割、tumor/stroma 分类、6 类 mask 推断或可采样 layout generator。
+- `wsi_tissue_overview` 作为独立 artifact 供后续 prior manifest / layout prior 消费，本次不改变既有 `layout_mask_prior` 的输入契约。
+
 ## v0.47.0 - 2026-05-23
 
 ### 用户需求
