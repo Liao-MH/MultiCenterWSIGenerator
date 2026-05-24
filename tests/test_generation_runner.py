@@ -6,16 +6,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = str(REPO_ROOT / "src")
+if SRC_ROOT not in sys.path:
+    # Worker worktrees may not be the active editable install in the shared env.
+    sys.path.insert(0, SRC_ROOT)
+
 import numpy as np
 import tifffile
 
 from he_wsi_generator.generation.executor import GenerationExecutionError, run_smoke_generation
+from he_wsi_generator.generation.tiling import (
+    build_resumable_tile_manifest,
+    create_tile_traversal_plan,
+    update_resumable_tile_manifest,
+)
 from he_wsi_generator.priors.artifacts import create_prior_artifact_entry, save_prior_manifest
 from he_wsi_generator.schemas import validate_metadata, validate_qc_report
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 
 class GenerationRunnerTests(unittest.TestCase):
     def create_prior_manifest(self, root: Path) -> Path:
@@ -146,6 +153,48 @@ class GenerationRunnerTests(unittest.TestCase):
             "non_copy_patch_nearest_neighbor_search": False,
         }
         return config
+
+    def write_partial_tile_manifest(
+        self,
+        output_root: Path,
+        config: dict,
+        *,
+        completed_indexes: tuple[int, ...] = (),
+        failed_indexes: tuple[int, ...] = (),
+    ) -> Path:
+        plan = create_tile_traversal_plan(
+            canvas_size_40x=config["canvas_size_40x"],
+            tile_size_40x=config["tile_size_40x"],
+            overlap_px_40x=config["overlap_px_40x"],
+            resume_index=0,
+            cascade_level="1/1",
+        )
+        manifest = build_resumable_tile_manifest(plan)
+        tile_dir = output_root / "tiles"
+        tile_dir.mkdir(parents=True, exist_ok=True)
+        tile_width, tile_height = config["tile_size_40x"]
+        for tile_index in completed_indexes:
+            tile_path = tile_dir / f"tile-{tile_index:06d}.npy"
+            np.save(
+                tile_path,
+                np.full((tile_height, tile_width, 3), tile_index, dtype=np.uint8),
+            )
+            manifest = update_resumable_tile_manifest(
+                manifest,
+                tile_index=tile_index,
+                status="completed",
+                output_path=(Path("tiles") / tile_path.name).as_posix(),
+            )
+        for tile_index in failed_indexes:
+            manifest = update_resumable_tile_manifest(
+                manifest,
+                tile_index=tile_index,
+                status="failed",
+                error_message="unit test failed tile",
+            )
+        manifest_path = output_root / "tile_manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        return manifest_path
 
     def write_condition_packet(
         self,
@@ -337,6 +386,133 @@ class GenerationRunnerTests(unittest.TestCase):
         mask_metrics = {metric["name"]: metric for metric in qc["levels"]["mask_region"]["metrics"]}
         self.assertEqual(mask_metrics["mask_tissue_fraction"]["status"], "fail")
         self.assertEqual(mask_metrics["mask_tissue_fraction"]["reference"]["warning_min"], 0.95)
+
+    def test_run_smoke_generation_writes_tile_manifests_and_disk_tiles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            output_root = root / "generated" / "gen-tiles"
+
+            result = run_smoke_generation(
+                self.generation_config(canvas_size_40x=[768, 512]),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-tiles",
+            )
+
+            metadata = validate_metadata(
+                json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+            )
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+            tile_manifest_path = Path(metadata["generation"]["tile_manifest_path"])
+            tile_source_manifest_path = Path(metadata["generation"]["tile_source_manifest_path"])
+            tile_manifest = json.loads(tile_manifest_path.read_text(encoding="utf-8"))
+            tile_source_manifest = json.loads(
+                tile_source_manifest_path.read_text(encoding="utf-8")
+            )
+            tile_file_checks = []
+            for tile in tile_manifest["tiles"]:
+                tile_path = tile_manifest_path.parent / tile["output_path"]
+                tile_file_checks.append((tile_path.exists(), np.load(tile_path).shape))
+
+        self.assertEqual(run_summary["plan"]["tile_manifest_path"], str(tile_manifest_path))
+        self.assertEqual(
+            run_summary["plan"]["tile_source_manifest_path"],
+            str(tile_source_manifest_path),
+        )
+        self.assertEqual(
+            run_summary["pyramid_report"]["streaming_contract"]["tile_source"]["manifest_path"],
+            str(tile_source_manifest_path),
+        )
+        self.assertEqual(tile_manifest["execution_status"], "completed")
+        self.assertEqual(tile_manifest["completed_tile_count"], 2)
+        self.assertEqual(tile_manifest["pending_tile_count"], 0)
+        self.assertEqual([tile["status"] for tile in tile_manifest["tiles"]], ["completed", "completed"])
+        for exists, shape in tile_file_checks:
+            self.assertTrue(exists)
+            self.assertEqual(shape, (512, 512, 3))
+        self.assertEqual(tile_source_manifest["expected_tile_count"], 2)
+        self.assertEqual(
+            tile_source_manifest["levels"],
+            [{"level_index": 0, "expected_tile_count": 2}],
+        )
+        self.assertEqual(
+            [record["status"] for record in tile_source_manifest["tiles"]],
+            ["completed", "completed"],
+        )
+
+    def test_run_smoke_generation_resumes_partial_tile_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            output_root = root / "generated" / "gen-resume"
+            config = self.generation_config(canvas_size_40x=[1280, 512])
+            manifest_path = self.write_partial_tile_manifest(
+                output_root,
+                config,
+                completed_indexes=(0,),
+            )
+            first_tile_before = np.load(output_root / "tiles" / "tile-000000.npy").copy()
+
+            result = run_smoke_generation(
+                config,
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-resume",
+                resume_tile_manifest_path=manifest_path,
+            )
+
+            metadata = validate_metadata(
+                json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+            )
+            tile_manifest_path = Path(metadata["generation"]["tile_manifest_path"])
+            tile_manifest = json.loads(tile_manifest_path.read_text(encoding="utf-8"))
+            first_tile_after = np.load(output_root / "tiles" / "tile-000000.npy")
+
+        self.assertEqual(tile_manifest_path, manifest_path)
+        self.assertEqual(tile_manifest["execution_status"], "completed")
+        self.assertEqual(tile_manifest["completed_tile_count"], 3)
+        self.assertEqual(tile_manifest["pending_tile_count"], 0)
+        self.assertEqual([tile["status"] for tile in tile_manifest["tiles"]], ["completed", "completed", "completed"])
+        self.assertEqual([tile["attempt_count"] for tile in tile_manifest["tiles"]], [1, 1, 1])
+        np.testing.assert_array_equal(first_tile_after, first_tile_before)
+
+    def test_run_smoke_generation_rejects_bad_resume_tile_manifests(self):
+        cases = [
+            ("failed", (), (0,), (), "failed"),
+            ("gapped", (1,), (), (), "row-major"),
+            ("missing", (0,), (), (0,), "completed tile file"),
+        ]
+        for name, completed, failed, missing, pattern in cases:
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    root = Path(tmpdir)
+                    prior_manifest_path = self.create_prior_manifest(root)
+                    checkpoint_manifest_path = self.checkpoint_manifest(root)
+                    output_root = root / "generated" / f"gen-{name}"
+                    config = self.generation_config(canvas_size_40x=[768, 512])
+                    manifest_path = self.write_partial_tile_manifest(
+                        output_root,
+                        config,
+                        completed_indexes=completed,
+                        failed_indexes=failed,
+                    )
+                    for tile_index in missing:
+                        (output_root / "tiles" / f"tile-{tile_index:06d}.npy").unlink()
+
+                    with self.assertRaisesRegex(GenerationExecutionError, pattern):
+                        run_smoke_generation(
+                            config,
+                            prior_manifest_path=prior_manifest_path,
+                            checkpoint_manifest_path=checkpoint_manifest_path,
+                            output_root=output_root,
+                            generated_id=f"gen-{name}",
+                            resume_tile_manifest_path=manifest_path,
+                        )
 
     def test_run_smoke_generation_respects_canvas_size_40x(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -712,6 +888,100 @@ class GenerationRunnerTests(unittest.TestCase):
             metadata["generation"]["condition_packet_path"],
             str(condition_packet_path),
         )
+
+    def test_cli_runs_smoke_generation_with_resume_tile_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            config = self.generation_config(canvas_size_40x=[768, 512])
+            config_path = root / "generation-config.json"
+            output_root = root / "generated" / "gen-cli-resume"
+            manifest_path = self.write_partial_tile_manifest(
+                output_root,
+                config,
+                completed_indexes=(0,),
+            )
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "run-generation",
+                    str(config_path),
+                    "--backend",
+                    "smoke-cascade",
+                    "--prior-manifest",
+                    str(prior_manifest_path),
+                    "--checkpoint-manifest",
+                    str(checkpoint_manifest_path),
+                    "--resume-tile-manifest",
+                    str(manifest_path),
+                    "--output-root",
+                    str(output_root),
+                    "--generated-id",
+                    "gen-cli-resume",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            metadata = json.loads((output_root / "metadata.json").read_text(encoding="utf-8"))
+            tile_manifest = json.loads(
+                Path(metadata["generation"]["tile_manifest_path"]).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(tile_manifest["execution_status"], "completed")
+        self.assertEqual(tile_manifest["completed_tile_count"], 2)
+
+    def test_cli_rejects_resume_tile_manifest_for_torch_diffusion_smoke(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            config_path = root / "generation-config.json"
+            config_path.write_text(json.dumps(self.generation_config()), encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "run-generation",
+                    str(config_path),
+                    "--backend",
+                    "torch-diffusion-smoke",
+                    "--prior-manifest",
+                    str(prior_manifest_path),
+                    "--checkpoint-manifest",
+                    str(checkpoint_manifest_path),
+                    "--resume-tile-manifest",
+                    str(root / "tile_manifest.json"),
+                    "--output-root",
+                    str(root / "generated" / "gen-torch"),
+                    "--generated-id",
+                    "gen-torch",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--resume-tile-manifest", result.stderr)
 
 
 if __name__ == "__main__":

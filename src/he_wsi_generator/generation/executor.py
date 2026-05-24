@@ -13,7 +13,15 @@ from ..outputs.ome_tiff import OutputWriteError, write_pyramid_ome_tiff
 from ..priors.artifacts import PriorArtifactError, load_prior_manifest
 from ..qc.engine import QCReferenceError, build_qc_report
 from ..schemas import ValidationError, validate_generation_config
-from .tiling import blend_rgb_tiles, complete_tile_traversal_plan
+from .tiling import (
+    GenerationTilingError,
+    blend_rgb_tiles,
+    build_resumable_tile_manifest,
+    complete_tile_traversal_plan,
+    require_complete_tile_manifest,
+    update_resumable_tile_manifest,
+    validate_resumable_tile_manifest,
+)
 from .planner import create_generation_plan
 
 
@@ -32,13 +40,17 @@ def run_smoke_generation(
     output_root: str | Path,
     generated_id: str,
     condition_packet_path: str | Path | None = None,
+    resume_tile_manifest_path: str | Path | None = None,
 ) -> dict[str, Any]:
     if not isinstance(generated_id, str) or generated_id == "":
         raise GenerationExecutionError("generated_id must be a non-empty string")
 
     root = Path(output_root)
-    if root.exists() and any(root.iterdir()):
+    resume_manifest_path = Path(resume_tile_manifest_path) if resume_tile_manifest_path else None
+    if root.exists() and any(root.iterdir()) and resume_manifest_path is None:
         raise GenerationExecutionError(f"output_root already exists and is not empty: {root}")
+    if resume_manifest_path is not None and resume_manifest_path.resolve().parent != root.resolve():
+        raise GenerationExecutionError("resume_tile_manifest_path must be inside output_root")
     root.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -52,9 +64,16 @@ def run_smoke_generation(
     condition_packet = _load_generation_condition_packet(condition_packet_path, plan)
 
     numpy = _import_numpy()
-    levels_by_cascade = _build_smoke_cascade(
+    tile_output = _prepare_smoke_tile_outputs(
         numpy,
         generation_config,
+        plan["tile_traversal_plan"],
+        root,
+        resume_manifest_path=resume_manifest_path,
+    )
+    levels_by_cascade = _build_smoke_cascade_from_tile_records(
+        numpy,
+        tile_output["tile_records"],
         plan["tile_traversal_plan"],
     )
     # The generation plan runs low-to-high, while OME-TIFF pyramid writing expects
@@ -68,6 +87,8 @@ def run_smoke_generation(
     plan = dict(plan)
     plan["stages"] = _complete_generation_stages(plan["stages"])
     plan["tile_traversal_plan"] = complete_tile_traversal_plan(plan["tile_traversal_plan"])
+    plan["tile_manifest_path"] = str(tile_output["tile_manifest_path"])
+    plan["tile_source_manifest_path"] = str(tile_output["tile_source_manifest_path"])
 
     wsi_path = root / "generated.ome.tiff"
     mask_dir = root / "generated_mask"
@@ -80,6 +101,7 @@ def run_smoke_generation(
                 "GeneratorBackend": SMOKE_BACKEND,
                 "ProjectVersion": PROJECT_VERSION,
             },
+            tile_source_manifest=tile_output["tile_source_manifest_path"],
         )
         mask_report = write_mask_array(
             _conditioned_or_smoke_mask(
@@ -331,6 +353,10 @@ def _metadata_payload(
         generation_payload["cascade_sample_manifests"] = cascade_sample_manifests
     if "tile_traversal_plan" in plan:
         generation_payload["tile_traversal_plan"] = plan["tile_traversal_plan"]
+    if "tile_manifest_path" in plan:
+        generation_payload["tile_manifest_path"] = plan["tile_manifest_path"]
+    if "tile_source_manifest_path" in plan:
+        generation_payload["tile_source_manifest_path"] = plan["tile_source_manifest_path"]
 
     return {
         "schema_version": PROJECT_VERSION,
@@ -799,39 +825,100 @@ def _run_torch_diffusion_smoke_cascade_samples(
     return records
 
 
-def _build_smoke_cascade(
+def _prepare_smoke_tile_outputs(
     numpy,
     generation_config: dict[str, Any],
     tile_traversal_plan: dict[str, Any],
+    output_root: Path,
+    *,
+    resume_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
+    try:
+        manifest = (
+            _load_resume_tile_manifest(resume_manifest_path, output_root)
+            if resume_manifest_path is not None
+            else build_resumable_tile_manifest(tile_traversal_plan)
+        )
+    except GenerationTilingError as exc:
+        raise GenerationExecutionError(str(exc)) from exc
+
+    _ensure_resume_manifest_matches_plan(manifest, tile_traversal_plan)
+    _ensure_existing_completed_tile_files(manifest, output_root)
     seed = int(generation_config["random_seed"])
     style_seed = generation_config.get("style_seed")
     if isinstance(style_seed, int) and not isinstance(style_seed, bool):
         seed += style_seed
     anchor_offset = int(float(generation_config["structure_anchor"]) * 50)
     base_rgb = numpy.array([184, 122, 168], dtype=numpy.uint16)
-    canvas_width, canvas_height = [int(value) for value in tile_traversal_plan["canvas_size_40x"]]
     tile_width, tile_height = [int(value) for value in tile_traversal_plan["model_tile_size_40x"]]
-    overlap_px = int(tile_traversal_plan["overlap_px_40x"])
+    tiles_dir = output_root / "tiles"
+    tiles_dir.mkdir(parents=True, exist_ok=True)
     tile_records = []
-    for tile in tile_traversal_plan["tiles"]:
+
+    for tile in manifest["tiles"]:
         tile_index = int(tile["tile_index"])
-        tile_origin = tile["tile_origin_40x"]
+        source_tile = tile_traversal_plan["tiles"][tile_index]
+        tile_origin = source_tile["tile_origin_40x"]
         x_origin = int(tile_origin[0])
         y_origin = int(tile_origin[1])
-        image = _smoke_rgb_image(
-            numpy,
-            tile_height,
-            tile_width,
-            base_rgb,
-            seed + tile_index * 17 + anchor_offset + x_origin + y_origin,
-        )
+        output_path = tile.get("output_path")
+        if tile.get("status") == "completed":
+            tile_path = _resolve_output_relative_path(output_path, output_root, "completed tile file")
+            image = _load_completed_tile(numpy, tile_path)
+        else:
+            image = _smoke_rgb_image(
+                numpy,
+                tile_height,
+                tile_width,
+                base_rgb,
+                seed + tile_index * 17 + anchor_offset + x_origin + y_origin,
+            )
+            tile_path = tiles_dir / f"tile-{tile_index:06d}.npy"
+            numpy.save(tile_path, image)
+            try:
+                manifest = update_resumable_tile_manifest(
+                    manifest,
+                    tile_index=tile_index,
+                    status="completed",
+                    output_path=tile_path.relative_to(output_root).as_posix(),
+                )
+            except GenerationTilingError as exc:
+                raise GenerationExecutionError(str(exc)) from exc
+
         tile_records.append(
             {
+                "tile_index": tile_index,
                 "tile_origin_40x": [x_origin, y_origin],
+                "write_region_40x": list(source_tile["write_region_40x"]),
                 "image": image,
+                "path": str(tile_path),
+                "relative_path": tile_path.relative_to(output_root).as_posix(),
             }
         )
+
+    try:
+        manifest = require_complete_tile_manifest(manifest)
+    except GenerationTilingError as exc:
+        raise GenerationExecutionError(str(exc)) from exc
+    manifest_path = resume_manifest_path or (output_root / "tile_manifest.json")
+    _write_json(manifest_path, manifest)
+    tile_source_manifest_path = output_root / "tile_source_manifest.json"
+    tile_source_manifest = _build_tile_source_manifest(manifest, tile_traversal_plan, output_root)
+    _write_json(tile_source_manifest_path, tile_source_manifest)
+    return {
+        "tile_records": tile_records,
+        "tile_manifest_path": manifest_path,
+        "tile_source_manifest_path": tile_source_manifest_path,
+    }
+
+
+def _build_smoke_cascade_from_tile_records(
+    numpy,
+    tile_records: list[dict[str, Any]],
+    tile_traversal_plan: dict[str, Any],
+) -> dict[str, Any]:
+    canvas_width, canvas_height = [int(value) for value in tile_traversal_plan["canvas_size_40x"]]
+    overlap_px = int(tile_traversal_plan["overlap_px_40x"])
     canvas = blend_rgb_tiles(
         tile_records,
         canvas_size_40x=[canvas_width, canvas_height],
@@ -847,6 +934,116 @@ def _build_smoke_cascade(
         level: canvas if level == "1/1" else _resize_nearest(numpy, canvas, height, width)
         for level, (height, width) in shapes.items()
     }
+
+
+def _load_resume_tile_manifest(manifest_path: Path, output_root: Path) -> dict[str, Any]:
+    if not manifest_path.exists():
+        raise GenerationExecutionError(f"resume tile manifest does not exist: {manifest_path}")
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise GenerationExecutionError("resume tile manifest must be valid JSON") from exc
+    if not isinstance(data, dict):
+        raise GenerationExecutionError("resume tile manifest must contain an object")
+    try:
+        manifest = validate_resumable_tile_manifest(data)
+        if manifest["failed_tile_count"] > 0:
+            require_complete_tile_manifest(manifest)
+        if manifest["completed_tile_count"] != manifest["resume_index"]:
+            require_complete_tile_manifest(manifest)
+    except GenerationTilingError as exc:
+        raise GenerationExecutionError(str(exc)) from exc
+    if manifest_path.resolve().parent != output_root.resolve():
+        raise GenerationExecutionError("resume tile manifest must be in output_root")
+    return manifest
+
+
+def _ensure_resume_manifest_matches_plan(
+    manifest: dict[str, Any],
+    tile_traversal_plan: dict[str, Any],
+) -> None:
+    expected = {
+        "tile_count": tile_traversal_plan["tile_count"],
+        "canvas_size_40x": tile_traversal_plan["canvas_size_40x"],
+        "model_tile_size_40x": tile_traversal_plan["model_tile_size_40x"],
+        "overlap_px_40x": tile_traversal_plan["overlap_px_40x"],
+        "stride_40x": tile_traversal_plan["stride_40x"],
+    }
+    for key, value in expected.items():
+        if manifest.get(key) != value:
+            raise GenerationExecutionError(f"resume tile manifest {key} does not match generation plan")
+
+
+def _ensure_existing_completed_tile_files(manifest: dict[str, Any], output_root: Path) -> None:
+    for tile in manifest["tiles"]:
+        if tile["status"] != "completed":
+            continue
+        tile_path = _resolve_output_relative_path(
+            tile.get("output_path"),
+            output_root,
+            "completed tile file",
+        )
+        if not tile_path.exists():
+            raise GenerationExecutionError(f"completed tile file does not exist: {tile_path}")
+
+
+def _resolve_output_relative_path(value: Any, output_root: Path, label: str) -> Path:
+    if not isinstance(value, str) or value == "":
+        raise GenerationExecutionError(f"{label} path must be a non-empty string")
+    path = Path(value)
+    if path.is_absolute():
+        try:
+            path.relative_to(output_root)
+        except ValueError as exc:
+            raise GenerationExecutionError(f"{label} path must be inside output_root") from exc
+        return path
+    return output_root / path
+
+
+def _load_completed_tile(numpy, tile_path: Path):
+    try:
+        image = numpy.load(tile_path, allow_pickle=False)
+    except Exception as exc:
+        raise GenerationExecutionError(f"completed tile file cannot be loaded: {tile_path}") from exc
+    if image.ndim != 3 or image.shape[2] != 3 or image.dtype != numpy.uint8:
+        raise GenerationExecutionError("completed tile file must be a uint8 RGB .npy array")
+    return image
+
+
+def _build_tile_source_manifest(
+    tile_manifest: dict[str, Any],
+    tile_traversal_plan: dict[str, Any],
+    output_root: Path,
+) -> dict[str, Any]:
+    records = []
+    for tile in tile_manifest["tiles"]:
+        tile_index = int(tile["tile_index"])
+        plan_tile = tile_traversal_plan["tiles"][tile_index]
+        path = _resolve_output_relative_path(tile["output_path"], output_root, "completed tile file")
+        records.append(
+            {
+                "level_index": 0,
+                "tile_index": tile_index,
+                "path": path.relative_to(output_root).as_posix(),
+                "shape": list(plan_tile["model_tile_size_40x"][::-1]) + [3],
+                "dtype": "uint8",
+                "status": tile["status"],
+                "tile_origin_40x": list(plan_tile["tile_origin_40x"]),
+                "write_region_40x": list(plan_tile["write_region_40x"]),
+            }
+        )
+    return {
+        "schema_version": PROJECT_VERSION,
+        "manifest_type": "disk_npy_tile_source_manifest",
+        "expected_tile_count": tile_manifest["tile_count"],
+        "levels": [{"level_index": 0, "expected_tile_count": tile_manifest["tile_count"]}],
+        "tiles": records,
+    }
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def _smoke_rgb_image(numpy, height: int, width: int, base_rgb, offset: int):

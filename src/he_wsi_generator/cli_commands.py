@@ -390,8 +390,13 @@ def run_command(args: argparse.Namespace) -> int:
                     output_root=args.output_root,
                     generated_id=args.generated_id,
                     condition_packet_path=args.condition_packet,
+                    resume_tile_manifest_path=args.resume_tile_manifest,
                 )
             elif args.backend == "torch-diffusion-smoke":
+                if args.resume_tile_manifest:
+                    raise GenerationExecutionError(
+                        "--resume-tile-manifest is only supported for smoke-cascade"
+                    )
                 if not args.training_index:
                     raise GenerationExecutionError(
                         "--training-index is required for torch-diffusion-smoke"

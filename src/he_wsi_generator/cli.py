@@ -516,6 +516,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--condition-packet",
         help="Optional generation_condition_packet JSON recorded by smoke generation backends.",
     )
+    run_parser.add_argument(
+        "--resume-tile-manifest",
+        help="Optional resumable tile manifest JSON for smoke-cascade resume execution.",
+    )
 
     archive_parser = subparsers.add_parser(
         "archive-sample",
