@@ -1,5 +1,42 @@
 # DEMANDS
 
+## v0.71.0 - 2026-05-24 P5 sampled policy 条件包接入需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-05` 的保守可交付子集：在 v0.70.0 已能生成 `sampled_style_policy` / `sampled_texture_policy` 的基础上，让 `build-condition-packet` 可选读取这些 policy artifact，并将其写入 condition packet 的可审计条件摘要，减少 policy artifact 与生成条件链路之间仍然断开的缺口。
+
+### 结构化需求
+
+- 使用单 worker 隔离开发：
+  - `p5-condition-sampled-policy-20260524` 负责在 condition packet 构建路径新增可选 sampled policy 输入。
+- 新增最小 API/CLI 能力：
+  - `build_generation_condition_packet()` 支持可选 `sampled_style_policy_path` 和 `sampled_texture_policy_path`。
+  - `he-wsi-gen build-condition-packet` 支持可选 `--sampled-style-policy` 和 `--sampled-texture-policy`。
+- 当提供 `sampled_style_policy` 时：
+  - 校验 `schema_version == PROJECT_VERSION`、`artifact_type == "sampled_style_policy"`、`sample_id`、`random_seed`、`selection_policy` 和 `selected_style.mean_rgb` 等关键字段；
+  - condition packet 的 `artifact_inputs` 记录该 policy artifact；
+  - `conditions.style_seed` 明确记录 `source="sampled_style_policy"`、policy path、sample id、seed、selection policy、selected style 摘要和 RGB 统计引用；
+  - 不再把该条件误描述为 trainable style encoder。
+- 当提供 `sampled_texture_policy` 时：
+  - 校验 `schema_version == PROJECT_VERSION`、`artifact_type == "sampled_texture_policy"`、`sample_id`、`random_seed`、`selection_policy` 和 `selected_texture_token.cluster_id` / `representative_embedding_index` 等关键字段；
+  - condition packet 的 `artifact_inputs` 记录该 policy artifact；
+  - `conditions.texture_token` 明确记录 `source="sampled_texture_policy"`、policy path、sample id、seed、selection policy 和 selected token 摘要；
+  - 不再把该条件误描述为 trainable texture codebook 或 morphology token sampler。
+- 增加定向单元测试覆盖：
+  - condition packet 同时接入 sampled style/texture policy 时，会记录 policy artifact input 和 selected style/token 摘要；
+  - CLI 可通过 `--sampled-style-policy` / `--sampled-texture-policy` 构建包含 policy 条件摘要的 condition packet；
+  - 非法 artifact type、版本不匹配、关键字段缺失时显式失败。
+- 版本号规划升级到 `v0.71.0`，属于向后兼容的 condition packet 审计功能增量。
+
+### 边界说明
+
+- 本批次仍不实现 production latent diffusion / ControlNet / DiT。
+- 本批次仍不实现生产级 trainable style encoder、texture codebook、VQ-VAE token sampler 或真实 morphology token generator。
+- 本批次只让 condition packet 记录 sampled policy artifact，不自动调用 policy sampler，不改变 smoke/torch generation backend 的条件特征编码方式。
+- 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
+
 ## v0.70.0 - 2026-05-24 P5 prior 采样策略可审计化需求
 
 ### 用户需求
