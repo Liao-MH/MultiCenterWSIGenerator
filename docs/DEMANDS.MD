@@ -1,5 +1,40 @@
 # DEMANDS
 
+## v0.72.6 - 2026-05-25 P3 production training dataset contract 需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-MISS-04` / P3 的保守契约增量：不直接实现 production latent diffusion / ControlNet / DiT 训练本体，而是先让 `init-training-run` 的训练配置具备可审计的 production training dataset contract，避免没有真实数据规模、split、cascade 覆盖、条件输入和目标 backend 约束的配置进入 run manifest。
+
+### 结构化需求
+
+- 使用单 worker 隔离开发：
+  - `p3-production-training-contract-20260525` 负责加固 `src/he_wsi_generator/models/training.py` 的 training config 校验、run manifest 输出和直接相关测试。
+- 新增或调整最小实现能力：
+  - training config 必须显式声明 `training_backend`，当前 production 契约目标限定为 `latent_diffusion_unet`;
+  - training config 必须显式声明 `dataset_contract`，至少记录 training index 路径、split 计数、cascade level 计数、最小样本数、必需条件输入、mask class schema 和 production readiness 标记；
+  - `create_training_run()` 应把通过校验的 `training_backend` 与 `dataset_contract` 写入 `training_run.json` 和 skeleton checkpoint manifest；
+  - 对缺失 `dataset_contract`、样本数不足、缺少必需 split、缺少 cascade level、mask class schema 不完整、production readiness 未声明或声明不合理等情况显式抛出 `ModelRunError`；
+  - 当前仍不训练真实 production 模型，不写 production-ready checkpoint，不把 smoke/test fixture 描述为 production backend。
+- 验证要求：
+  - 新增 RED 测试先证明旧实现不会拒绝缺失 `dataset_contract` 的 training config；
+  - `tests.test_models_generation` 通过；
+  - `tests.test_version` 通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.6`，属于向后兼容的 P3 训练配置契约补丁。
+
+### 边界说明
+
+- 本批次不实现真实 production latent diffusion / ControlNet / DiT 训练 loop。
+- 本批次不把任何 skeleton checkpoint 或 smoke checkpoint 标为 `usable_for_inference=true` 或 production-ready。
+- 本批次不实现 production prior、style encoder、texture codebook、VQ-VAE 或 production OME-TIFF writer。
+- 本批次不打 tag、不生成发布包、不清理历史 worker worktree。
+
+### 预期落地
+
+- P3 的训练入口从“只校验少量静态字段”推进到“能记录并拒绝不完整 production training dataset contract”，为后续真实 production backend 接入提供更可靠的训练数据与目标 backend 契约。
+
 ## v0.72.5 - 2026-05-25 P4 tile-streaming writer 原子发布事务需求
 
 ### 用户需求
