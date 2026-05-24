@@ -6,6 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = str(REPO_ROOT / "src")
+if SRC_ROOT not in sys.path:
+    # Worker worktrees may not be the active editable install in the shared env.
+    sys.path.insert(0, SRC_ROOT)
+
 import numpy as np
 import tifffile
 
@@ -18,9 +24,6 @@ from he_wsi_generator.outputs.masks import write_mask_array
 from he_wsi_generator.outputs.ome_tiff import OutputWriteError, write_pyramid_ome_tiff
 from he_wsi_generator.qc.engine import QCReferenceError, build_qc_report
 from he_wsi_generator.schemas import validate_metadata, validate_qc_report
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class OutputQCArchiveTests(unittest.TestCase):
@@ -69,6 +72,28 @@ class OutputQCArchiveTests(unittest.TestCase):
                 "summary": {},
                 "non_copy_report": {},
             },
+        }
+
+    def write_tile_record(
+        self,
+        root: Path,
+        name: str,
+        array: np.ndarray,
+        *,
+        level_index: int,
+        tile_index: int,
+        status: str = "completed",
+    ) -> dict:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(path, array)
+        return {
+            "level_index": level_index,
+            "tile_index": tile_index,
+            "path": str(path),
+            "shape": list(array.shape),
+            "dtype": str(array.dtype),
+            "status": status,
         }
 
     def test_write_pyramid_ome_tiff_smoke(self):
@@ -120,6 +145,74 @@ class OutputQCArchiveTests(unittest.TestCase):
         self.assertEqual(audit["levels"][0]["edge_chunk_shape"], [4, 2])
         self.assertIn("in_memory_array_writer", audit["streaming_limitations"])
 
+    def test_write_pyramid_ome_tiff_records_disk_tile_source_contract(self):
+        levels = [
+            np.zeros((8, 8, 3), dtype=np.uint8),
+            np.ones((4, 4, 3), dtype=np.uint8) * 50,
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            records = [
+                self.write_tile_record(
+                    tile_root,
+                    "level0_tile0.npy",
+                    np.zeros((4, 4, 3), dtype=np.uint8),
+                    level_index=0,
+                    tile_index=0,
+                ),
+                self.write_tile_record(
+                    tile_root,
+                    "level0_tile1.npy",
+                    np.ones((4, 4, 3), dtype=np.uint8),
+                    level_index=0,
+                    tile_index=1,
+                ),
+                self.write_tile_record(
+                    tile_root,
+                    "level1_tile0.npy",
+                    np.ones((4, 4, 3), dtype=np.uint8) * 2,
+                    level_index=1,
+                    tile_index=0,
+                ),
+            ]
+            manifest = {
+                "expected_tile_count": 3,
+                "levels": [
+                    {"level_index": 0, "expected_tile_count": 2},
+                    {"level_index": 1, "expected_tile_count": 1},
+                ],
+                "tiles": records,
+            }
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            report = write_pyramid_ome_tiff(
+                levels,
+                root / "generated.ome.tiff",
+                tile_source_manifest=manifest_path,
+            )
+
+        contract = report["streaming_contract"]
+        coverage_by_level = {
+            level["level_index"]: level for level in contract["coverage"]["levels"]
+        }
+        self.assertEqual(contract["contract_status"], "partial_contract_only")
+        self.assertFalse(contract["production_streaming"])
+        self.assertTrue(contract["partial_contract_only"])
+        self.assertEqual(contract["tile_source"]["manifest_path"], str(manifest_path))
+        self.assertEqual(contract["coverage"]["expected_tile_count"], 3)
+        self.assertEqual(contract["coverage"]["completed_tile_count"], 3)
+        self.assertEqual(contract["coverage"]["missing_tile_count"], 0)
+        self.assertEqual(contract["coverage"]["pending_tile_count"], 0)
+        self.assertEqual(contract["coverage"]["failed_tile_count"], 0)
+        self.assertEqual(coverage_by_level[0]["completed_tile_count"], 2)
+        self.assertEqual(coverage_by_level[1]["expected_tile_count"], 1)
+        self.assertIn(
+            "tile_source_validated_but_writer_still_in_memory",
+            contract["streaming_limitations"],
+        )
+
     def test_write_pyramid_ome_tiff_rejects_invalid_chunk_shape(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "generated.ome.tiff"
@@ -130,6 +223,76 @@ class OutputQCArchiveTests(unittest.TestCase):
                     output_path,
                     chunk_shape=(0, 4),
                 )
+
+    def test_write_pyramid_ome_tiff_rejects_incomplete_tile_source_contract(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            completed = self.write_tile_record(
+                tile_root,
+                "completed.npy",
+                np.zeros((4, 4, 3), dtype=np.uint8),
+                level_index=0,
+                tile_index=0,
+            )
+            duplicate = self.write_tile_record(
+                tile_root,
+                "duplicate.npy",
+                np.zeros((4, 4, 3), dtype=np.uint8),
+                level_index=0,
+                tile_index=0,
+            )
+            pending = dict(completed)
+            pending["status"] = "pending"
+            failed = dict(completed)
+            failed["status"] = "failed"
+            cases = [
+                ("pending", [pending], 1, "pending"),
+                ("failed", [failed], 1, "failed"),
+                ("missing", [completed], 2, "missing"),
+                ("duplicate", [completed, duplicate], 2, "duplicate"),
+            ]
+
+            for name, records, expected_tile_count, pattern in cases:
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(OutputWriteError, pattern):
+                        write_pyramid_ome_tiff(
+                            [np.zeros((4, 4, 3), dtype=np.uint8)],
+                            root / f"{name}.ome.tiff",
+                            tile_source_manifest={
+                                "expected_tile_count": expected_tile_count,
+                                "tiles": records,
+                            },
+                        )
+
+    def test_write_pyramid_ome_tiff_rejects_invalid_tile_source_file_contract(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            completed = self.write_tile_record(
+                tile_root,
+                "completed.npy",
+                np.zeros((4, 4, 3), dtype=np.uint8),
+                level_index=0,
+                tile_index=0,
+            )
+            cases = [
+                ("missing_path", {**completed, "path": str(tile_root / "missing.npy")}, "exist"),
+                ("shape_mismatch", {**completed, "shape": [2, 2, 3]}, "shape"),
+                ("dtype_mismatch", {**completed, "dtype": "float32"}, "dtype"),
+            ]
+
+            for name, record, pattern in cases:
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(OutputWriteError, pattern):
+                        write_pyramid_ome_tiff(
+                            [np.zeros((4, 4, 3), dtype=np.uint8)],
+                            root / f"{name}.ome.tiff",
+                            tile_source_manifest={
+                                "expected_tile_count": 1,
+                                "tiles": [record],
+                            },
+                        )
 
     def test_write_mask_array_saves_npy_and_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
