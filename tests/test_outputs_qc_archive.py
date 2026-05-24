@@ -21,7 +21,11 @@ from he_wsi_generator.metadata.archive import (
     write_metadata,
 )
 from he_wsi_generator.outputs.masks import write_mask_array
-from he_wsi_generator.outputs.ome_tiff import OutputWriteError, write_pyramid_ome_tiff
+from he_wsi_generator.outputs.ome_tiff import (
+    OutputWriteError,
+    write_pyramid_ome_tiff,
+    write_pyramid_ome_tiff_from_tile_sources,
+)
 from he_wsi_generator.qc.engine import QCReferenceError, build_qc_report
 from he_wsi_generator.schemas import validate_metadata, validate_qc_report
 
@@ -95,6 +99,30 @@ class OutputQCArchiveTests(unittest.TestCase):
             "dtype": str(array.dtype),
             "status": status,
         }
+
+    def write_positioned_tile_record(
+        self,
+        root: Path,
+        name: str,
+        array: np.ndarray,
+        *,
+        level_index: int,
+        tile_index: int,
+        tile_origin: list[int],
+        write_region: list[int],
+        status: str = "completed",
+    ) -> dict:
+        record = self.write_tile_record(
+            root,
+            name,
+            array,
+            level_index=level_index,
+            tile_index=tile_index,
+            status=status,
+        )
+        record["tile_origin_40x"] = list(tile_origin)
+        record["write_region_40x"] = list(write_region)
+        return record
 
     def test_write_pyramid_ome_tiff_smoke(self):
         levels = [
@@ -212,6 +240,156 @@ class OutputQCArchiveTests(unittest.TestCase):
             "tile_source_validated_but_writer_still_in_memory",
             contract["streaming_limitations"],
         )
+
+    def test_write_pyramid_ome_tiff_from_tile_sources_assembles_disk_tiles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            records = [
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "level0_left.npy",
+                    np.ones((4, 3, 3), dtype=np.uint8) * 10,
+                    level_index=0,
+                    tile_index=0,
+                    tile_origin=[0, 0],
+                    write_region=[0, 0, 3, 4],
+                ),
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "level0_right.npy",
+                    np.ones((4, 3, 3), dtype=np.uint8) * 20,
+                    level_index=0,
+                    tile_index=1,
+                    tile_origin=[3, 0],
+                    write_region=[3, 0, 3, 4],
+                ),
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "level1_full.npy",
+                    np.ones((2, 3, 3), dtype=np.uint8) * 30,
+                    level_index=1,
+                    tile_index=0,
+                    tile_origin=[0, 0],
+                    write_region=[0, 0, 3, 2],
+                ),
+            ]
+            manifest = {
+                "expected_tile_count": 3,
+                "levels": [
+                    {"level_index": 0, "shape": [4, 6, 3], "expected_tile_count": 2},
+                    {"level_index": 1, "shape": [2, 3, 3], "expected_tile_count": 1},
+                ],
+                "tiles": records,
+            }
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            report = write_pyramid_ome_tiff_from_tile_sources(
+                manifest_path,
+                root / "generated.ome.tiff",
+            )
+
+            with tifffile.TiffFile(root / "generated.ome.tiff") as tiff:
+                level0 = tiff.series[0].levels[0].asarray()
+                level1 = tiff.series[0].levels[1].asarray()
+
+        self.assertEqual(report["status"], "written")
+        self.assertEqual(report["write_mode"], "disk_tile_source_assembly_write")
+        self.assertFalse(report["production_streaming"])
+        self.assertEqual(report["assembly_report"]["assembled_level_count"], 2)
+        self.assertEqual(report["assembly_report"]["levels"][0]["covered_pixel_count"], 24)
+        self.assertEqual(report["streaming_contract"]["coverage"]["completed_tile_count"], 3)
+        self.assertIn(
+            "assembled_in_memory_before_tifffile_write",
+            report["streaming_contract"]["streaming_limitations"],
+        )
+        self.assertEqual(level0.shape, (4, 6, 3))
+        self.assertEqual(level0[0, 0, 0], 10)
+        self.assertEqual(level0[0, 5, 0], 20)
+        self.assertEqual(level1.shape, (2, 3, 3))
+        self.assertEqual(level1[0, 0, 0], 30)
+
+    def test_write_pyramid_ome_tiff_from_tile_sources_rejects_invalid_coverage(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            base_tile = np.ones((2, 2, 3), dtype=np.uint8)
+            gap_record = self.write_positioned_tile_record(
+                tile_root,
+                "gap.npy",
+                base_tile,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 2, 2],
+            )
+            overlap_records = [
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "overlap_a.npy",
+                    np.ones((2, 3, 3), dtype=np.uint8),
+                    level_index=0,
+                    tile_index=0,
+                    tile_origin=[0, 0],
+                    write_region=[0, 0, 3, 2],
+                ),
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "overlap_b.npy",
+                    base_tile,
+                    level_index=0,
+                    tile_index=1,
+                    tile_origin=[2, 0],
+                    write_region=[2, 0, 2, 2],
+                ),
+            ]
+            bounds_record = self.write_positioned_tile_record(
+                tile_root,
+                "bounds.npy",
+                base_tile,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[3, 0],
+                write_region=[3, 0, 2, 2],
+            )
+            shape_record = self.write_positioned_tile_record(
+                tile_root,
+                "shape.npy",
+                base_tile,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 2, 2],
+            )
+            shape_record["shape"] = [2, 1, 3]
+            pending_record = dict(gap_record)
+            pending_record["status"] = "pending"
+            cases = [
+                ("gap", [gap_record], 1, "cover"),
+                ("overlap", overlap_records, 2, "overlap"),
+                ("bounds", [bounds_record], 1, "bounds"),
+                ("shape_mismatch", [shape_record], 1, "shape"),
+                ("pending", [pending_record], 1, "pending"),
+            ]
+
+            for name, records, expected_tile_count, pattern in cases:
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(OutputWriteError, pattern):
+                        write_pyramid_ome_tiff_from_tile_sources(
+                            {
+                                "expected_tile_count": expected_tile_count,
+                                "levels": [
+                                    {
+                                        "level_index": 0,
+                                        "shape": [2, 4, 3],
+                                        "expected_tile_count": expected_tile_count,
+                                    }
+                                ],
+                                "tiles": records,
+                            },
+                            root / f"{name}.ome.tiff",
+                        )
 
     def test_write_pyramid_ome_tiff_rejects_invalid_chunk_shape(self):
         with tempfile.TemporaryDirectory() as tmpdir:
