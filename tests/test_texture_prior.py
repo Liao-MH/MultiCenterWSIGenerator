@@ -65,7 +65,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(prior, saved)
-        self.assertEqual(prior["schema_version"], "v0.69.0")
+        self.assertEqual(prior["schema_version"], "v0.70.0")
         self.assertEqual(prior["prior_type"], "texture_prior")
         self.assertEqual(prior["source"]["cache_dir"], str(cache_dir))
         self.assertEqual(prior["source"]["cache_key"], cache_key)
@@ -174,7 +174,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(policy, saved)
-        self.assertEqual(policy["schema_version"], "v0.69.0")
+        self.assertEqual(policy["schema_version"], "v0.70.0")
         self.assertEqual(policy["artifact_type"], "sampled_texture_policy")
         self.assertEqual(policy["sample_id"], "texture-sample-001")
         self.assertEqual(policy["random_seed"], 3)
@@ -191,7 +191,7 @@ class TexturePriorTests(unittest.TestCase):
             root = Path(tmpdir)
             prior_path = root / "texture_prior.json"
             prior = {
-                "schema_version": "v0.69.0",
+                "schema_version": "v0.70.0",
                 "prior_type": "texture_prior",
                 "cluster_count": 1,
                 "texture_prototypes": [
@@ -240,6 +240,49 @@ class TexturePriorTests(unittest.TestCase):
             "sample_texture_policy_from_prior helper is missing",
         )
         return texture_module.sample_texture_policy_from_prior(**kwargs)
+
+    def test_cli_samples_texture_policy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache_dir, cache_key, cluster_path = self.write_embedding_inputs(root)
+            prior_path = root / "texture_prior.json"
+            output_path = root / "sampled_texture_policy.json"
+            build_texture_prior_from_embedding_cache(
+                cache_dir=cache_dir,
+                cache_key=cache_key,
+                cluster_report_path=cluster_path,
+                output_path=prior_path,
+            )
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "sample-texture-policy",
+                    str(prior_path),
+                    "--output",
+                    str(output_path),
+                    "--sample-id",
+                    "texture-cli",
+                    "--random-seed",
+                    "5",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            policy = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertIn("sampled texture policy written", result.stdout)
+        self.assertEqual(policy["artifact_type"], "sampled_texture_policy")
+        self.assertEqual(policy["sample_id"], "texture-cli")
 
 
 if __name__ == "__main__":

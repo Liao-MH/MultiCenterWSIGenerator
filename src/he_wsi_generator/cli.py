@@ -184,6 +184,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     style_prior_parser.add_argument("--output", required=True, help="Path to write style_prior JSON.")
 
+    style_policy_parser = subparsers.add_parser(
+        "sample-style-policy",
+        help="Sample a reproducible style policy artifact from a style_prior JSON.",
+    )
+    style_policy_parser.add_argument("style_prior", help="Path to style_prior JSON.")
+    style_policy_parser.add_argument("--output", required=True, help="Path to write sampled_style_policy JSON.")
+    style_policy_parser.add_argument("--sample-id", required=True, help="Sample identifier.")
+    style_policy_parser.add_argument("--random-seed", type=int, required=True, help="Random seed.")
+
     texture_prior_parser = subparsers.add_parser(
         "build-texture-prior",
         help="Build a texture_prior JSON from embedding cache and cluster report.",
@@ -200,6 +209,19 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to write texture_prior JSON.",
     )
+
+    texture_policy_parser = subparsers.add_parser(
+        "sample-texture-policy",
+        help="Sample a reproducible texture policy artifact from a texture_prior JSON.",
+    )
+    texture_policy_parser.add_argument("texture_prior", help="Path to texture_prior JSON.")
+    texture_policy_parser.add_argument(
+        "--output",
+        required=True,
+        help="Path to write sampled_texture_policy JSON.",
+    )
+    texture_policy_parser.add_argument("--sample-id", required=True, help="Sample identifier.")
+    texture_policy_parser.add_argument("--random-seed", type=int, required=True, help="Random seed.")
 
     tissue_overview_parser = subparsers.add_parser(
         "build-wsi-tissue-overview",

@@ -1,5 +1,79 @@
 # CHANGELOG
 
+## v0.70.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-MISS-05` 的保守可交付子集：在已有统计型 style/texture prior 基础上，补齐可复现、可审计的 sampled style policy 和 sampled texture policy artifact，同时保持非 production 边界。
+
+### 已做改动
+
+- 版本号升级到 `v0.70.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建两个 P5 worker 任务：
+  - `.agent/tasks/p5-style-sampling-policy-20260524.md`
+  - `.agent/tasks/p5-texture-sampling-policy-20260524.md`
+- 回收两个 P5 worker 报告：
+  - `.agent/reports/p5-style-sampling-policy-20260524.md`
+  - `.agent/reports/p5-texture-sampling-policy-20260524.md`
+- `sample_style_policy_from_prior()` 从 `style_prior` 中按 deterministic seed policy 选择 tile-level style record，写出 `sampled_style_policy` JSON，并记录 RGB 统计引用和非 production limitations。
+- `sample_texture_policy_from_prior()` 从 `texture_prior` 中按 deterministic seed policy 选择 texture prototype，写出 `sampled_texture_policy` JSON，并记录 representative embedding index、cluster 摘要和非 production limitations。
+- CLI 新增 `sample-style-policy` 与 `sample-texture-policy`，用于从已有统计型 prior 生成可审计 policy artifact。
+- 更新 README、`docs/DEMANDS.MD` 与 `docs/audit/`，将 `AC-MISS-05` 调整为“部分完成 / 仍缺失 production prior”，并明确当前不是 trainable style encoder、texture codebook、VQ-VAE 或 production texture/style model。
+
+### 影响文件
+
+- `.agent/tasks/p5-style-sampling-policy-20260524.md`
+- `.agent/tasks/p5-texture-sampling-policy-20260524.md`
+- `.agent/reports/p5-style-sampling-policy-20260524.md`
+- `.agent/reports/p5-texture-sampling-policy-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `src/he_wsi_generator/priors/__init__.py`
+- `src/he_wsi_generator/priors/style.py`
+- `src/he_wsi_generator/priors/texture.py`
+- `tests/test_style_prior.py`
+- `tests/test_texture_prior.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.70.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker / orchestrator 定向验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_style_prior -v`
+    - 结果：红灯符合预期，写生产代码前失败原因为 `sample_style_policy_from_prior helper is missing`；实现后通过，`Ran 5 tests in 0.236s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_texture_prior -v`
+    - 结果：红灯符合预期，写生产代码前失败原因为 `sample_texture_policy_from_prior helper is missing`；实现后通过，`Ran 5 tests in 0.074s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_style_prior tests.test_texture_prior tests.test_priors tests.test_generation_conditioning -v`
+    - 结果：通过，`Ran 26 tests in 0.594s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_style_prior tests.test_texture_prior -v`
+    - 结果：通过，`Ran 12 tests in 0.423s OK`
+- Orchestrator 文档/版本同步后最终验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+    - 结果：通过，卸载 `multi-center-wsi-generator 0.69.0` 并安装 editable `multi-center-wsi-generator 0.70.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.70.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`
+  - `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... importlib.metadata / PROJECT_VERSION / PACKAGE_VERSION ... PY`
+    - 结果：`0.70.0`、`v0.70.0`、`0.70.0`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_style_prior tests.test_texture_prior tests.test_priors tests.test_generation_conditioning -v`
+    - 结果：通过，`Ran 28 tests in 0.554s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 242 tests in 15.756s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+
 ## v0.69.0 - 2026-05-24
 
 ### 用户需求

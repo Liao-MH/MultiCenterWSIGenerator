@@ -37,9 +37,17 @@ from .priors.artifacts import (
 )
 from .priors.layout import LayoutMaskPriorBuildError, build_layout_mask_prior_from_training_index
 from .priors.sampler import LayoutMaskSamplerError, sample_layout_mask_from_prior
-from .priors.style import StylePriorBuildError, build_style_prior_from_training_index
+from .priors.style import (
+    StylePriorBuildError,
+    build_style_prior_from_training_index,
+    sample_style_policy_from_prior,
+)
 from .priors.tissue import WSITissueOverviewBuildError, build_wsi_tissue_overview_from_manifest
-from .priors.texture import TexturePriorBuildError, build_texture_prior_from_embedding_cache
+from .priors.texture import (
+    TexturePriorBuildError,
+    build_texture_prior_from_embedding_cache,
+    sample_texture_policy_from_prior,
+)
 from .qc.reference import QCReferenceBuildError, build_qc_reference_distribution
 from .qc.review import QCReviewError, apply_qc_review_decision, build_qc_review
 from .schemas import ValidationError, load_document, validate_file
@@ -171,6 +179,20 @@ def run_command(args: argparse.Namespace) -> int:
         print(f"style prior written: {args.output} ({style_prior['sample_count']} samples)")
         return 0
 
+    if args.command == "sample-style-policy":
+        try:
+            policy = sample_style_policy_from_prior(
+                style_prior_path=args.style_prior,
+                output_path=args.output,
+                sample_id=args.sample_id,
+                random_seed=args.random_seed,
+            )
+        except StylePriorBuildError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"sampled style policy written: {args.output} ({policy['sample_id']})")
+        return 0
+
     if args.command == "build-texture-prior":
         try:
             prior = build_texture_prior_from_embedding_cache(
@@ -183,6 +205,20 @@ def run_command(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"texture prior written: {args.output} ({prior['cluster_count']} clusters)")
+        return 0
+
+    if args.command == "sample-texture-policy":
+        try:
+            policy = sample_texture_policy_from_prior(
+                texture_prior_path=args.texture_prior,
+                output_path=args.output,
+                sample_id=args.sample_id,
+                random_seed=args.random_seed,
+            )
+        except TexturePriorBuildError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"sampled texture policy written: {args.output} ({policy['sample_id']})")
         return 0
 
     if args.command == "build-wsi-tissue-overview":

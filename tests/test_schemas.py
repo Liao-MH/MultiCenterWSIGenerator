@@ -13,7 +13,7 @@ from he_wsi_generator.schemas import (
 class SchemaValidationTests(unittest.TestCase):
     def test_manifest_accepts_required_record_fields(self):
         manifest = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "dataset_id": "demo-dataset",
             "created_at": "2026-05-23T08:00:00",
             "records": [
@@ -34,12 +34,12 @@ class SchemaValidationTests(unittest.TestCase):
 
         validated = validate_input_manifest(manifest)
 
-        self.assertEqual(validated["schema_version"], "v0.69.0")
+        self.assertEqual(validated["schema_version"], "v0.70.0")
         self.assertEqual(validated["records"][0]["wsi_id"], "slide-001")
 
     def test_manifest_rejects_missing_wsi_path(self):
         manifest = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "dataset_id": "demo-dataset",
             "created_at": "2026-05-23T08:00:00",
             "records": [
@@ -57,7 +57,7 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_label_mapping_accepts_six_class_mapping(self):
         mapping = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -85,7 +85,7 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_label_mapping_rejects_non_project_mask_class(self):
         mapping = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {"0": "background", "1": "tumor"},
@@ -98,7 +98,7 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_generation_config_accepts_documented_defaults(self):
         config = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -120,7 +120,7 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_generation_config_rejects_anchor_outside_unit_interval(self):
         config = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -140,7 +140,7 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_generation_config_requires_source_for_source_anchored_modes(self):
         config = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -160,7 +160,7 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_generation_config_rejects_invalid_canvas_size(self):
         config = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -181,9 +181,9 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_metadata_requires_source_for_source_anchored_outputs(self):
         metadata = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "generated_id": "gen-001",
-            "version": "v0.69.0",
+            "version": "v0.70.0",
             "created_at": "2026-05-23T08:00:00",
             "output": {
                 "wsi_path": "outputs/gen-001/generated.ome.tiff",
@@ -201,7 +201,7 @@ class SchemaValidationTests(unittest.TestCase):
                 "style_seed": 12,
                 "random_seed": 0,
                 "model_checkpoint": "checkpoints/model.pt",
-                "model_version": "v0.69.0",
+                "model_version": "v0.70.0",
                 "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
                 "max_magnification": "40x",
                 "tile_size_40x": [512, 512],
@@ -231,7 +231,7 @@ class SchemaValidationTests(unittest.TestCase):
 
     def test_qc_report_requires_three_levels_and_non_copy_report(self):
         qc = {
-            "schema_version": "v0.69.0",
+            "schema_version": "v0.70.0",
             "generated_id": "gen-001",
             "overall_status": "warning",
             "levels": {

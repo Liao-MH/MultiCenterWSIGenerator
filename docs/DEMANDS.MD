@@ -27,6 +27,12 @@
 - 本批次不把 policy artifact 自动接入 condition packet 或 generation runtime；condition packet 集成由后续 orchestrator/批次决定，避免两个 worker 同时修改共享 conditioning 文件。
 - 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
 
+### 已落地
+
+- 已通过 worker 分支完成 `sample_style_policy_from_prior()` 和 `sample_texture_policy_from_prior()`，并保留 `.agent/tasks/` 与 `.agent/reports/` 审计证据。
+- Orchestrator 已统一新增 `sample-style-policy` 与 `sample-texture-policy` CLI，导出 prior helper，并同步 README、版本号、审计清单和变更日志。
+- 当前落地范围保持为 deterministic statistical policy artifact；仍未扩展到 condition packet 自动消费、production trainable style encoder、texture codebook、VQ-VAE 或真实 generation backend。
+
 ## v0.69.0 - 2026-05-24 P4 多层 tile source streaming 与 writer 契约加固需求
 
 ### 用户需求

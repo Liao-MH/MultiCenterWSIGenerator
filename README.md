@@ -1,14 +1,14 @@
 # MultiCenterWSIGenerator
 
-- 当前版本：v0.69.0
-- 当前状态：训练索引、RGB/mask training batch loader、WSI tissue overview、统计型 layout/mask、style、texture prior、prior manifest builder、generation condition packet 与 smoke/PyTorch diffusion smoke 条件包记录、PyTorch diffusion smoke 条件通道注入、PyTorch diffusion smoke cross-scale condition、PyTorch VAE smoke latent autoencoder、smoke latent U-Net denoiser、VAE latent diffusion smoke training/sampling、PyTorch diffusion smoke generation、generation tile traversal / overlap blending 基础设施、可恢复 tile manifest contract、smoke tile resume execution、OME-TIFF chunked write audit、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、磁盘 tile source tiled iterator streaming 写出、smoke 四层 tile source streaming 写出、streaming writer pyramid level contract、QC reference robust IQR/MAD z-score estimator、outlier audit、显式分层阈值 artifact 与运行时 exact-match stratum QC 消费、自动 QC、文件级 `qc_review` 审阅工作流、`qc-review` 通用校验入口、本地 job runner/CLI 任务取消/查看/列表/cwd/输出摘要 metadata/QC/review 契约校验、可交互 PySide6 单页配置页、GUI 内同步执行/刷新 queued job 与输出摘要查看阶段
+- 当前版本：v0.70.0
+- 当前状态：训练索引、RGB/mask training batch loader、WSI tissue overview、统计型 layout/mask、style/texture prior、prior manifest builder、generation condition packet 与 smoke/PyTorch diffusion smoke 条件包记录、PyTorch diffusion smoke 条件通道注入、PyTorch diffusion smoke cross-scale condition、PyTorch VAE smoke latent autoencoder、smoke latent U-Net denoiser、VAE latent diffusion smoke training/sampling、PyTorch diffusion smoke generation、generation tile traversal / overlap blending 基础设施、可恢复 tile manifest contract、smoke tile resume execution、OME-TIFF chunked write audit、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、磁盘 tile source tiled iterator streaming 写出、smoke 四层 tile source streaming 写出、streaming writer pyramid level contract、可审计 sampled style/texture policy artifact、QC reference robust IQR/MAD z-score estimator、outlier audit、显式分层阈值 artifact 与运行时 exact-match stratum QC 消费、自动 QC、文件级 `qc_review` 审阅工作流、`qc-review` 通用校验入口、本地 job runner/CLI 任务取消/查看/列表/cwd/输出摘要 metadata/QC/review 契约校验、可交互 PySide6 单页配置页、GUI 内同步执行/刷新 queued job 与输出摘要查看阶段
 - GitHub 仓库：[Liao-MH/MultiCenterWSIGenerator](https://github.com/Liao-MH/MultiCenterWSIGenerator)
 
 本项目用于开发一个面向 H&E 染色 Whole Slide Image（WSI）的本地化数据生成器。最终系统目标是从真实 WSI 学习组织 layout、疾病无关区域 mask、成像风格和多倍率纹理分布，生成新的 OME-TIFF pyramid WSI，并同步输出 mask、metadata、QC JSON 与 batch JSONL index。
 
 ## 当前已实现
 
-v0.69.0 在 v0.68.0 P4 tiled iterator writer 基础上继续推进输出可靠性：`write_pyramid_ome_tiff_streaming_from_tile_sources()` 现在校验 streaming manifest 的 pyramid levels 必须按 high-to-low resolution 顺序声明，缺失 level shape 或后续 level 尺寸反增会显式失败，并在报告中记录 `pyramid_order`、`level_order` 和每层 `pyramid_position`。`run-generation --backend smoke-cascade --wsi-writer tile-streaming` 现在会为 smoke 四层 pyramid 物化完整多层 `.npy` tile source manifest，再通过 tiled iterator writer 写出四层 OME-TIFF；默认 `array` in-memory pyramid 写出路径不变，`torch-diffusion-smoke` 仍拒绝该 writer。当前 smoke 四层 tile source 来自已在内存中构建的 preview 级 cascade arrays，且 OME-TIFF 文件本身仍不支持中断后续写，因此仍不能表述为 production backend streaming、可恢复 OME-TIFF 写入或完整 production gigapixel writer。
+v0.70.0 在 v0.69.0 P4 tiled iterator writer 基础上继续推进 prior 侧可审计性：`sample_style_policy_from_prior()` 和 `sample_texture_policy_from_prior()` 现在会从统计型 style/texture prior 中生成 deterministic sampled policy artifact，记录 seed、选择策略、选中 tile style / texture prototype、统计引用和 non-production limitations；CLI 也新增 `sample-style-policy` 与 `sample-texture-policy`。这些产物是可复现、可审计的统计型 policy artifact，不是 production style encoder、texture codebook 或生成模型。
 
 - Python core package：`he_wsi_generator`
 - CLI 入口：`he-wsi-gen`
@@ -42,6 +42,8 @@ v0.69.0 在 v0.68.0 P4 tiled iterator writer 基础上继续推进输出可靠�
   - `sample-layout-mask` 从统计型 `layout_mask_prior` 采样可复现 `.npy` layout mask，并可用 `wsi_tissue_overview` 的 thumbnail bounding box 限制非背景 footprint
   - `build-style-prior` 从 training-index 读取真实 RGB tile，输出 per-channel RGB mean/std/min/max、归一化统计和 tile-level style records
   - `build-texture-prior` 从 embedding cache 和 cluster report 读取真实 patch embedding，输出 cluster prototype、global embedding 统计和 representative embedding index
+  - `sample-style-policy` 从 `style_prior` 以 deterministic seed policy 选择 tile-level style record，输出 `sampled_style_policy` JSON
+  - `sample-texture-policy` 从 `texture_prior` 以 deterministic seed policy 选择 texture prototype，输出 `sampled_texture_policy` JSON
 - Training / generation skeleton：
   - `init-training-run` 校验训练配置和 prior manifest，并写出 training run manifest
   - `build-training-index` 从 manifest audit 和 label mapping 写出四层 cascade 训练样本 JSONL
@@ -111,7 +113,7 @@ he-wsi-gen --version
 he-wsi-gen validate generation-config configs/generation.default.json
 ```
 
-上述完整环境已在当前机器验证：Python `3.11.15`、PyTorch `2.12.0+cu130`、CUDA 可用、GPU 为 `NVIDIA GeForce RTX 5060 Ti`，并通过 `python -m unittest discover -s tests -v` 的 `236` 个测试。若只需要最小 CLI/schema 功能，也可以安装基础包：
+上述完整环境已在当前机器验证：Python `3.11.15`、PyTorch `2.12.0+cu130`、CUDA 可用、GPU 为 `NVIDIA GeForce RTX 5060 Ti`，并通过 `python -m unittest discover -s tests -v` 的 `242` 个测试。若只需要最小 CLI/schema 功能，也可以安装基础包：
 
 ```bash
 python -m pip install -e .
@@ -275,6 +277,17 @@ he-wsi-gen build-style-prior path/to/training-index.jsonl \
 
 该命令会通过 training-index 读取真实 RGB image tile，输出全局 RGB mean/std/min/max、归一化统计、tile-level mean RGB 和 source tile 记录。当前产物是可审计统计 JSON，可作为 prior manifest 的 `style_prior` artifact；它不是 trainable style encoder、VAE style latent 或风格迁移模型。
 
+从统计型 `style_prior` 采样一个可复现 style policy artifact：
+
+```bash
+he-wsi-gen sample-style-policy path/to/style_prior.json \
+  --output path/to/sampled_style_policy.json \
+  --sample-id style-001 \
+  --random-seed 7
+```
+
+该命令会写出 `sampled_style_policy.json`，记录被选中的 tile-level style record、RGB 统计引用和 deterministic selection policy。当前产物是可审计统计 policy artifact，不是 trainable style encoder、VAE style latent 或风格迁移模型。
+
 从 embedding cache 和 cluster report 构建统计型 `texture_prior`：
 
 ```bash
@@ -286,6 +299,18 @@ he-wsi-gen build-texture-prior \
 ```
 
 该命令会读取真实 embedding cache 和聚类报告，输出 cluster-level texture prototype、全局 embedding mean/std、cluster counts 和 representative embedding index。当前产物是可审计统计 JSON，可作为 prior manifest 的 `texture_prior` artifact；它不是 trainable texture codebook、VQ-VAE 或 morphology token sampler。
+
+从统计型 `texture_prior` 采样一个可复现 texture policy artifact：
+
+```bash
+he-wsi-gen sample-texture-policy \
+  path/to/texture_prior.json \
+  --output path/to/sampled_texture_policy.json \
+  --sample-id texture-001 \
+  --random-seed 7
+```
+
+该命令会写出 `sampled_texture_policy.json`，记录被选中的 texture prototype、代表性 embedding index 和 deterministic selection policy。当前产物是可审计统计 policy artifact，不是 trainable texture codebook、VQ-VAE 或 morphology token sampler。
 
 从四类 prior artifact 构建统一 `prior_manifest.json`：
 
@@ -600,4 +625,4 @@ he-wsi-gen validate qc-review path/to/qc_review.json
 
 ## 当前边界
 
-v0.69.0 继续完成上述工程骨架，并新增 streaming writer pyramid level contract 与 smoke-cascade 显式 `--wsi-writer tile-streaming` 的四层 OME-TIFF 写出能力；该路径能让 writer 不先组装整幅 level array，但 smoke 四层 tile source 仍来自已在内存中生成的 preview cascade arrays，且 writer 不支持中断后续写同一个 OME-TIFF 文件。当前仅实现 thumbnail 级 tissue contour proxy、统计 prior、统计型 layout mask 采样、sampled mask 条件归档和匹配审计、轻量 tissue fraction QC proxy、全局 IQR/MAD 阈值估计、全局 IQR reference outlier filtering、reference artifact 级分层阈值审计、运行时 exact-match stratum 阈值选择、smoke 级上一尺度 RGB proxy 条件、smoke 级 latent U-Net denoiser、preview 级四层 cascade sampling、内存级 tile blending 基础设施、可恢复 tile 状态 contract、smoke tile resume execution、OME-TIFF chunk/tile source contract 审计、磁盘 tile source 内存组装写出、受限 tile iterator streaming writer 和 smoke 四层 tile source streaming 接入，不实现 production-scale latent diffusion U-Net/ControlNet、production cascade sampler、production VAE latent、VAE-diffusion 联合训练、mask diffusion、trainable style encoder、style sampling policy、trainable texture codebook、VQ-VAE、生产级噪声调度和采样器、多倍率真实条件注入、WSI 一致性训练、真实推理 backend、真实训练集批量 QC 采集、基于层级优先级或相似度的自动最佳 stratum 选择、mask class 内部像素级分层阈值、权限/签名系统、数据库或远端协作审阅、production backend 磁盘级逐 tile 生成、可恢复 OME-TIFF 逐 tile 写入或生产级 gigapixel chunked OME-TIFF；job runner 也只支持同步本地执行和 queued job 取消/查看/列表，不包含后台 daemon、并发队列、运行中进程终止、跨机器调度或线程化 PySide6 事件循环绑定。
+v0.70.0 继续完成上述工程骨架，并新增 streaming writer pyramid level contract、sampled style/texture policy artifact 与 smoke-cascade 显式 `--wsi-writer tile-streaming` 的四层 OME-TIFF 写出能力；该路径能让 writer 不先组装整幅 level array，但 smoke 四层 tile source 仍来自已在内存中生成的 preview cascade arrays，且 writer 不支持中断后续写同一个 OME-TIFF 文件。当前仅实现 thumbnail 级 tissue contour proxy、统计 prior、统计型 layout mask 采样、sampled mask 条件归档和匹配审计、轻量 tissue fraction QC proxy、全局 IQR/MAD 阈值估计、全局 IQR reference outlier filtering、reference artifact 级分层阈值审计、运行时 exact-match stratum 阈值选择、smoke 级上一尺度 RGB proxy 条件、smoke 级 latent U-Net denoiser、preview 级四层 cascade sampling、内存级 tile blending 基础设施、可恢复 tile 状态 contract、smoke tile resume execution、OME-TIFF chunk/tile source contract 审计、磁盘 tile source 内存组装写出、受限 tile iterator streaming writer、smoke 四层 tile source streaming 接入，以及 deterministic sampled style/texture policy artifact；不实现 production-scale latent diffusion U-Net/ControlNet、production cascade sampler、production VAE latent、VAE-diffusion 联合训练、mask diffusion、trainable style encoder、style sampling policy、trainable texture codebook、VQ-VAE、生产级噪声调度和采样器、多倍率真实条件注入、WSI 一致性训练、真实推理 backend、真实训练集批量 QC 采集、基于层级优先级或相似度的自动最佳 stratum 选择、mask class 内部像素级分层阈值、权限/签名系统、数据库或远端协作审阅、production backend 磁盘级逐 tile 生成、可恢复 OME-TIFF 逐 tile 写入或生产级 gigapixel chunked OME-TIFF；job runner 也只支持同步本地执行和 queued job 取消/查看/列表，不包含后台 daemon、并发队列、运行中进程终止、跨机器调度或线程化 PySide6 事件循环绑定。
