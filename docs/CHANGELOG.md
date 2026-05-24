@@ -1,5 +1,80 @@
 # CHANGELOG
 
+## v0.69.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 P4 输出可靠性，在 v0.68.0 受限 tiled iterator writer 与 smoke-cascade 显式 writer 选择基础上，补齐 smoke `tile-streaming` 当前只写 level0 的缺口，并加固 streaming writer 对 pyramid level 顺序和报告契约的校验。
+
+### 已做改动
+
+- 版本号升级到 `v0.69.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建两个 P4 worker 任务：
+  - `.agent/tasks/p4-smoke-multilevel-tile-source-20260524.md`
+  - `.agent/tasks/p4-streaming-writer-pyramid-contract-20260524.md`
+- 回收两个 worker 报告：
+  - `.agent/reports/p4-smoke-multilevel-tile-source-20260524.md`
+  - `.agent/reports/p4-streaming-writer-pyramid-contract-20260524.md`
+- `write_pyramid_ome_tiff_streaming_from_tile_sources()` 加固 streaming manifest pyramid level 契约：levels 必须按 high-to-low resolution 声明，缺失 level shape、重复 level index 或后续 level height/width 大于前一层会显式失败。
+- streaming writer report/contract 新增 `pyramid_order`、`level_order` 和每层 `pyramid_position`，并继续保留 `resume_capable=false` 与 `ome_tiff_file_resume_not_supported`。
+- `run-generation --backend smoke-cascade --wsi-writer tile-streaming` 现在会为四层 smoke pyramid 物化 `tile_source_manifest.streaming.json` 和 `streaming_tiles/*.npy`，再通过 tiled iterator writer 写出四层 OME-TIFF。
+- 默认 `--wsi-writer array` 行为不变，仍使用原 level0 `tile_source_manifest.json` 作为 array writer contract gate；`torch-diffusion-smoke` 仍显式拒绝 `--wsi-writer tile-streaming`。
+- 更新 README 与 `docs/audit/`，将 P4 状态调整为“smoke 四层 tile source streaming 已完成 / 仍缺失 production backend streaming 和可恢复 OME-TIFF 文件写入”，继续保留非 production 边界。
+
+### 影响文件
+
+- `.agent/tasks/p4-smoke-multilevel-tile-source-20260524.md`
+- `.agent/tasks/p4-streaming-writer-pyramid-contract-20260524.md`
+- `.agent/reports/p4-smoke-multilevel-tile-source-20260524.md`
+- `.agent/reports/p4-streaming-writer-pyramid-contract-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `tests/test_generation_runner.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.69.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker / orchestrator 定向验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive -v`
+    - 结果：通过，`Ran 29 tests in 0.088s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner -v`
+    - 结果：通过，`Ran 20 tests in 1.420s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_tiling tests.test_generation_runner -v`
+    - 结果：通过，`Ran 31 tests in 1.521s OK`
+- Orchestrator 合并后复核：
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_tiling tests.test_generation_runner -v`
+    - 结果：通过，`Ran 60 tests in 1.386s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+- Orchestrator 文档/版本同步后最终验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+    - 结果：通过，卸载 `multi-center-wsi-generator 0.68.0` 并安装 editable `multi-center-wsi-generator 0.69.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.69.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`
+  - `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... importlib.metadata / PROJECT_VERSION / PACKAGE_VERSION ... PY`
+    - 结果：`0.69.0`、`v0.69.0`、`0.69.0`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_tiling tests.test_generation_runner -v`
+    - 结果：通过，`Ran 60 tests in 1.554s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 236 tests in 15.862s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+
 ## v0.68.0 - 2026-05-24
 
 ### 用户需求

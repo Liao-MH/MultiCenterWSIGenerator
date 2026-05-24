@@ -5,7 +5,7 @@
 - 结果：`完成`
 - Worker 分支：`worker/p4-streaming-writer-pyramid-contract-20260524`
 - Worker worktree：`.worktrees/p4-streaming-writer-pyramid-contract-20260524`
-- Commit：`未提交，等待 orchestrator 审查与集成`
+- Commit：`cceb6d4`
 
 ## 修改摘要
 
