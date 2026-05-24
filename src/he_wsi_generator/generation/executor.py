@@ -518,6 +518,10 @@ def _condition_packet_summary(conditions: dict[str, Any]) -> dict[str, Any]:
     }
     if mask.get("source") == "sampled_layout_mask":
         summary["sampled_layout_mask"] = _sampled_layout_mask_summary(mask)
+    if style_seed.get("source") == "sampled_style_policy":
+        summary["sampled_style_policy"] = _sampled_style_policy_summary(style_seed)
+    if texture.get("source") == "sampled_texture_policy":
+        summary["sampled_texture_policy"] = _sampled_texture_policy_summary(texture)
     if "wsi_tissue_overview" in layout:
         summary["wsi_tissue_overview"] = _wsi_tissue_overview_summary(
             layout["wsi_tissue_overview"]
@@ -564,6 +568,163 @@ def _sampled_layout_mask_summary(value: Any) -> dict[str, Any]:
                 value,
                 "class_fractions_by_id",
                 "condition packet conditions.mask.class_fractions_by_id",
+            )
+        ),
+    }
+
+
+def _sampled_style_policy_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GenerationExecutionError(
+            "condition packet conditions.style_seed must be an object"
+        )
+    selected_style = value.get("selected_style")
+    if not isinstance(selected_style, dict):
+        raise GenerationExecutionError(
+            "condition packet conditions.style_seed.selected_style must be an object"
+        )
+    return {
+        "source": "sampled_style_policy",
+        "artifact_path": _require_non_empty_condition_str(
+            value,
+            "artifact_path",
+            "condition packet conditions.style_seed.artifact_path",
+        ),
+        "sample_id": _require_non_empty_condition_str(
+            value,
+            "sample_id",
+            "condition packet conditions.style_seed.sample_id",
+        ),
+        "random_seed": _require_condition_int(
+            value,
+            "random_seed",
+            "condition packet conditions.style_seed.random_seed",
+        ),
+        "selection_policy": _require_non_empty_condition_str(
+            value,
+            "selection_policy",
+            "condition packet conditions.style_seed.selection_policy",
+        ),
+        "selected_style": _sampled_selected_style_summary(selected_style),
+        "rgb_statistics_reference": _copy_optional_condition_dict(
+            value,
+            "rgb_statistics_reference",
+            "condition packet conditions.style_seed.rgb_statistics_reference",
+        ),
+        "limitations": list(
+            _require_condition_list(
+                value,
+                "limitations",
+                "condition packet conditions.style_seed.limitations",
+            )
+        ),
+    }
+
+
+def _sampled_selected_style_summary(value: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "tile_index": _require_condition_int(
+            value,
+            "tile_index",
+            "condition packet conditions.style_seed.selected_style.tile_index",
+        ),
+        "mean_rgb": list(
+            _require_condition_list(
+                value,
+                "mean_rgb",
+                "condition packet conditions.style_seed.selected_style.mean_rgb",
+            )
+        ),
+    }
+    for key in ("sample_id", "wsi_id"):
+        field_value = value.get(key)
+        if field_value is not None:
+            if not isinstance(field_value, str):
+                raise GenerationExecutionError(
+                    f"condition packet conditions.style_seed.selected_style.{key} must be a string"
+                )
+            summary[key] = field_value
+    tile = value.get("tile")
+    if tile is not None:
+        if not isinstance(tile, dict):
+            raise GenerationExecutionError(
+                "condition packet conditions.style_seed.selected_style.tile must be an object"
+            )
+        summary["tile"] = dict(tile)
+    return summary
+
+
+def _sampled_texture_policy_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GenerationExecutionError(
+            "condition packet conditions.texture_token must be an object"
+        )
+    return {
+        "source": "sampled_texture_policy",
+        "artifact_path": _require_non_empty_condition_str(
+            value,
+            "artifact_path",
+            "condition packet conditions.texture_token.artifact_path",
+        ),
+        "sample_id": _require_non_empty_condition_str(
+            value,
+            "sample_id",
+            "condition packet conditions.texture_token.sample_id",
+        ),
+        "random_seed": _require_condition_int(
+            value,
+            "random_seed",
+            "condition packet conditions.texture_token.random_seed",
+        ),
+        "selection_policy": _require_non_empty_condition_str(
+            value,
+            "selection_policy",
+            "condition packet conditions.texture_token.selection_policy",
+        ),
+        "cluster_id": _require_condition_int(
+            value,
+            "cluster_id",
+            "condition packet conditions.texture_token.cluster_id",
+        ),
+        "representative_embedding_index": _require_condition_int(
+            value,
+            "representative_embedding_index",
+            "condition packet conditions.texture_token.representative_embedding_index",
+        ),
+        "prototype_index": _require_condition_int(
+            value,
+            "prototype_index",
+            "condition packet conditions.texture_token.prototype_index",
+        ),
+        "sample_count": _optional_condition_int(
+            value,
+            "sample_count",
+            "condition packet conditions.texture_token.sample_count",
+        ),
+        "fraction": _optional_condition_number(
+            value,
+            "fraction",
+            "condition packet conditions.texture_token.fraction",
+        ),
+        "mean_embedding": list(
+            _require_condition_list(
+                value,
+                "mean_embedding",
+                "condition packet conditions.texture_token.mean_embedding",
+            )
+        ),
+        "std_embedding": list(
+            _require_condition_list(
+                value,
+                "std_embedding",
+                "condition packet conditions.texture_token.std_embedding",
+            )
+        ),
+        "limitations": list(
+            _require_condition_list(
+                value,
+                "limitations",
+                "condition packet conditions.texture_token.limitations",
             )
         ),
     }
@@ -686,6 +847,33 @@ def _require_condition_int(data: dict[str, Any], key: str, path: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise GenerationExecutionError(f"{path} must be an integer")
     return value
+
+
+def _optional_condition_int(data: dict[str, Any], key: str, path: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise GenerationExecutionError(f"{path} must be an integer")
+    return value
+
+
+def _optional_condition_number(data: dict[str, Any], key: str, path: str) -> int | float | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise GenerationExecutionError(f"{path} must be a number")
+    return value
+
+
+def _copy_optional_condition_dict(data: dict[str, Any], key: str, path: str) -> dict[str, Any]:
+    value = data.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise GenerationExecutionError(f"{path} must be an object")
+    return dict(value)
 
 
 def _condition_packet_return(condition_packet: dict[str, Any] | None) -> dict[str, Any]:

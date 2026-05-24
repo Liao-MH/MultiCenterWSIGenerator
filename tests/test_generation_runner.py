@@ -202,10 +202,22 @@ class GenerationRunnerTests(unittest.TestCase):
         prior_id: str = "prior-smoke",
         include_tissue_overview: bool = False,
         sampled_layout_mask_path: Path | None = None,
+        sampled_policies: bool = False,
+        drop_sampled_style_selected_style: bool = False,
+        drop_sampled_texture_representative: bool = False,
     ) -> Path:
         path = root / "condition_packet.json"
         layout = {"source": "layout_mask_prior"}
         mask_condition = {"source": "layout_mask_prior"}
+        style_condition = {
+            "value": 22,
+            "source": "generation_config",
+        }
+        texture_condition = {
+            "cluster_id": 2,
+            "selection_policy": "unit-test",
+            "representative_embedding_index": 5,
+        }
         if include_tissue_overview:
             layout["wsi_tissue_overview"] = {
                 "source": "wsi_tissue_overview",
@@ -239,6 +251,47 @@ class GenerationRunnerTests(unittest.TestCase):
                 "class_fractions_by_id": sampled_manifest["class_fractions_by_id"],
                 "mask_role": "semantic_spatial_condition",
             }
+        if sampled_policies:
+            style_condition = {
+                "source": "sampled_style_policy",
+                "value": 31,
+                "artifact_path": str(root / "sampled_style_policy.json"),
+                "sample_id": "style-smoke-001",
+                "random_seed": 31,
+                "selection_policy": "unit-test-style-policy",
+                "selected_style": {
+                    "tile_index": 3,
+                    "sample_id": "tile-style-003",
+                    "wsi_id": "slide-style-001",
+                    "tile": {"x": 128, "y": 256, "level": "1/1"},
+                    "mean_rgb": [121.0, 102.0, 143.0],
+                },
+                "rgb_statistics_reference": {
+                    "global_mean_rgb": [120.5, 101.5, 142.5],
+                    "global_std_rgb": [10.0, 9.0, 8.0],
+                },
+                "limitations": ["statistical_policy_not_trainable_style_encoder"],
+            }
+            texture_condition = {
+                "source": "sampled_texture_policy",
+                "artifact_path": str(root / "sampled_texture_policy.json"),
+                "sample_id": "texture-smoke-001",
+                "random_seed": 37,
+                "selection_policy": "unit-test-texture-policy",
+                "cluster_count": 4,
+                "cluster_id": 2,
+                "representative_embedding_index": 9,
+                "prototype_index": 1,
+                "sample_count": 12,
+                "fraction": 0.25,
+                "mean_embedding": [0.1, 0.2, 0.3],
+                "std_embedding": [0.01, 0.02, 0.03],
+                "limitations": ["statistical_policy_not_trainable_texture_codebook"],
+            }
+            if drop_sampled_style_selected_style:
+                del style_condition["selected_style"]
+            if drop_sampled_texture_representative:
+                del texture_condition["representative_embedding_index"]
         path.write_text(
             json.dumps(
                 {
@@ -250,15 +303,8 @@ class GenerationRunnerTests(unittest.TestCase):
                     "conditions": {
                         "layout": layout,
                         "mask": mask_condition,
-                        "style_seed": {
-                            "value": 22,
-                            "source": "generation_config",
-                        },
-                        "texture_token": {
-                            "cluster_id": 2,
-                            "selection_policy": "unit-test",
-                            "representative_embedding_index": 5,
-                        },
+                        "style_seed": style_condition,
+                        "texture_token": texture_condition,
                         "coord": {
                             "cascade_level": "1/1",
                             "tile_origin_40x": [128, 256],
@@ -632,6 +678,90 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertEqual(metadata["generation"]["condition_summary"]["tile_origin_40x"], [128, 256])
         self.assertEqual(run_summary["condition_packet"]["path"], str(condition_packet_path))
         self.assertEqual(run_summary["condition_packet"]["summary"]["cascade_level"], "1/1")
+
+    def test_run_smoke_generation_records_sampled_policy_condition_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(root, sampled_policies=True)
+            output_root = root / "generated" / "gen-sampled-policy"
+
+            result = run_smoke_generation(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-sampled-policy",
+                condition_packet_path=condition_packet_path,
+            )
+            metadata = json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+
+        condition_summary = metadata["generation"]["condition_summary"]
+        style_summary = condition_summary["sampled_style_policy"]
+        texture_summary = condition_summary["sampled_texture_policy"]
+        self.assertEqual(style_summary["source"], "sampled_style_policy")
+        self.assertEqual(style_summary["sample_id"], "style-smoke-001")
+        self.assertEqual(style_summary["selected_style"]["mean_rgb"], [121.0, 102.0, 143.0])
+        self.assertEqual(
+            style_summary["limitations"],
+            ["statistical_policy_not_trainable_style_encoder"],
+        )
+        self.assertEqual(texture_summary["source"], "sampled_texture_policy")
+        self.assertEqual(texture_summary["sample_id"], "texture-smoke-001")
+        self.assertEqual(texture_summary["cluster_id"], 2)
+        self.assertEqual(texture_summary["representative_embedding_index"], 9)
+        self.assertEqual(texture_summary["mean_embedding"], [0.1, 0.2, 0.3])
+        self.assertEqual(
+            run_summary["condition_packet"]["summary"]["sampled_style_policy"]["sample_id"],
+            "style-smoke-001",
+        )
+        self.assertEqual(
+            run_summary["condition_packet"]["summary"]["sampled_texture_policy"]["sample_id"],
+            "texture-smoke-001",
+        )
+
+    def test_run_smoke_generation_rejects_invalid_sampled_policy_condition_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                sampled_policies=True,
+                drop_sampled_style_selected_style=True,
+            )
+
+            with self.assertRaisesRegex(GenerationExecutionError, "selected_style"):
+                run_smoke_generation(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=root / "generated" / "bad-style-policy",
+                    generated_id="bad-style-policy",
+                    condition_packet_path=condition_packet_path,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                sampled_policies=True,
+                drop_sampled_texture_representative=True,
+            )
+
+            with self.assertRaisesRegex(GenerationExecutionError, "representative_embedding_index"):
+                run_smoke_generation(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=root / "generated" / "bad-texture-policy",
+                    generated_id="bad-texture-policy",
+                    condition_packet_path=condition_packet_path,
+                )
 
     def test_run_smoke_generation_uses_condition_summary_for_stratified_qc_reference(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -20,6 +20,7 @@ import tifffile
 from he_wsi_generator.generation.executor import run_torch_diffusion_smoke_generation
 import he_wsi_generator.models.torch_training as torch_training
 from he_wsi_generator.models.torch_training import (
+    TorchTrainingError,
     sample_torch_diffusion_smoke_model,
     train_torch_diffusion_smoke_model,
     train_torch_smoke_model,
@@ -189,9 +190,18 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         root: Path,
         prior_id: str = "prior-torch-smoke",
         include_tissue_overview: bool = False,
+        sampled_policies: bool = False,
+        drop_sampled_style_selected_style: bool = False,
+        drop_sampled_texture_representative: bool = False,
     ) -> Path:
         path = root / "condition_packet.json"
         layout = {"source": "layout_mask_prior"}
+        style_condition = {"value": 19, "source": "generation_config"}
+        texture_condition = {
+            "cluster_id": 1,
+            "selection_policy": "unit-test",
+            "representative_embedding_index": 4,
+        }
         if include_tissue_overview:
             layout["wsi_tissue_overview"] = {
                 "source": "wsi_tissue_overview",
@@ -208,6 +218,47 @@ class TorchSmokeTrainingTests(unittest.TestCase):
                     }
                 ],
             }
+        if sampled_policies:
+            style_condition = {
+                "source": "sampled_style_policy",
+                "value": 19,
+                "artifact_path": str(root / "sampled_style_policy.json"),
+                "sample_id": "style-torch-001",
+                "random_seed": 19,
+                "selection_policy": "unit-test-style-policy",
+                "selected_style": {
+                    "tile_index": 2,
+                    "sample_id": "tile-style-002",
+                    "wsi_id": "slide-style-002",
+                    "tile": {"x": 64, "y": 96, "level": "1/1"},
+                    "mean_rgb": [118.0, 99.0, 138.0],
+                },
+                "rgb_statistics_reference": {
+                    "global_mean_rgb": [119.0, 100.0, 139.0],
+                    "global_std_rgb": [8.0, 7.0, 6.0],
+                },
+                "limitations": ["statistical_policy_not_trainable_style_encoder"],
+            }
+            texture_condition = {
+                "source": "sampled_texture_policy",
+                "artifact_path": str(root / "sampled_texture_policy.json"),
+                "sample_id": "texture-torch-001",
+                "random_seed": 23,
+                "selection_policy": "unit-test-texture-policy",
+                "cluster_count": 3,
+                "cluster_id": 1,
+                "representative_embedding_index": 4,
+                "prototype_index": 0,
+                "sample_count": 6,
+                "fraction": 0.5,
+                "mean_embedding": [0.4, 0.5],
+                "std_embedding": [0.04, 0.05],
+                "limitations": ["statistical_policy_not_trainable_texture_codebook"],
+            }
+            if drop_sampled_style_selected_style:
+                del style_condition["selected_style"]
+            if drop_sampled_texture_representative:
+                del texture_condition["representative_embedding_index"]
         path.write_text(
             json.dumps(
                 {
@@ -219,12 +270,8 @@ class TorchSmokeTrainingTests(unittest.TestCase):
                     "conditions": {
                         "layout": layout,
                         "mask": {"source": "layout_mask_prior"},
-                        "style_seed": {"value": 19, "source": "generation_config"},
-                        "texture_token": {
-                            "cluster_id": 1,
-                            "selection_policy": "unit-test",
-                            "representative_embedding_index": 4,
-                        },
+                        "style_seed": style_condition,
+                        "texture_token": texture_condition,
                         "coord": {
                             "cascade_level": "1/1",
                             "tile_origin_40x": [0, 0],
@@ -270,6 +317,55 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         self.assertEqual(tissue_summary["records"][0]["tissue_fraction"], 0.625)
         self.assertEqual(tissue_summary["records"][0]["bounding_box_xywh"], [2, 3, 64, 48])
         self.assertEqual(tissue_summary["records"][0]["connected_component_count"], 4)
+
+    def test_torch_condition_packet_loader_records_sampled_policy_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            condition_packet_path = self.write_condition_packet(root, sampled_policies=True)
+
+            condition_packet = torch_training._load_condition_packet(
+                condition_packet_path,
+                expected_prior_id="prior-torch-smoke",
+            )
+
+        style_summary = condition_packet["summary"]["sampled_style_policy"]
+        texture_summary = condition_packet["summary"]["sampled_texture_policy"]
+        self.assertEqual(style_summary["source"], "sampled_style_policy")
+        self.assertEqual(style_summary["sample_id"], "style-torch-001")
+        self.assertEqual(style_summary["selected_style"]["mean_rgb"], [118.0, 99.0, 138.0])
+        self.assertEqual(texture_summary["source"], "sampled_texture_policy")
+        self.assertEqual(texture_summary["sample_id"], "texture-torch-001")
+        self.assertEqual(texture_summary["cluster_id"], 1)
+        self.assertEqual(texture_summary["representative_embedding_index"], 4)
+
+    def test_torch_condition_packet_loader_rejects_invalid_sampled_policy_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                sampled_policies=True,
+                drop_sampled_style_selected_style=True,
+            )
+
+            with self.assertRaisesRegex(TorchTrainingError, "selected_style"):
+                torch_training._load_condition_packet(
+                    condition_packet_path,
+                    expected_prior_id="prior-torch-smoke",
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            condition_packet_path = self.write_condition_packet(
+                root,
+                sampled_policies=True,
+                drop_sampled_texture_representative=True,
+            )
+
+            with self.assertRaisesRegex(TorchTrainingError, "representative_embedding_index"):
+                torch_training._load_condition_packet(
+                    condition_packet_path,
+                    expected_prior_id="prior-torch-smoke",
+                )
 
     def test_torch_training_contract_helpers_preserve_schema_fields(self):
         from he_wsi_generator.models import torch_training_contracts
@@ -958,7 +1054,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             index_path = self.write_training_index(root)
-            condition_packet_path = self.write_condition_packet(root)
+            condition_packet_path = self.write_condition_packet(root, sampled_policies=True)
             train_run = train_torch_diffusion_smoke_model(
                 training_index_path=index_path,
                 output_dir=root / "torch-diffusion-run",
@@ -989,6 +1085,14 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         self.assertEqual(manifest["condition_summary"]["style_seed_value"], 19)
         self.assertEqual(manifest["condition_summary"]["texture_cluster_id"], 1)
         self.assertEqual(manifest["condition_summary"]["cascade_level"], "1/1")
+        self.assertEqual(
+            manifest["condition_summary"]["sampled_style_policy"]["sample_id"],
+            "style-torch-001",
+        )
+        self.assertEqual(
+            manifest["condition_summary"]["sampled_texture_policy"]["representative_embedding_index"],
+            4,
+        )
         self.assertEqual(manifest["condition_feature_source"], "condition_packet")
         self.assertEqual(manifest["condition_feature_vector"][0], 0.0019)
         self.assertEqual(manifest["condition_feature_vector"][1], 0.001)
@@ -1309,7 +1413,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             prior_manifest_path = self.create_prior_manifest(root)
-            condition_packet_path = self.write_condition_packet(root)
+            condition_packet_path = self.write_condition_packet(root, sampled_policies=True)
             index_path = self.write_training_index(root)
             train_run = train_torch_diffusion_smoke_model(
                 training_index_path=index_path,
@@ -1345,11 +1449,29 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         self.assertEqual(result["condition_packet_path"], str(condition_packet_path))
         self.assertEqual(metadata["generation"]["condition_packet_path"], str(condition_packet_path))
         self.assertEqual(metadata["generation"]["condition_summary"]["texture_cluster_id"], 1)
+        self.assertEqual(
+            metadata["generation"]["condition_summary"]["sampled_style_policy"]["sample_id"],
+            "style-torch-001",
+        )
+        self.assertEqual(
+            metadata["generation"]["condition_summary"]["sampled_texture_policy"]["sample_id"],
+            "texture-torch-001",
+        )
         self.assertEqual(run_summary["condition_packet"]["summary"]["style_seed_value"], 19)
+        self.assertEqual(
+            run_summary["condition_packet"]["summary"]["sampled_texture_policy"][
+                "representative_embedding_index"
+            ],
+            4,
+        )
         self.assertEqual([record["cascade_level"] for record in cascade_records], ["1/32", "1/16", "1/4", "1/1"])
         for sample_manifest in sample_manifests:
             self.assertEqual(sample_manifest["condition_packet_path"], str(condition_packet_path))
             self.assertEqual(sample_manifest["condition_feature_source"], "condition_packet")
+            self.assertEqual(
+                sample_manifest["condition_summary"]["sampled_style_policy"]["sample_id"],
+                "style-torch-001",
+            )
             self.assertEqual(sample_manifest["condition_feature_vector"][0], 0.0019)
 
     @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is not installed in this environment")
