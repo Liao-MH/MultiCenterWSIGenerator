@@ -72,6 +72,73 @@ def build_texture_prior_from_embedding_cache(
     return prior
 
 
+def sample_texture_policy_from_prior(
+    texture_prior_path: str | Path,
+    output_path: str | Path,
+    sample_id: str,
+    random_seed: int,
+) -> dict[str, Any]:
+    if not isinstance(sample_id, str) or sample_id == "":
+        raise TexturePriorBuildError("sample_id must be a non-empty string")
+    if not isinstance(random_seed, int) or isinstance(random_seed, bool):
+        raise TexturePriorBuildError("random_seed must be an integer")
+
+    prior = _load_texture_prior(texture_prior_path)
+    prototypes = prior.get("texture_prototypes")
+    if not isinstance(prototypes, list) or not prototypes:
+        raise TexturePriorBuildError("texture_prior.texture_prototypes must be a non-empty list")
+
+    selected_index = random_seed % len(prototypes)
+    selected = prototypes[selected_index]
+    if not isinstance(selected, dict):
+        raise TexturePriorBuildError("texture_prior.texture_prototypes entries must be objects")
+    cluster_id = _require_int(
+        selected,
+        "cluster_id",
+        "texture_prior.texture_prototypes.cluster_id",
+    )
+    representative_index = _require_int(
+        selected,
+        "representative_embedding_index",
+        "texture_prior.texture_prototypes.representative_embedding_index",
+    )
+
+    policy = {
+        "schema_version": PROJECT_VERSION,
+        "artifact_type": "sampled_texture_policy",
+        "created_at": _now_iso(),
+        "sample_id": sample_id,
+        "random_seed": random_seed,
+        "selection_policy": "deterministic_random_seed_mod_cluster_count",
+        "cluster_count": len(prototypes),
+        "source": {
+            "source_type": "statistical_texture_prior_policy",
+            "texture_prior_path": str(texture_prior_path),
+            "texture_prototype_count": len(prototypes),
+        },
+        "selected_texture_token": {
+            "prototype_index": selected_index,
+            "cluster_id": cluster_id,
+            "representative_embedding_index": representative_index,
+            "sample_count": selected.get("sample_count"),
+            "fraction": selected.get("fraction"),
+            "mean_embedding": list(selected.get("mean_embedding", [])),
+            "std_embedding": list(selected.get("std_embedding", [])),
+        },
+        "limitations": [
+            "deterministic_statistical_texture_policy_only",
+            "not_a_trainable_texture_codebook",
+            "not_a_vq_vae_or_morphology_token_sampler",
+            "not_production_texture_model",
+        ],
+    }
+
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+    return policy
+
+
 def _load_cluster_report(path: str | Path) -> dict[str, Any]:
     source = Path(path)
     if not source.exists():
@@ -150,6 +217,32 @@ def _texture_prototypes(numpy, embeddings, labels, cluster_count: int) -> list[d
             }
         )
     return prototypes
+
+
+def _load_texture_prior(path: str | Path) -> dict[str, Any]:
+    source = Path(path)
+    if not source.exists():
+        raise TexturePriorBuildError(f"texture prior does not exist: {source}")
+    if not source.is_file():
+        raise TexturePriorBuildError(f"texture prior path is not a file: {source}")
+    try:
+        prior = json.loads(source.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise TexturePriorBuildError(f"texture prior is not valid JSON: {exc.msg}") from exc
+    if not isinstance(prior, dict):
+        raise TexturePriorBuildError("texture prior must be a JSON object")
+    if prior.get("schema_version") != PROJECT_VERSION:
+        raise TexturePriorBuildError(f"texture_prior.schema_version must be {PROJECT_VERSION}")
+    if prior.get("prior_type") != "texture_prior":
+        raise TexturePriorBuildError("texture_prior.prior_type must be texture_prior")
+    return prior
+
+
+def _require_int(data: dict[str, Any], key: str, path: str) -> int:
+    value = data.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TexturePriorBuildError(f"{path} must be an integer")
+    return value
 
 
 def _round_float(value: float) -> float:
