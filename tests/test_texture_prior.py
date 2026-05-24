@@ -10,6 +10,7 @@ import numpy as np
 
 from he_wsi_generator.embeddings.cache import save_embedding_cache
 from he_wsi_generator.embeddings.cluster import cluster_embeddings
+from he_wsi_generator.priors import texture as texture_module
 from he_wsi_generator.priors.texture import (
     TexturePriorBuildError,
     build_texture_prior_from_embedding_cache,
@@ -150,6 +151,95 @@ class TexturePriorTests(unittest.TestCase):
         self.assertIn("texture prior written", result.stdout)
         self.assertEqual(prior["prior_type"], "texture_prior")
         self.assertEqual(prior["cluster_count"], 2)
+
+    def test_sample_texture_policy_from_prior_writes_selected_texture_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache_dir, cache_key, cluster_path = self.write_embedding_inputs(root)
+            prior_path = root / "texture_prior.json"
+            output_path = root / "sampled_texture_policy.json"
+            build_texture_prior_from_embedding_cache(
+                cache_dir=cache_dir,
+                cache_key=cache_key,
+                cluster_report_path=cluster_path,
+                output_path=prior_path,
+            )
+
+            policy = self.sample_texture_policy(
+                texture_prior_path=prior_path,
+                output_path=output_path,
+                sample_id="texture-sample-001",
+                random_seed=3,
+            )
+            saved = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(policy, saved)
+        self.assertEqual(policy["schema_version"], "v0.69.0")
+        self.assertEqual(policy["artifact_type"], "sampled_texture_policy")
+        self.assertEqual(policy["sample_id"], "texture-sample-001")
+        self.assertEqual(policy["random_seed"], 3)
+        self.assertEqual(policy["selection_policy"], "deterministic_random_seed_mod_cluster_count")
+        self.assertEqual(policy["cluster_count"], 2)
+        self.assertEqual(policy["selected_texture_token"]["prototype_index"], 1)
+        self.assertEqual(policy["selected_texture_token"]["cluster_id"], 1)
+        self.assertEqual(policy["selected_texture_token"]["representative_embedding_index"], 2)
+        self.assertEqual(policy["selected_texture_token"]["mean_embedding"], [10.1, 10.1])
+        self.assertIn("not_a_vq_vae_or_morphology_token_sampler", policy["limitations"])
+
+    def test_sample_texture_policy_from_prior_rejects_invalid_inputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_path = root / "texture_prior.json"
+            prior = {
+                "schema_version": "v0.69.0",
+                "prior_type": "texture_prior",
+                "cluster_count": 1,
+                "texture_prototypes": [
+                    {
+                        "cluster_id": 0,
+                        "sample_count": 2,
+                        "fraction": 1.0,
+                        "mean_embedding": [1.0, 2.0],
+                        "representative_embedding_index": 0,
+                    }
+                ],
+            }
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
+
+            with self.assertRaisesRegex(TexturePriorBuildError, "random_seed"):
+                self.sample_texture_policy(
+                    texture_prior_path=prior_path,
+                    output_path=root / "bad-seed.json",
+                    sample_id="texture-sample-001",
+                    random_seed=False,
+                )
+
+            prior["texture_prototypes"] = []
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
+            with self.assertRaisesRegex(TexturePriorBuildError, "texture_prototypes"):
+                self.sample_texture_policy(
+                    texture_prior_path=prior_path,
+                    output_path=root / "empty.json",
+                    sample_id="texture-sample-001",
+                    random_seed=1,
+                )
+
+            prior["texture_prototypes"] = [{"cluster_id": 0}]
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
+            with self.assertRaisesRegex(TexturePriorBuildError, "representative_embedding_index"):
+                self.sample_texture_policy(
+                    texture_prior_path=prior_path,
+                    output_path=root / "missing-representative.json",
+                    sample_id="texture-sample-001",
+                    random_seed=1,
+                )
+
+    def sample_texture_policy(self, **kwargs):
+        self.assertTrue(
+            hasattr(texture_module, "sample_texture_policy_from_prior"),
+            "sample_texture_policy_from_prior helper is missing",
+        )
+        return texture_module.sample_texture_policy_from_prior(**kwargs)
 
 
 if __name__ == "__main__":
