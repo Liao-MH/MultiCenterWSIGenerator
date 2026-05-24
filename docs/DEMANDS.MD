@@ -1,5 +1,32 @@
 # DEMANDS
 
+## v0.70.0 - 2026-05-24 P5 prior 采样策略可审计化需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-MISS-05` 的保守可交付子集：在已有统计型 style/texture prior 基础上，补齐可复现、可审计的 style sampling policy 和 texture sampling policy artifact，减少 condition packet 里只记录简单种子/取模选择的缺口。
+
+### 结构化需求
+
+- 使用 worker 隔离开发：
+  - `p5-style-sampling-policy-20260524` 负责在 `style_prior` 层新增 deterministic style policy artifact：从 `tile_style_records` 和 RGB 统计中按 seed 选择 tile style，输出选中 tile、mean RGB、global RGB reference、policy、seed 和 limitations；非法 seed、空 tile records、缺失 mean RGB 等显式失败。
+  - `p5-texture-sampling-policy-20260524` 负责在 `texture_prior` 层新增 deterministic texture token artifact：从 `texture_prototypes` 中按 seed 选择 cluster prototype，输出 cluster id、representative embedding index、fraction、mean embedding、policy、seed 和 limitations；非法 seed、空 prototypes、缺失 cluster id/representative index 等显式失败。
+- Orchestrator 在 worker 回收后统一处理共享文档、版本号、README、`docs/audit/`、`docs/CHANGELOG.md` 和全局版本断言。
+- 版本号规划升级到 `v0.70.0`，属于向后兼容的 prior policy 功能增量。
+- 增加定向单元测试覆盖：
+  - style policy artifact 对同一 seed 可复现、不同 seed 可选择不同 tile；
+  - style policy artifact 记录非 production limitation，不把统计 RGB prior 描述为 trainable style encoder；
+  - texture policy artifact 对同一 seed 可复现，并记录 cluster prototype 摘要；
+  - 两类 policy 对非法 prior artifact 和非法 seed 显式失败。
+
+### 边界说明
+
+- 本批次仍不实现 production latent diffusion / ControlNet / DiT。
+- 本批次仍不实现生产级 trainable style encoder、texture codebook、VQ-VAE token sampler 或真实 morphology token generator。
+- 本批次不把 policy artifact 自动接入 condition packet 或 generation runtime；condition packet 集成由后续 orchestrator/批次决定，避免两个 worker 同时修改共享 conditioning 文件。
+- 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
+
 ## v0.69.0 - 2026-05-24 P4 多层 tile source streaming 与 writer 契约加固需求
 
 ### 用户需求
