@@ -1,5 +1,28 @@
 # DEMANDS
 
+## v0.65.1 - 2026-05-24 P6 维护性收敛需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-DEV-03` / P6，降低 `src/he_wsi_generator/cli.py` 和 `src/he_wsi_generator/models/torch_training.py` 两个大文件的后续维护风险。
+
+### 结构化需求
+
+- 本轮只做行为保持的维护性拆分，不新增 production 模型能力，不改变 CLI 命令、参数、输出格式或默认行为。
+- 使用 worker 隔离开发：
+  - `p6-cli-dispatch-20260524` 负责把 `cli.py` 的命令执行分支拆出到更清晰的命令处理 helper/模块，保持 `he_wsi_generator.cli:main` 入口不变。
+  - `p6-torch-training-helpers-20260524` 负责把 `torch_training.py` 中的 manifest/validation/schema 辅助逻辑拆出到模型内部 helper 模块，保持公开训练/采样函数不变。
+- 每个 worker 必须先写行为保持测试或运行现有覆盖测试作为基线，改动后跑对应定向测试。
+- 版本号升级到 `v0.65.1`，并同步 README、`docs/audit/`、`docs/CHANGELOG.md`、版本文件和测试断言。
+- 上述版本升级已完成，当前工作区以 `v0.65.1` 作为本轮维护性收敛基线。
+
+### 边界说明
+
+- 本轮不实现 production latent diffusion / ControlNet / DiT。
+- 本轮不实现生产级 layout/style/texture prior、生产级 WSI streaming writer 或真实 SVS 全链路复跑。
+- 本轮不清理 dirty worker worktree；现有 worktree 作为审计证据保留，避免误删未提交 worker 差异。
+
 ## v0.65.0 - 2026-05-24 P2 GUI 执行、刷新与输出摘要开发需求
 
 ### 用户需求

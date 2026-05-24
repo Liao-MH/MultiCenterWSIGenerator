@@ -2,11 +2,11 @@
 
 ## 当前审计基线
 
-- 原始审计基线为 `v0.62.0`；当前补救开发版本为 `v0.65.0`。
-- v0.65.0 允许修改 P2 GUI flow 相关的 `src/he_wsi_generator/ui/`、`tests/`、配置、README 和审计文档。
+- 原始审计基线为 `v0.62.0`；当前补救开发版本为 `v0.65.1`。
+- v0.65.1 允许修改 P6 维护性收敛相关的 `src/he_wsi_generator/cli.py`、`src/he_wsi_generator/cli_commands.py`、`src/he_wsi_generator/models/torch_training.py`、`src/he_wsi_generator/models/torch_training_contracts.py`、`tests/`、配置、README 和审计文档。
 - 审计文件统一维护在 `docs/audit/`，不再放在 `docs/` 根目录。
 - 本轮按仓库版本规则升级版本号，因为新增了向后兼容的 GUI 内同步执行、状态刷新和输出摘要查看能力。
-- 截至本次复审计，v0.65.0 作为 `main` 分支补救基线提交，但不是已 tag 或打包发布的 release；不能表述为已经发布。
+- 截至本次复审计，v0.65.1 作为 `main` 分支补救基线提交，但不是已 tag 或打包发布的 release；不能表述为已经发布。
 - 本轮已创建 conda 环境 `MultiCenterWSIGenerator` 并验证 PyTorch、CUDA、PySide6 依赖和全量单元测试；该结论只覆盖当前机器环境，不替代真实 SVS 全链路和完整 production 验收。
 
 ## 完整项目成果定义
@@ -19,7 +19,7 @@
 - OME-TIFF pyramid WSI、6 类 mask、metadata JSON、QC JSON 和 batch JSONL index。
 - 自动 QC、非复制审计、可追踪 seed/model/prior/source/config。
 
-当前 `v0.65.0` 不能被表述为完整项目成果，只能表述为可审计工程骨架、smoke/proxy 级验证链、可交互配置页和本地同步 GUI flow。
+当前 `v0.65.1` 不能被表述为完整项目成果，只能表述为可审计工程骨架、smoke/proxy 级验证链、可交互配置页、本地同步 GUI flow 和首轮维护性收敛结果。
 
 ## 关键设计决策
 
@@ -48,13 +48,16 @@
    - `torch`、`PySide6`、`openslide`、`PyYAML` 继续通过可选依赖或独立环境安装，不回写到基础依赖集合。
    - 当前验证环境命名为 `MultiCenterWSIGenerator`，安装完整 extras 后用于后续审计和 worker 复验。
 
+8. 保持行为保持拆分
+   - `cli_commands.py` 与 `torch_training_contracts.py` 只能承载纯分发或纯 helper 逻辑，不改变命令参数、错误消息、manifest 字段或训练/采样公开函数的行为。
+
 ## 禁止变更项
 
 - 未经确认，不做与 P1 无关的实现重构、不改默认生成行为。
 - 不把审计记录本身包装成新发布；只有实际功能补救才升级版本。
 - 不删除现有 `build/validation/` 工件；它们是历史验证证据。
 - 不把“现存工件仍可校验”表述成“本轮已重新执行真实 SVS 全链路”。
-- 不把当前 v0.65.0 基线提交表述为已发布版本；tag、打包需另行执行并验证。
+- 不把当前 v0.65.1 基线提交表述为已发布版本；tag、打包需另行执行并验证。
 - 不把当前 PySide6 GUI flow 描述为后台任务系统；它支持同步本地 queued job 执行、刷新和输出摘要查看，但不包含后台 daemon、并发队列、运行中取消、跨机器调度或线程化 Qt 执行。
 - 不因为补救而扩展到当前系统边界外内容，例如 IHC/IF、临床分子标签、真人专家盲评、下游训练验证、权限/签名系统、数据库或远端协作审阅。
 

@@ -8,6 +8,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 import numpy as np
 from PIL import Image
 import tifffile
@@ -24,8 +29,6 @@ from he_wsi_generator.models.training_index import build_training_index
 from he_wsi_generator.priors.artifacts import create_prior_artifact_entry, save_prior_manifest
 from he_wsi_generator.schemas import validate_metadata, validate_qc_report
 
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
 
@@ -44,7 +47,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.65.0",
+            "schema_version": "v0.65.1",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -79,7 +82,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.65.0",
+            "schema_version": "v0.65.1",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -105,7 +108,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.65.0",
+            "schema_version": "v0.65.1",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -150,7 +153,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.65.0",
+                "schema_version": "v0.65.1",
                 "prior_id": "prior-torch-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -166,7 +169,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def generation_config(self) -> dict:
         return {
-            "schema_version": "v0.65.0",
+            "schema_version": "v0.65.1",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -208,7 +211,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.65.0",
+                    "schema_version": "v0.65.1",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T16:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -268,6 +271,43 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         self.assertEqual(tissue_summary["records"][0]["bounding_box_xywh"], [2, 3, 64, 48])
         self.assertEqual(tissue_summary["records"][0]["connected_component_count"], 4)
 
+    def test_torch_training_contract_helpers_preserve_schema_fields(self):
+        from he_wsi_generator.models import torch_training_contracts
+
+        expected_feature_names = [
+            "style_seed_value_norm",
+            "texture_cluster_id_norm",
+            "tile_origin_x_40x_norm",
+            "tile_origin_y_40x_norm",
+            "cascade_level_scale",
+            "source_condition_enabled",
+            "structure_anchor",
+        ]
+
+        condition_schema = torch_training_contracts.condition_feature_schema()
+        cross_scale_schema = torch_training_contracts.cross_scale_condition_schema()
+        architecture = torch_training_contracts.denoiser_architecture(
+            input_channels=20,
+            output_channels=3,
+        )
+
+        self.assertEqual(condition_schema["feature_names"], expected_feature_names)
+        self.assertEqual(condition_schema["feature_count"], 7)
+        self.assertEqual(
+            condition_schema["spatial_injection"],
+            "concat_constant_feature_channels",
+        )
+        self.assertEqual(cross_scale_schema["condition_name"], "previous_scale_rgb_proxy")
+        self.assertEqual(cross_scale_schema["channel_count"], 3)
+        self.assertEqual(
+            cross_scale_schema["root_cascade_policy"],
+            "zero_previous_scale_condition_for_1/32",
+        )
+        self.assertEqual(architecture["architecture"], "smoke_latent_unet")
+        self.assertEqual(architecture["input_channels"], 20)
+        self.assertEqual(architecture["output_channels"], 3)
+        self.assertEqual(architecture["production_status"], "smoke_unet_only_not_production")
+
     def write_training_index(self, root: Path) -> Path:
         slide_path = self.create_fixture_slide(root)
         mask_path = root / "mask.npy"
@@ -308,7 +348,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             log_exists = Path(run["training_log_path"]).exists()
             checkpoint_exists = Path(run["checkpoint_path"]).exists()
 
-        self.assertEqual(run["schema_version"], "v0.65.0")
+        self.assertEqual(run["schema_version"], "v0.65.1")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["status"], "trained")
         self.assertFalse(manifest["usable_for_inference"])
@@ -565,7 +605,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             latent_preview = np.load(run["latent_preview_path"])
             reconstruction_preview = np.load(run["reconstruction_preview_path"])
 
-        self.assertEqual(run["schema_version"], "v0.65.0")
+        self.assertEqual(run["schema_version"], "v0.65.1")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["training_backend"], "torch-smoke-rgb-vae-latent-autoencoder")
         self.assertEqual(manifest["target_type"], "vae_rgb_reconstruction")

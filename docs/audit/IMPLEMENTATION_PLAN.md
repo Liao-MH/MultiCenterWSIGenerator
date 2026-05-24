@@ -1,4 +1,4 @@
-# v0.65.0 审计补救实施计划
+# v0.65.1 审计补救实施计划
 
 ## 当前定位
 
@@ -36,7 +36,7 @@
 ## P2. 可交互 PySide6 自定义配置页与本地 GUI flow
 
 - 目标：实现设计文档要求的本地单页控制台，让用户不手工编辑中间 JSON 也能完成配置。
-- 当前状态：v0.65.0 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看。
+- 当前状态：v0.65.1 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看，以及首轮 CLI/torch smoke helper 维护性收敛。
 - 建议任务包：
   - 已完成：建立独立 conda UI 环境并验证 PySide6 offscreen。
   - 已完成：把 `pyside_app.py` 从只读字段展示升级为真实表单：路径选择、anchor preset、seed、sample steps、prior/checkpoint、输出目录、QC 设置。
@@ -44,8 +44,10 @@
   - 已完成：将 UI 表单保存为 JSON generation config，并通过 `JobRunner` 创建 queued local job record。
   - 已完成：给 PySide6 交互层补最小 GUI 单元/集成测试；无 GUI 环境下保留明确 skip。
   - 已完成：GUI 内执行 queued job、刷新 job 状态、展示 metadata/QC/qc_review 输出摘要。
+  - 已完成：将 CLI 命令执行分发抽到 `src/he_wsi_generator/cli_commands.py`，保持入口和参数行为不变。
+  - 已完成：将 `torch_training.py` 的纯 manifest/schema/validation helper 抽到 `src/he_wsi_generator/models/torch_training_contracts.py`，保持公开训练/采样函数不变。
 - 决策点：是否让 `run-generation` 默认先弹配置页需要用户确认；默认建议保留 CLI 自动化，把 GUI 放在 `launch-ui`。
-- 完成标准：安装 PySide6 后，用户能通过 UI 配置、保存 generation config、创建 smoke generation queued job、同步执行 queued job、刷新状态并查看输出摘要；后台 daemon、并发队列、运行中进程终止和线程化 Qt 执行不属于本阶段。
+- 完成标准：安装 PySide6 后，用户能通过 UI 配置、保存 generation config、创建 smoke generation queued job、同步执行 queued job、刷新状态并查看输出摘要；CLI dispatch 与 torch helper 已完成行为保持拆分，后台 daemon、并发队列、运行中进程终止和线程化 Qt 执行不属于本阶段。
 
 ## P3. Production 级生成模型补齐
 
@@ -82,6 +84,7 @@
 ## P6. 维护性收敛
 
 - 目标：降低后续补救风险，不做风格化大重构。
+- 当前状态：v0.65.1 已完成首轮维护性收敛。
 - 建议任务包：
   - 优先拆分 `src/he_wsi_generator/cli.py` 的命令注册和命令执行分支。
   - 再拆分 `src/he_wsi_generator/models/torch_training.py` 中训练、采样、manifest/schema 辅助逻辑。

@@ -14,6 +14,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import he_wsi_generator.cli as cli_module
+import he_wsi_generator.cli_commands as cli_commands
 from he_wsi_generator.constants import (
     CASCADE_LEVELS,
     MASK_CLASSES,
@@ -373,7 +374,7 @@ class UITests(unittest.TestCase):
 
             with patch.dict(sys.modules, {"yaml": yaml_module}):
                 save_ui_config(create_default_ui_config(), path)
-                with patch.object(cli_module, "launch_ui", return_value=0) as launch_mock:
+                with patch.object(cli_commands, "launch_ui", return_value=0) as launch_mock:
                     result = cli_module.main(["launch-ui", "--config", str(path)])
 
         self.assertEqual(result, 0)

@@ -40,7 +40,7 @@ class WSITissueOverviewTests(unittest.TestCase):
 
     def manifest(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.65.0",
+            "schema_version": "v0.65.1",
             "dataset_id": "demo-tissue-overview",
             "created_at": "2026-05-23T16:00:00Z",
             "records": [
@@ -73,7 +73,7 @@ class WSITissueOverviewTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(overview, saved)
-        self.assertEqual(overview["schema_version"], "v0.65.0")
+        self.assertEqual(overview["schema_version"], "v0.65.1")
         self.assertEqual(overview["artifact_type"], "wsi_tissue_overview")
         self.assertEqual(overview["source"]["manifest_path"], str(manifest_path))
         self.assertEqual(overview["source"]["backend"], "fixture-image")

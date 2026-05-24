@@ -1,5 +1,65 @@
 # CHANGELOG
 
+## v0.65.1 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 P6 维护性收敛，降低 `src/he_wsi_generator/cli.py` 与 `src/he_wsi_generator/models/torch_training.py` 两个大文件的后续维护风险。
+
+### 已做改动
+
+- 版本号升级到 `v0.65.1`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建并派发两个 P6 worker 任务：
+  - `.agent/tasks/p6-cli-dispatch-20260524.md`
+  - `.agent/tasks/p6-torch-training-helpers-20260524.md`
+- 回收两个 worker 报告：
+  - `.agent/reports/p6-cli-dispatch-20260524.md`
+  - `.agent/reports/p6-torch-training-helpers-20260524.md`
+- `src/he_wsi_generator/cli.py` 保留 parser 构建、`main()` 和 `run-local-job` 特殊解析，命令执行分发迁到 `src/he_wsi_generator/cli_commands.py`。
+- 新增 `src/he_wsi_generator/cli_commands.py`，集中承载原 `main()` 的命令执行分支，保持命令、参数、输出和返回码不变。
+- `src/he_wsi_generator/models/torch_training.py` 保留训练/采样 loop 与公开 API，纯 manifest/schema/validation helper 迁到 `src/he_wsi_generator/models/torch_training_contracts.py`。
+- 新增/更新测试，覆盖 CLI dispatcher 回归和 torch training contracts 纯 helper 字段保持。
+- 更新 README 与 `docs/audit/`，把本轮维护性收敛状态、版本号和行为边界同步为 `v0.65.1`。
+
+### 影响文件
+
+- `.agent/tasks/p6-cli-dispatch-20260524.md`
+- `.agent/tasks/p6-torch-training-helpers-20260524.md`
+- `.agent/reports/p6-cli-dispatch-20260524.md`
+- `.agent/reports/p6-torch-training-helpers-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `src/he_wsi_generator/models/torch_training.py`
+- `src/he_wsi_generator/models/torch_training_contracts.py`
+- `tests/test_cli.py`
+- `tests/test_torch_training.py`
+- `tests/test_ui.py`
+- `tests/test_version.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version tests.test_cli tests.test_torch_training tests.test_ui -v`
+  - 结果：通过，`Ran 55 tests in 11.026s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 215 tests in 13.121s OK`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.65.1`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无 whitespace error
+
 ## v0.65.0 - 2026-05-24
 
 ### 用户需求

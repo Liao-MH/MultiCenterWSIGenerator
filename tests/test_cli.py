@@ -4,10 +4,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 
 class CliValidationTests(unittest.TestCase):
@@ -26,7 +31,7 @@ class CliValidationTests(unittest.TestCase):
 
     def test_cli_validates_generation_config_file(self):
         config = {
-            "schema_version": "v0.65.0",
+            "schema_version": "v0.65.1",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -50,9 +55,43 @@ class CliValidationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("generation-config valid", result.stdout)
 
+    def test_cli_command_dispatcher_validates_generation_config_file(self):
+        from he_wsi_generator.cli import build_parser
+        from he_wsi_generator.cli_commands import run_command
+
+        config = {
+            "schema_version": "v0.65.1",
+            "random_seed": 0,
+            "model_family": "latent_diffusion_unet",
+            "max_magnification": "40x",
+            "tile_size_40x": [512, 512],
+            "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
+            "structure_anchor": 0.0,
+            "anchor_preset": "fully_de_novo",
+            "style_seed": "auto",
+            "source_wsi_id": None,
+            "sample_steps": 50,
+            "overlap_px_40x": 64,
+            "non_copy_patch_nearest_neighbor_search": False,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "generation-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            args = build_parser().parse_args(["validate", "generation-config", str(config_path)])
+            stdout = StringIO()
+            stderr = StringIO()
+
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = run_command(args)
+
+        self.assertEqual(result, 0, stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), f"generation-config valid: {config_path}\n")
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_cli_reports_validation_error(self):
         config = {
-            "schema_version": "v0.65.0",
+            "schema_version": "v0.65.1",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -97,7 +136,7 @@ class CliValidationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             manifest = {
-                "schema_version": "v0.65.0",
+                "schema_version": "v0.65.1",
                 "dataset_id": "demo",
                 "created_at": "2026-05-23T09:00:00",
                 "records": [
