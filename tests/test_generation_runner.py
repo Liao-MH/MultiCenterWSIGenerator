@@ -15,6 +15,7 @@ if SRC_ROOT not in sys.path:
 import numpy as np
 import tifffile
 
+from he_wsi_generator.generation import executor as generation_executor
 from he_wsi_generator.generation.executor import GenerationExecutionError, run_smoke_generation
 from he_wsi_generator.generation.tiling import (
     build_resumable_tile_manifest,
@@ -48,7 +49,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.1",
+                "schema_version": "v0.72.2",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -103,7 +104,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.1",
+                "schema_version": "v0.72.2",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -122,7 +123,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.1",
+                    "schema_version": "v0.72.2",
                     "model_family": "latent_diffusion_unet",
                     "status": "trained",
                     "usable_for_inference": True,
@@ -137,7 +138,7 @@ class GenerationRunnerTests(unittest.TestCase):
 
     def generation_config(self, canvas_size_40x: list[int] | None = None) -> dict:
         config = {
-            "schema_version": "v0.72.1",
+            "schema_version": "v0.72.2",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -295,7 +296,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.1",
+                    "schema_version": "v0.72.2",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T15:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -339,7 +340,7 @@ class GenerationRunnerTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.1",
+                    "schema_version": "v0.72.2",
                     "artifact_type": "sampled_layout_mask",
                     "created_at": "2026-05-23T16:00:00Z",
                     "sample_id": "layout-smoke-001",
@@ -552,6 +553,51 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertEqual(
             run_summary["pyramid_report"]["streaming_write_report"]["levels"][0]["tile_grid"],
             [1, 1],
+        )
+
+    def test_run_smoke_generation_streaming_materializes_pyramid_levels_sequentially(self):
+        original_writer = generation_executor._write_smoke_multilevel_tile_source_manifest
+        consumed_shapes = []
+        received_container_types = []
+
+        def recording_writer(numpy, pyramid_levels, *, output_root, chunk_shape):
+            received_container_types.append(type(pyramid_levels).__name__)
+            self.assertNotIsInstance(pyramid_levels, (list, tuple))
+
+            def recording_levels():
+                for level in pyramid_levels:
+                    consumed_shapes.append(list(level.shape))
+                    yield level
+
+            return original_writer(
+                numpy,
+                recording_levels(),
+                output_root=output_root,
+                chunk_shape=chunk_shape,
+            )
+
+        generation_executor._write_smoke_multilevel_tile_source_manifest = recording_writer
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                prior_manifest_path = self.create_prior_manifest(root)
+                checkpoint_manifest_path = self.checkpoint_manifest(root)
+
+                run_smoke_generation(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=root / "generated" / "gen-streaming-sequential",
+                    generated_id="gen-streaming-sequential",
+                    wsi_writer="tile-streaming",
+                )
+        finally:
+            generation_executor._write_smoke_multilevel_tile_source_manifest = original_writer
+
+        self.assertEqual(len(received_container_types), 1)
+        self.assertEqual(
+            consumed_shapes,
+            [[512, 512, 3], [128, 128, 3], [32, 32, 3], [16, 16, 3]],
         )
 
     def test_run_smoke_generation_resumes_partial_tile_manifest(self):
@@ -973,7 +1019,7 @@ class GenerationRunnerTests(unittest.TestCase):
             checkpoint_manifest_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.1",
+                        "schema_version": "v0.72.2",
                         "model_family": "latent_diffusion_unet",
                         "status": "not_trained",
                         "usable_for_inference": False,

@@ -31,7 +31,7 @@ class StylePriorTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.1",
+            "schema_version": "v0.72.2",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -66,7 +66,7 @@ class StylePriorTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.1",
+            "schema_version": "v0.72.2",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -92,7 +92,7 @@ class StylePriorTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.1",
+            "schema_version": "v0.72.2",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -145,7 +145,7 @@ class StylePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(style_prior, saved)
-        self.assertEqual(style_prior["schema_version"], "v0.72.1")
+        self.assertEqual(style_prior["schema_version"], "v0.72.2")
         self.assertEqual(style_prior["prior_type"], "style_prior")
         self.assertEqual(style_prior["source"]["training_index_path"], str(index_path))
         self.assertEqual(style_prior["source"]["batch_size"], 2)
@@ -252,7 +252,7 @@ class StylePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(policy, saved)
-        self.assertEqual(policy["schema_version"], "v0.72.1")
+        self.assertEqual(policy["schema_version"], "v0.72.2")
         self.assertEqual(policy["artifact_type"], "sampled_style_policy")
         self.assertEqual(policy["sample_id"], "style-sample-001")
         self.assertEqual(policy["random_seed"], 3)
@@ -267,7 +267,7 @@ class StylePriorTests(unittest.TestCase):
             root = Path(tmpdir)
             prior_path = root / "style_prior.json"
             prior = {
-                "schema_version": "v0.72.1",
+                "schema_version": "v0.72.2",
                 "prior_type": "style_prior",
                 "rgb_statistics": {"mean_rgb": [1.0, 2.0, 3.0]},
                 "tile_style_records": [

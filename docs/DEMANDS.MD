@@ -1,5 +1,38 @@
 # DEMANDS
 
+## v0.72.2 - 2026-05-24 P4 smoke tile-streaming 顺序物化需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-DEV-04` / P4 的保守增量：让 `run-generation --backend smoke-cascade --wsi-writer tile-streaming` 在生成四层 tile source manifest 时按 pyramid level 顺序逐层物化，不再一次性持有四层 `pyramid_levels` 数组，继续保持现有输出 artifact、writer contract 和 CLI 行为不变。
+
+### 结构化需求
+
+- 使用单 worker 隔离开发：
+  - `p4-smoke-streaming-sequential-materialization-20260524` 负责重构 `src/he_wsi_generator/generation/executor.py` 的 smoke `tile-streaming` 路径，使 smoke 四层 tile source manifest 和 `.npy` tile files 按 pyramid level 顺序逐层落盘，减少同时持有完整四层数组的峰值内存。
+- 新增或调整最小实现能力：
+  - smoke `tile-streaming` 路径仍然写出四层 OME-TIFF、`tile_source_manifest.streaming.json` 和 `streaming_tiles/*.npy`；
+  - `write_pyramid_ome_tiff_streaming_from_tile_sources()` 的 contract 和报告保持现有边界，不改为可恢复 OME-TIFF 文件写入；
+  - 默认 `array` writer 行为不变。
+- 验证要求：
+  - smoke-cascade 显式 `--wsi-writer tile-streaming` 仍可写出四层 OME-TIFF；
+  - generation run summary 继续记录 `write_mode=tile_iterator_streaming_write`、`production_streaming=true`、`resume_capable=false`；
+  - `tile_source_manifest.streaming.json` 的 levels / tiles 仍完整可校验；
+  - 新实现不引入额外的 CLI 参数或默认行为变化。
+- 版本号规划升级到 `v0.72.2`，属于向后兼容的审计/实现补丁。
+
+### 边界说明
+
+- 本批次不实现 production backend 磁盘级逐 tile 生成，不实现可恢复 OME-TIFF 逐 tile 写入。
+- 本批次不实现 production latent diffusion / ControlNet / DiT，不实现 production trainable style/texture prior。
+- 本批次不打 tag、不生成发布包、不清理 worker worktree。
+
+### 预期落地
+
+- smoke tile-streaming 路径的 multilevel tile source materialization 变成顺序化步骤，减少同时保留完整四层 arrays 的峰值内存。
+- 现有 smoke/outputs contract 和测试继续证明写出结果不变。
+
 ## v0.72.1 - 2026-05-24 真实 SVS 当前环境复跑验证需求
 
 ### 用户需求

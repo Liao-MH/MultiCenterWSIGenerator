@@ -1,5 +1,45 @@
 # CHANGELOG
 
+## v0.72.2 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-DEV-04` / P4 的保守增量：让 `run-generation --backend smoke-cascade --wsi-writer tile-streaming` 在生成四层 tile source manifest 时按 pyramid level 顺序逐层物化，不再一次性持有四层 `pyramid_levels` 数组，继续保持现有输出 artifact、writer contract 和 CLI 行为不变。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.2`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 更新 `docs/DEMANDS.MD` 顶部，新增 v0.72.2 P4 smoke tile-streaming 顺序物化需求。
+- `src/he_wsi_generator/generation/executor.py` 的 smoke `tile-streaming` 路径改为按 high-to-low pyramid 顺序逐层物化 smoke canvas 生成的四层 level，再写出 `tile_source_manifest.streaming.json` 和四层 OME-TIFF。
+- `tests/test_generation_runner.py` 新增回归测试，验证 tile-streaming 路径传入的是可迭代的 levels 生成器，而非 `list/tuple` 容器，并按 `[512, 512, 3] -> [128, 128, 3] -> [32, 32, 3] -> [16, 16, 3]` 顺序消费。
+- 更新 README 与 `docs/audit/`，将 P4 状态调整为“smoke 四层 tile source streaming 已完成 / tile-streaming 路径已顺序物化 / 仍缺失 production backend streaming 和可恢复 OME-TIFF 写入”，继续保留非 production 边界。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_generation_runner.py`
+- `tests/test_version.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_version -v`
+  - 结果：通过，`Ran 24 tests in ... OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，后续将再次复跑以覆盖本轮全部文档同步后的最终状态
+- `git diff --check`
+  - 结果：待本轮最终统一验证
+
 ## v0.72.1 - 2026-05-24
 
 ### 用户需求

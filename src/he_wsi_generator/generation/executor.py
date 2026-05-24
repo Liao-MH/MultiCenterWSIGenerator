@@ -1,4 +1,5 @@
 import json
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -80,19 +81,11 @@ def run_smoke_generation(
         root,
         resume_manifest_path=resume_manifest_path,
     )
-    levels_by_cascade = _build_smoke_cascade_from_tile_records(
+    smoke_canvas = _build_smoke_canvas_from_tile_records(
         numpy,
         tile_output["tile_records"],
         plan["tile_traversal_plan"],
     )
-    # The generation plan runs low-to-high, while OME-TIFF pyramid writing expects
-    # the highest resolution image first followed by downsampled sub-resolutions.
-    pyramid_levels = [
-        levels_by_cascade["1/1"],
-        levels_by_cascade["1/4"],
-        levels_by_cascade["1/16"],
-        levels_by_cascade["1/32"],
-    ]
     plan = dict(plan)
     plan["stages"] = _complete_generation_stages(plan["stages"])
     plan["tile_traversal_plan"] = complete_tile_traversal_plan(plan["tile_traversal_plan"])
@@ -101,10 +94,13 @@ def run_smoke_generation(
     if wsi_writer == TILE_STREAMING_WSI_WRITER:
         tile_source_manifest_path = _write_smoke_multilevel_tile_source_manifest(
             numpy,
-            pyramid_levels,
+            _iter_smoke_pyramid_levels_high_to_low(numpy, smoke_canvas),
             output_root=root,
             chunk_shape=tuple(generation_config["tile_size_40x"][::-1]),
         )
+        pyramid_levels = None
+    else:
+        pyramid_levels = list(_iter_smoke_pyramid_levels_high_to_low(numpy, smoke_canvas))
     plan["tile_source_manifest_path"] = str(tile_source_manifest_path)
     plan["wsi_writer"] = wsi_writer
 
@@ -134,7 +130,7 @@ def run_smoke_generation(
             _conditioned_or_smoke_mask(
                 numpy,
                 condition_packet,
-                levels_by_cascade["1/1"].shape[:2],
+                smoke_canvas.shape[:2],
             ),
             mask_dir,
             "mask",
@@ -1129,27 +1125,44 @@ def _prepare_smoke_tile_outputs(
     }
 
 
+def _build_smoke_canvas_from_tile_records(
+    numpy,
+    tile_records: list[dict[str, Any]],
+    tile_traversal_plan: dict[str, Any],
+):
+    canvas_width, canvas_height = [int(value) for value in tile_traversal_plan["canvas_size_40x"]]
+    overlap_px = int(tile_traversal_plan["overlap_px_40x"])
+    return blend_rgb_tiles(
+        tile_records,
+        canvas_size_40x=[canvas_width, canvas_height],
+        overlap_px_40x=overlap_px,
+    )
+
+
+def _iter_smoke_pyramid_levels_high_to_low(numpy, canvas) -> Iterable[Any]:
+    # OME-TIFF pyramid writers expect high-to-low resolution. The streaming
+    # path yields derived levels one at a time to avoid an extra four-level
+    # pyramid container before disk tile materialization.
+    canvas_height, canvas_width = [int(value) for value in canvas.shape[:2]]
+    yield canvas
+    for divisor in (4, 16, 32):
+        height = max(1, canvas_height // divisor)
+        width = max(1, canvas_width // divisor)
+        yield _resize_nearest(numpy, canvas, height, width)
+
+
 def _build_smoke_cascade_from_tile_records(
     numpy,
     tile_records: list[dict[str, Any]],
     tile_traversal_plan: dict[str, Any],
 ) -> dict[str, Any]:
-    canvas_width, canvas_height = [int(value) for value in tile_traversal_plan["canvas_size_40x"]]
-    overlap_px = int(tile_traversal_plan["overlap_px_40x"])
-    canvas = blend_rgb_tiles(
-        tile_records,
-        canvas_size_40x=[canvas_width, canvas_height],
-        overlap_px_40x=overlap_px,
-    )
-    shapes = {
-        "1/32": (max(1, canvas_height // 32), max(1, canvas_width // 32)),
-        "1/16": (max(1, canvas_height // 16), max(1, canvas_width // 16)),
-        "1/4": (max(1, canvas_height // 4), max(1, canvas_width // 4)),
-        "1/1": (canvas_height, canvas_width),
-    }
+    canvas = _build_smoke_canvas_from_tile_records(numpy, tile_records, tile_traversal_plan)
+    levels = list(_iter_smoke_pyramid_levels_high_to_low(numpy, canvas))
     return {
-        level: canvas if level == "1/1" else _resize_nearest(numpy, canvas, height, width)
-        for level, (height, width) in shapes.items()
+        "1/1": levels[0],
+        "1/4": levels[1],
+        "1/16": levels[2],
+        "1/32": levels[3],
     }
 
 
@@ -1266,7 +1279,7 @@ def _build_tile_source_manifest(
 
 def _write_smoke_multilevel_tile_source_manifest(
     numpy,
-    pyramid_levels: list[Any],
+    pyramid_levels: Iterable[Any],
     *,
     output_root: Path,
     chunk_shape: tuple[int, int],
