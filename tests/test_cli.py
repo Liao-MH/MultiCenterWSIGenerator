@@ -26,7 +26,7 @@ class CliValidationTests(unittest.TestCase):
 
     def test_cli_validates_generation_config_file(self):
         config = {
-            "schema_version": "v0.62.0",
+            "schema_version": "v0.63.0",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -52,7 +52,7 @@ class CliValidationTests(unittest.TestCase):
 
     def test_cli_reports_validation_error(self):
         config = {
-            "schema_version": "v0.62.0",
+            "schema_version": "v0.63.0",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -97,7 +97,7 @@ class CliValidationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             manifest = {
-                "schema_version": "v0.62.0",
+                "schema_version": "v0.63.0",
                 "dataset_id": "demo",
                 "created_at": "2026-05-23T09:00:00",
                 "records": [

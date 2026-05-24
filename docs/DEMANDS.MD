@@ -1,5 +1,169 @@
 # DEMANDS
 
+## 2026-05-24 MultiCenterWSIGenerator conda 环境与环境化验证需求
+
+### 用户需求
+
+- 用户要求创建独立 conda 环境 `MultiCenterWSIGenerator`，安装项目所需全部依赖，包括 PyTorch。
+- 用户要求在该环境基础上继续循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`，推进 `docs/audit/` 中仍未完成的开发事项。
+
+### 结构化需求
+
+- 使用独立 conda 环境隔离依赖，不在主环境中安装项目依赖。
+- 安装项目完整可选依赖集合：`embeddings`、`outputs`、`training`、`torch`、`ui`、`yaml`、`wsi`。
+- 验证 `torch`、CUDA、`PySide6`、OpenSlide/YAML/输出相关依赖可导入。
+- 在新环境中重新验证 CLI 版本、默认 generation config、PyTorch smoke 相关测试、UI 相关测试和全量单元测试。
+- 把环境创建命令、依赖验证结果、测试结果同步到 `docs/audit/`、`docs/CHANGELOG.md` 和 README。
+
+### 边界说明
+
+- 本轮环境验证不等于完成真实可交互 PySide6 自定义配置页；该功能仍按 `docs/audit/IMPLEMENTATION_PLAN.md` 的 P2 继续开发。
+- 本轮环境验证不等于完成 production latent diffusion / ControlNet / DiT 或真实 SVS 全链路复跑；相关项目仍保留在未完成/未验证清单中。
+- 本轮不因单纯环境和文档收口额外升级版本号，仍归入当前 `v0.63.0` 补救基线。
+
+## 2026-05-24 v0.63.0 复审计需求
+
+### 用户需求
+
+- 用户显式调用 `project-remediation-audit`，要求基于当前仓库状态进入补救审计模式。
+- 本轮只做审计、证据复核和审计工件维护，不开始新的实现修复。
+
+### 结构化需求
+
+- 捕获当前 git 状态、分支、版本号、docs/source/tests 文件结构。
+- 对照 `AGENTS.md`、`README.md`、`docs/DEMANDS.MD`、`docs/audit/`、设计文档、开发附录和当前实现，复核 `v0.63.0` P1 补救后的项目状态。
+- 输出并维护 `已完成 / 缺失 / 偏离 / 未验证` 分类。
+- 明确区分：
+  - 当前工作区已实现并通过验证的能力；
+  - 仍未实现的完整项目成果；
+  - 仅作为历史证据存在的 `build/validation/` 工件；
+  - 尚未提交/打 tag 的工作区状态。
+
+### 边界说明
+
+- 本轮不修改 `src/`、`tests/`、`configs/` 运行时代码。
+- 本轮不升级版本号，继续以当前工作区 `v0.63.0` 作为复审计对象。
+- 本轮不复跑真实 SVS 全链路，不安装 PyTorch 或 PySide6。
+
+## v0.63.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/` 中的审计内容继续开发，并明确使用 `codex-worker-orchestration` 进行 worker 并行编排。
+- 本轮优先推进 `docs/audit/IMPLEMENTATION_PLAN.md` 中的 P1“契约一致性与文档诚实度”批次。
+
+### 结构化需求
+
+- 使用 `.agent/tasks/` 创建 worker 任务文件，并用 `.worktrees/` 隔离 worker 实现。
+- 并行处理两个文件范围不重叠的 P1 子任务：
+  - 为 `qc_review` 增加 `he-wsi-gen validate qc-review <path>` 通用校验入口。
+  - 收紧 `collect_output_summary()`：metadata 必须通过 schema 校验，metadata/QC/可选 `qc_review` 的 `generated_id` 必须一致。
+- 新增仓库实体 `AGENTS.md`，让本仓库工作规则可持久追踪。
+- 更新 README 的当前版本、schema kind 列表、输出摘要说明和 M5/M7 边界表述，避免把 smoke/proxy 或 UI 控制层误表述为完整 production 成果。
+- 版本号升级到 `v0.63.0`，并同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 更新 `docs/audit/`、`docs/CHANGELOG.md` 和 worker 报告，保留并行开发证据链。
+
+### 边界说明
+
+- 本轮不实现 production latent diffusion / ControlNet / DiT，不实现生产级 WSI streaming writer，不实现真正可交互的 PySide6 配置页。
+- 本轮不复跑真实 SVS 全链路；历史 `build/validation/v0.62.0-291288/` 仍只作为历史工件存在性证据。
+- 共享文档与版本号由 orchestrator 统一更新，不交给 worker 并行修改。
+
+## 2026-05-24 One-time Parallel Developer 整合 Skill 需求
+
+### 用户需求
+
+- 用户认为“每循环一个问题”会降低并行效率，确认循环粒度应改为“一个补救主题或优先级批次”，批次内部并行派发多个 worker。
+- 用户要求将 `codex-worker-orchestration` 和 `project-remediation-audit` 整合到一个 `one-time-parallel-developer` 大 skill 中。
+- 用户要求同时确保 `codex-worker-orchestration` 和 `project-remediation-audit` 仍然可以被单独调用。
+
+### 结构化需求
+
+- 新增个人 Codex skill：`/home/muhengliao/.codex/skills/one-time-parallel-developer`。
+- `one-time-parallel-developer` 需要定义完整闭环：`Audit -> Batch -> Task -> Worker -> Review -> Merge -> Re-audit -> Repeat/Stop`。
+- `one-time-parallel-developer` 需要明确一个循环解决一个补救主题或优先级批次，而不是单个问题。
+- `one-time-parallel-developer` 需要明确每批建议 2-5 个可并行 worker，并说明哪些任务适合并行、哪些必须串行。
+- `one-time-parallel-developer` 需要明确停止条件，避免无约束循环。
+- `project-remediation-audit` 需要保留独立审计能力，并说明它也可作为整合闭环的审计/复审计阶段使用。
+- `codex-worker-orchestration` 需要保留独立 worker 编排能力，并说明它也可作为整合闭环的 worker 派发阶段使用。
+
+### 边界说明
+
+- 本轮只新增和更新个人 Codex skill、README、需求记录和变更日志，不修改 `src/`、`tests/`、`configs/` 运行时代码。
+- 三个个人 skill 位于 `/home/muhengliao/.codex/skills/`，不纳入当前仓库版本控制。
+- `one-time-parallel-developer` 是上层编排 skill，不替代两个子 skill；两个子 skill 必须仍能按各自触发条件单独使用。
+
+## 2026-05-24 Worker 模板与 Skill 中文化需求
+
+### 用户需求
+
+- 用户确认 worker final report 是每个子任务一份后，要求把两个 skill、子任务模板、子任务报告模板都改为中文。
+
+### 结构化需求
+
+- 将仓库内 `.agent/templates/worker_task.md` 的可读文本改为中文。
+- 将仓库内 `.agent/templates/worker_report.md` 的可读文本改为中文。
+- 将个人 Codex skill `codex-worker-orchestration` 的 `SKILL.md` 和 `agents/openai.yaml` 改为中文。
+- 将个人 Codex skill `project-remediation-audit` 的 `SKILL.md` 和 `agents/openai.yaml` 改为中文。
+- 将 `codex-worker-orchestration` skill assets 中的 worker task/report 模板同步改为中文。
+
+### 边界说明
+
+- 保留必要的命令、路径、branch/worktree 命名和文件名，避免破坏自动化流程。
+- 本轮不修改 `src/`、`tests/`、`configs/` 运行时代码。
+- 个人 skill 位于 `/home/muhengliao/.codex/skills/`，不纳入当前仓库版本控制。
+- 当前环境缺少 PyYAML，仍不在主环境安装依赖；skill 结构继续采用手工校验。
+
+## 2026-05-24 Codex worker 并行开发与项目审计 Skill 固化需求
+
+### 用户需求
+
+- 用户要求为类 subagent 并行开发生成两个模板：
+  - 子任务文件模板；
+  - 子报告文件模板。
+- 用户要求把“主 Codex orchestrator + 独立 Codex exec worker + 任务文件 + 结果报告 + git worktree 隔离区”的并行开发流程确定为 skill。
+- 用户要求把前面已经形成的项目补救审计流程确定为 skill。
+
+### 结构化需求
+
+- 在当前仓库内新增 `.agent/templates/worker_task.md`，作为 worker prompt / task file 模板。
+- 在当前仓库内新增 `.agent/templates/worker_report.md`，作为 worker final report 模板。
+- 在个人 Codex skill 目录创建 `codex-worker-orchestration`，用于后续并行 worker 调度、worktree 隔离、任务文件和报告文件管理。
+- 在个人 Codex skill 目录创建 `project-remediation-audit`，用于后续补救审计模式：先读需求/设计/README/docs/代码结构，再输出“已完成 / 缺失 / 偏离 / 未验证”和最小补救计划。
+- 更新 `.gitignore`，忽略 `.worktrees/` 和 `.agent/logs/`，避免并行 worker 隔离区与日志污染 git 状态。
+
+### 边界说明
+
+- 本轮只新增协作模板、skill 和相关文档说明，不修改项目运行时代码。
+- 个人 skill 位于 `/home/muhengliao/.codex/skills/`，不纳入当前仓库版本控制。
+- 当前环境缺少 PyYAML，`skill-creator` 的 `quick_validate.py` 不能直接运行；需进行手工结构校验，或后续在隔离环境安装 PyYAML 后补跑。
+
+## 2026-05-24 审计文件迁移与项目进度审计需求（针对 v0.62.0）
+
+### 用户需求
+
+- 用户要求先把审计文件移动到 `docs/audit/`：
+  - `docs/audit/ACCEPTANCE_CHECKLIST.md`
+  - `docs/audit/IMPLEMENTATION_PLAN.md`
+  - `docs/audit/DECISIONS.md`
+- 用户要求读取现有设计说明、开发指南、README、`docs/` 目录和当前代码结构，总结当前项目开发进度，并明确距离完整项目成果还有多远。
+- 用户要求把本轮审计结果一并更新到 `docs/audit/` 的相关文件中。
+
+### 结构化需求
+
+- 审计文件只保留在 `docs/audit/`，避免继续散落在 `docs/` 根目录。
+- `docs/audit/ACCEPTANCE_CHECKLIST.md` 需要以证据为基础记录“已完成 / 缺失 / 偏离 / 未验证”，并说明当前项目相对完整成果的差距。
+- `docs/audit/IMPLEMENTATION_PLAN.md` 需要把补救工作拆成任务包，按优先级说明后续实现顺序。
+- `docs/audit/DECISIONS.md` 需要记录当前审计基线、完整项目成果定义、关键设计决策和禁止变更项。
+- README 需要提供审计文件入口，便于后续直接查看。
+
+### 边界说明
+
+- 本轮只修改文档和审计材料，不修改 `src/`、`tests/`、`configs/` 实现逻辑。
+- 本轮不升级版本号，仍以 `v0.62.0` 作为审计基线。
+- 对 `docs/CHANGELOG.md`、`docs/DEMANDS.MD` 等超过 100KB 的文件，只读取和更新与本轮需求直接相关的顶部记录，避免无关重写。
+- 历史 `build/validation/` 工件可作为存在性证据，但仍不等价于本轮重新执行真实 SVS 全链路生成。
+
 ## 2026-05-24 审计需求（针对 v0.62.0）
 
 ### 用户需求

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..qc.review import load_qc_review
-from ..schemas import validate_qc_report
+from ..schemas import validate_metadata, validate_qc_report
 
 
 VALID_JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled")
@@ -45,11 +45,13 @@ def collect_output_summary(
     qc_path: str | Path,
     qc_review_path: str | Path | None = None,
 ) -> dict:
-    metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+    metadata = validate_metadata(json.loads(Path(metadata_path).read_text(encoding="utf-8")))
     qc = validate_qc_report(json.loads(Path(qc_path).read_text(encoding="utf-8")))
+    if metadata["generated_id"] != qc["generated_id"]:
+        raise ValueError("metadata.generated_id must match qc.generated_id")
     output = metadata.get("output", {})
     summary = {
-        "generated_id": metadata.get("generated_id", qc["generated_id"]),
+        "generated_id": metadata["generated_id"],
         "qc_status": qc["overall_status"],
         "outputs": {
             "wsi_path": output.get("wsi_path"),
@@ -66,7 +68,7 @@ def collect_output_summary(
     if qc_review_path is not None:
         review = load_qc_review(qc_review_path)
         if review["generated_id"] != summary["generated_id"]:
-            raise ValueError("qc_review.generated_id must match output summary generated_id")
+            raise ValueError("qc_review.generated_id must match metadata.generated_id and qc.generated_id")
         summary["review"] = {
             "review_required": review["review_required"],
             "decision": review["decision"],

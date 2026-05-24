@@ -71,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
             "metadata",
             "qc",
             "qc-report",
+            "qc-review",
         ],
         help="Schema kind to validate.",
     )
@@ -700,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         try:
             validate_file(args.kind, args.path)
-        except ValidationError as exc:
+        except (ValidationError, QCReviewError) as exc:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"{args.kind} valid: {args.path}")

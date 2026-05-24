@@ -1,5 +1,345 @@
 # CHANGELOG
 
+## Audit Snapshot - 2026-05-24（v0.63.0 conda 环境验证）
+
+### 用户需求
+
+- 用户要求创建独立 conda 环境 `MultiCenterWSIGenerator`，安装全部项目依赖，包括 PyTorch。
+- 用户要求基于该环境继续循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`，完成 `docs/audit/` 中显示的未完成开发。
+
+### 已做改动
+
+- 创建 conda 环境 `MultiCenterWSIGenerator`，并通过 `pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'` 安装完整可选依赖集合。
+- 确认该环境中的 Python、OpenSlide、PySide6、PyTorch/CUDA 和项目 CLI 可用。
+- 在新环境中重新执行 PyTorch/UI 定向测试和全量单元测试，消除前一轮“当前环境缺少 torch/PySide6”的未验证项。
+- 更新 `docs/DEMANDS.MD`、`docs/audit/ACCEPTANCE_CHECKLIST.md`、`docs/audit/IMPLEMENTATION_PLAN.md`、`docs/audit/DECISIONS.md` 和 README 的环境化验证说明。
+- 将 v0.63.0 工作区收口为 `main` 分支基线提交，便于后续 worker worktree 从正确版本启动；尚未 tag 或打包发布。
+- 未修改 `src/`、`tests/`、`configs/` 运行时代码，未升级版本号。
+
+### 影响文件
+
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba create -y -n MultiCenterWSIGenerator -c conda-forge python=3.11 pip openslide`
+  - 结果：环境创建成功。
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+  - 结果：完整可选依赖安装成功。
+- `mamba run -n MultiCenterWSIGenerator python -c 'import torch, PySide6, openslide, yaml, tifffile, PIL, numpy'`
+  - 结果：导入成功；Python `3.11.15`，PyTorch `2.12.0+cu130`，CUDA 可用，GPU 为 `NVIDIA GeForce RTX 5060 Ti`。
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.63.0`。
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training tests.test_ui -v`
+  - 结果：通过，`Ran 39 tests ... OK`。
+- `QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python - <<'PY' ... create_main_window() ... PY`
+  - 结果：窗口标题为 `MultiCenterWSIGenerator`，central widget 存在，widget count 为 `88`；该结果只证明当前 PySide6 依赖和窗口创建可用，不代表真实交互式配置页已完成。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 191 tests in 19.932s OK`。
+- `git status --short`
+  - 结果：v0.63.0 基线提交后主工作区干净。
+- `git log -1 --oneline`
+  - 结果：最新提交信息包含版本号 `v0.63.0 contract remediation and env audit`。
+
+## Audit Snapshot - 2026-05-24（v0.63.0 复审计）
+
+### 用户需求
+
+- 用户显式调用 `project-remediation-audit`，要求基于当前仓库状态进行补救审计。
+- 本轮只做审计和审计工件维护，不开始新的实现修复。
+
+### 已做改动
+
+- 更新 `docs/DEMANDS.MD`，新增本轮 v0.63.0 复审计需求。
+- 更新 `docs/audit/ACCEPTANCE_CHECKLIST.md`，补充当前工作区状态、未提交/未 tag 风险、worker worktree 遗留状态和本轮验证结果。
+- 更新 `docs/audit/IMPLEMENTATION_PLAN.md`，新增 P0.5 交付收口任务包。
+- 更新 `docs/audit/DECISIONS.md`，记录当前 v0.63.0 仍是未提交工作区状态，不能表述为已发布 release。
+- 未修改 `src/`、`tests/`、`configs/` 运行时代码，未升级版本号。
+
+### 影响文件
+
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `git status --short`
+  - 结果：当前 `v0.63.0` 仍是未提交工作区状态，包含版本、代码、测试、README、`.agent/` 和 `docs/audit/` 改动；旧根目录审计文件在 git 状态中显示为删除，新 `docs/audit/` 显示为未跟踪。
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 191 tests ... OK (skipped=21)`；跳过项均为当前环境缺少 PyTorch 的 torch smoke 测试。
+- `PYTHONPATH=src python -m he_wsi_generator.cli --version`
+  - 结果：`v0.63.0`。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无 whitespace error。
+- `python -c` 导入依赖检查：
+  - 结果：当前环境缺少 `torch` 与 `PySide6`，因此 PyTorch smoke 路径和真实 PySide6 GUI 启动仍未验证。
+
+## v0.63.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/` 中的审计内容继续开发，并使用 `codex-worker-orchestration` 进行并行 worker 编排。
+- 本轮选择 P1“契约一致性与文档诚实度”作为补救批次。
+
+### 已做改动
+
+- 版本号升级到 `v0.63.0`。
+- 创建 worker 任务文件：
+  - `.agent/tasks/p1-qc-review-validate-20260524.md`
+  - `.agent/tasks/p1-output-summary-contract-20260524.md`
+- 创建并派发两个 worker worktree：
+  - `.worktrees/p1-qc-review-validate` / `worker/p1-qc-review-validate`
+  - `.worktrees/p1-output-summary-contract` / `worker/p1-output-summary-contract`
+- 回收 worker 报告：
+  - `.agent/reports/p1-qc-review-validate-20260524.md`
+  - `.agent/reports/p1-output-summary-contract-20260524.md`
+- `he-wsi-gen validate` 新增 `qc-review` schema kind，并复用现有 `validate_qc_review()`；非法 `qc_review` artifact 会走 CLI 明确错误输出。
+- `collect_output_summary()` 现在对 metadata 执行 schema 校验，并显式校验 metadata/QC/可选 `qc_review` 的 `generated_id` 一致性。
+- 新增仓库实体 `AGENTS.md`，固化本仓库工作规则。
+- 更新 README 的当前版本、schema kind 列表、输出摘要契约说明、M5/M7 里程碑边界和当前边界说明。
+- 更新 `docs/audit/`，把已解决的 P1 项从“缺失/偏离”调整为“已完成”，并保留未完成项。
+
+### 影响文件
+
+- `AGENTS.md`
+- `.agent/tasks/p1-qc-review-validate-20260524.md`
+- `.agent/tasks/p1-output-summary-contract-20260524.md`
+- `.agent/reports/p1-qc-review-validate-20260524.md`
+- `.agent/reports/p1-output-summary-contract-20260524.md`
+- `.gitignore`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/ui/controller.py`
+- `tests/test_qc_review.py`
+- `tests/test_ui.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.63.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker `p1-qc-review-validate`：
+  - RED：`PYTHONPATH=src python -m unittest tests.test_qc_review.QCReviewTests.test_validate_cli_accepts_qc_review_artifact tests.test_qc_review.QCReviewTests.test_validate_cli_rejects_invalid_qc_review_artifact_type -v` 初次失败于 `qc-review` 不是 CLI valid choice。
+  - GREEN：`PYTHONPATH=src python -m unittest tests.test_cli tests.test_qc_review -v` 通过，`Ran 12 tests ... OK`。
+  - `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json` 通过。
+  - `git diff --check` 通过。
+- Worker `p1-output-summary-contract`：
+  - RED：`PYTHONPATH=src python -m unittest tests.test_ui.UITests.test_collect_output_summary_rejects_invalid_metadata_contract tests.test_ui.UITests.test_collect_output_summary_rejects_metadata_qc_generated_id_mismatch -v` 初次失败于未校验 metadata schema 和 generated id mismatch。
+  - GREEN：`PYTHONPATH=src python -m unittest tests.test_ui -v` 通过，`Ran 17 tests ... OK`。
+  - `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json` 通过。
+  - `git diff --check` 通过。
+- Orchestrator 复核：
+  - 已重新检查两个 worker 的 report、`git status --short` 和 diff，并在各自 worktree 重新运行关键验证。
+  - `PYTHONPATH=src python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 191 tests ... OK (skipped=21)`；跳过项均为当前环境缺少 PyTorch 的 torch smoke 测试。
+  - `PYTHONPATH=src python -m he_wsi_generator.cli --version`
+    - 结果：`v0.63.0`。
+  - `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`。
+  - `git diff --check`
+    - 结果：通过，无 whitespace error。
+
+## Workflow Snapshot - 2026-05-24（One-time Parallel Developer 整合 Skill）
+
+### 用户需求
+
+- 用户认为“每循环一个问题”会降低并行效率，确认循环粒度应改为“一个补救主题或优先级批次”，批次内部并行派发多个 worker。
+- 用户要求将 `codex-worker-orchestration` 和 `project-remediation-audit` 整合到一个 `one-time-parallel-developer` 大 skill 中。
+- 用户要求同时确保 `codex-worker-orchestration` 和 `project-remediation-audit` 仍然可以被单独调用。
+
+### 已做改动
+
+- 新增个人 Codex skill：`/home/muhengliao/.codex/skills/one-time-parallel-developer`。
+- `one-time-parallel-developer` 定义完整闭环：`Audit -> Batch -> Task -> Worker -> Review -> Merge -> Re-audit -> Repeat/Stop`。
+- `one-time-parallel-developer` 明确循环粒度为一个补救主题或优先级批次，每批建议 2-5 个可并行 worker。
+- `one-time-parallel-developer` 明确了适合并行、不适合并行、每轮最小交付物和停止条件。
+- 更新 `codex-worker-orchestration`，新增“独立调用与整合调用”说明，保留单独 worker 编排能力。
+- 更新 `project-remediation-audit`，新增“独立调用与整合调用”说明，保留单独审计能力。
+- 更新 README，记录三个相关个人 Codex skills 的职责边界。
+- 更新 `docs/DEMANDS.MD`，记录本轮整合 skill 需求。
+- 未修改 `src/`、`tests/`、`configs/` 中的项目运行时代码，未升级项目版本号。
+
+### 影响文件
+
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `/home/muhengliao/.codex/skills/one-time-parallel-developer/SKILL.md`
+- `/home/muhengliao/.codex/skills/one-time-parallel-developer/agents/openai.yaml`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/SKILL.md`
+- `/home/muhengliao/.codex/skills/project-remediation-audit/SKILL.md`
+
+### 验证结果
+
+- `find /home/muhengliao/.codex/skills/one-time-parallel-developer /home/muhengliao/.codex/skills/codex-worker-orchestration /home/muhengliao/.codex/skills/project-remediation-audit -maxdepth 2 -type f`
+  - 结果：三个 skill 的 `SKILL.md` / `agents/openai.yaml` 均存在，`codex-worker-orchestration` 的 assets 模板仍存在。
+- 手工 frontmatter 校验：
+  - 结果：`one-time-parallel-developer`、`codex-worker-orchestration` 和 `project-remediation-audit` 均包含 `name`、`description`，skill name 符合 hyphen-case。
+- `rg -n "one-time-parallel-developer|独立调用与整合调用|Audit -> Batch -> Task -> Worker -> Review -> Merge -> Re-audit -> Repeat/Stop" /home/muhengliao/.codex/skills/one-time-parallel-developer /home/muhengliao/.codex/skills/codex-worker-orchestration /home/muhengliao/.codex/skills/project-remediation-audit`
+  - 结果：整合 skill 包含完整闭环状态机；两个子 skill 均包含“独立调用与整合调用”说明，并指向 `one-time-parallel-developer`。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无 whitespace error。
+
+## Workflow Snapshot - 2026-05-24（Worker 模板与 Skill 中文化）
+
+### 用户需求
+
+- 用户确认 worker final report 是每个子任务一份后，要求把两个 skill、子任务模板、子任务报告模板都改为中文。
+
+### 已做改动
+
+- 将 `.agent/templates/worker_task.md` 中文化。
+- 将 `.agent/templates/worker_report.md` 中文化。
+- 将 `/home/muhengliao/.codex/skills/codex-worker-orchestration/SKILL.md` 中文化。
+- 将 `/home/muhengliao/.codex/skills/codex-worker-orchestration/agents/openai.yaml` 中文化。
+- 将 `/home/muhengliao/.codex/skills/codex-worker-orchestration/assets/worker_task_template.md` 中文化。
+- 将 `/home/muhengliao/.codex/skills/codex-worker-orchestration/assets/worker_report_template.md` 中文化。
+- 将 `/home/muhengliao/.codex/skills/project-remediation-audit/SKILL.md` 中文化。
+- 将 `/home/muhengliao/.codex/skills/project-remediation-audit/agents/openai.yaml` 中文化。
+- 更新 `docs/DEMANDS.MD`，记录本轮中文化需求。
+- 未修改 `src/`、`tests/`、`configs/` 中的项目运行时代码，未升级项目版本号。
+
+### 影响文件
+
+- `.agent/templates/worker_task.md`
+- `.agent/templates/worker_report.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/SKILL.md`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/agents/openai.yaml`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/assets/worker_task_template.md`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/assets/worker_report_template.md`
+- `/home/muhengliao/.codex/skills/project-remediation-audit/SKILL.md`
+- `/home/muhengliao/.codex/skills/project-remediation-audit/agents/openai.yaml`
+
+### 验证结果
+
+- `rg -n "Assignment|Role|Goal|Required Context|Scope|Constraints|Final Report|Preconditions|Worker Contract|Workflow|Common Failure|Project Remediation|Overview|Use when" .agent/templates /home/muhengliao/.codex/skills/codex-worker-orchestration /home/muhengliao/.codex/skills/project-remediation-audit`
+  - 结果：无输出，未发现旧英文流程标题或关键短语残留。
+- 手工 frontmatter 校验：
+  - 结果：`codex-worker-orchestration` 和 `project-remediation-audit` 均包含 `name`、`description`，skill name 符合 hyphen-case。
+- `find .agent/templates /home/muhengliao/.codex/skills/codex-worker-orchestration /home/muhengliao/.codex/skills/project-remediation-audit -maxdepth 3 -type f`
+  - 结果：两个仓库模板、两个 skill 的 `SKILL.md` / `agents/openai.yaml`、并行开发 skill assets 中的两个模板均存在。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无 whitespace error。
+
+## Workflow Snapshot - 2026-05-24（Codex worker 并行开发与审计 skill）
+
+### 用户需求
+
+- 用户要求生成 Codex worker 子任务文件模板和子报告模板。
+- 用户要求把“主 Codex orchestrator + 独立 Codex exec worker + 任务文件 + 结果报告 + git worktree 隔离区”的并行开发流程固化为 skill。
+- 用户要求把前面的项目补救审计流程固化为 skill。
+
+### 已做改动
+
+- 新增 `.agent/templates/worker_task.md`，定义 worker task file 的字段、角色、范围、验证命令和停止条件。
+- 新增 `.agent/templates/worker_report.md`，定义 worker final report 的状态、变更、验证、风险和 orchestrator 后续动作格式。
+- 更新 `.gitignore`，忽略 `.worktrees/` 和 `.agent/logs/`。
+- 新增个人 Codex skill：`/home/muhengliao/.codex/skills/codex-worker-orchestration`。
+- 新增个人 Codex skill：`/home/muhengliao/.codex/skills/project-remediation-audit`。
+- `codex-worker-orchestration` 同步保存 worker task/report 模板到 skill assets，便于跨项目复用。
+- 更新 README 的协作模板入口。
+- 更新 `docs/DEMANDS.MD`，记录本轮并行开发与审计 skill 固化需求。
+- 未修改 `src/`、`tests/`、`configs/` 中的项目运行时代码，未升级项目版本号。
+
+### 影响文件
+
+- `.gitignore`
+- `.agent/templates/worker_task.md`
+- `.agent/templates/worker_report.md`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/SKILL.md`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/assets/worker_task_template.md`
+- `/home/muhengliao/.codex/skills/codex-worker-orchestration/assets/worker_report_template.md`
+- `/home/muhengliao/.codex/skills/project-remediation-audit/SKILL.md`
+
+### 验证结果
+
+- `codex exec --help`
+  - 结果：可用，显示 `Run Codex non-interactively` 和 `-C, --cd <DIR>` / `-o, --output-last-message <FILE>` 等参数。
+- `find .agent/templates /home/muhengliao/.codex/skills/codex-worker-orchestration /home/muhengliao/.codex/skills/project-remediation-audit -maxdepth 3 -type f`
+  - 结果：能找到两个仓库模板、两个 skill 的 `SKILL.md` / `agents/openai.yaml`，以及并行开发 skill assets 中的两个模板。
+- 手工 frontmatter 校验：
+  - 结果：`codex-worker-orchestration` 和 `project-remediation-audit` 均包含 `name`、`description`，skill name 符合 hyphen-case。
+- `rg -n "TODO|\[TODO\]" .agent/templates /home/muhengliao/.codex/skills/codex-worker-orchestration /home/muhengliao/.codex/skills/project-remediation-audit`
+  - 结果：无遗留 TODO。
+- `git check-ignore -q .worktrees/probe` 和 `git check-ignore -q .agent/logs/probe.log`
+  - 结果：均命中忽略规则。
+- `PYTHONPATH=src python -m he_wsi_generator.cli --version`
+  - 结果：`v0.62.0`。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无 whitespace error。
+- `python /home/muhengliao/.codex/skills/.system/skill-creator/scripts/quick_validate.py ...`
+  - 结果：当前主环境缺少 PyYAML，失败于 `ModuleNotFoundError: No module named 'yaml'`；未在主环境安装依赖，后续可在隔离环境补跑。
+
+## Audit Snapshot - 2026-05-24（审计文件迁移与项目进度）
+
+### 用户需求
+
+- 用户要求先把 `docs/ACCEPTANCE_CHECKLIST.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DECISIONS.md` 移动到 `docs/audit/`。
+- 用户要求读取现有设计说明、开发指南、README、`docs/` 目录和当前代码结构，总结当前项目开发进度，并明确距离完整项目成果还有多远。
+- 用户要求把审计结果更新到 `docs/audit/` 的相关文件中。
+
+### 已做改动
+
+- 新建 `docs/audit/` 并迁移三个审计文件。
+- 更新 `docs/audit/ACCEPTANCE_CHECKLIST.md`，按“已完成 / 缺失 / 偏离 / 未验证”重写当前项目进度审计，并明确当前仍是 core/CLI 骨架和 smoke/proxy 验证链，不是完整 production 生成器。
+- 更新 `docs/audit/IMPLEMENTATION_PLAN.md`，把补救拆成审计归位、契约一致性、可交互 UI、production 模型、生产级 WSI 输出、环境化验证和维护性收敛任务包。
+- 更新 `docs/audit/DECISIONS.md`，记录完整项目成果定义、关键设计决策和禁止变更项。
+- 更新 `docs/DEMANDS.MD`，把本轮审计文件迁移与项目进度审计需求置顶记录。
+- 更新 `README.md`，在核心文档列表中加入审计验收清单、补救计划和决策文件入口。
+- 未修改 `src/`、`tests/`、`configs/` 中的实现逻辑，未升级版本号。
+
+### 影响文件
+
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `find docs -maxdepth 2 -type f \( -path 'docs/audit/*' -o -name 'ACCEPTANCE_CHECKLIST.md' -o -name 'IMPLEMENTATION_PLAN.md' -o -name 'DECISIONS.md' \) -printf '%p\n' | sort`
+  - 结果：仅返回 `docs/audit/ACCEPTANCE_CHECKLIST.md`、`docs/audit/DECISIONS.md`、`docs/audit/IMPLEMENTATION_PLAN.md`。
+- `PYTHONPATH=src python -m he_wsi_generator.cli --version`
+  - 结果：`v0.62.0`。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无 whitespace error。
+
 ## Audit Snapshot - 2026-05-24（基于 v0.62.0）
 
 ### 用户需求

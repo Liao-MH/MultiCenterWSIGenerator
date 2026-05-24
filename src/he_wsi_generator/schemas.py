@@ -57,9 +57,15 @@ def validate_file(kind: str, path: str | Path) -> dict[str, Any]:
         "qc": validate_qc_report,
         "qc-report": validate_qc_report,
     }
+    if kind == "qc-review":
+        # Keep the QC review validator import local because qc.review imports this
+        # module for the shared QC report validator.
+        from .qc.review import validate_qc_review
+
+        return validate_qc_review(load_document(path))
     validator = validators.get(kind)
     if validator is None:
-        valid = ", ".join(sorted(validators))
+        valid = ", ".join(sorted([*validators, "qc-review"]))
         raise ValidationError(f"unknown schema kind {kind!r}; expected one of: {valid}")
     return validator(load_document(path))
 

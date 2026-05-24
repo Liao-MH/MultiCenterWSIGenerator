@@ -17,11 +17,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class QCReviewTests(unittest.TestCase):
+    def run_cli(self, *args):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT / "src")
+        return subprocess.run(
+            [sys.executable, "-m", "he_wsi_generator.cli", *args],
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
     def metadata(self, generated_id: str = "gen-001") -> dict:
         return {
-            "schema_version": "v0.62.0",
+            "schema_version": "v0.63.0",
             "generated_id": generated_id,
-            "version": "v0.62.0",
+            "version": "v0.63.0",
             "created_at": "2026-05-23T09:00:00+00:00",
             "output": {
                 "wsi_path": "generated.ome.tiff",
@@ -34,7 +47,7 @@ class QCReviewTests(unittest.TestCase):
                 "style_seed": "auto",
                 "random_seed": 7,
                 "model_checkpoint": "checkpoint.json",
-                "model_version": "v0.62.0",
+                "model_version": "v0.63.0",
                 "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
                 "max_magnification": "40x",
                 "tile_size_40x": [512, 512],
@@ -61,7 +74,7 @@ class QCReviewTests(unittest.TestCase):
 
     def qc_report(self, overall_status: str = "warning") -> dict:
         return {
-            "schema_version": "v0.62.0",
+            "schema_version": "v0.63.0",
             "generated_id": "gen-001",
             "overall_status": overall_status,
             "levels": {
@@ -119,7 +132,7 @@ class QCReviewTests(unittest.TestCase):
             review = build_qc_review(metadata_path, qc_path, output_path=output_path)
             written = json.loads(output_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(review["schema_version"], "v0.62.0")
+        self.assertEqual(review["schema_version"], "v0.63.0")
         self.assertEqual(review["artifact_type"], "qc_review")
         self.assertEqual(review["generated_id"], "gen-001")
         self.assertEqual(review["inputs"]["metadata_path"], str(metadata_path))
@@ -160,6 +173,32 @@ class QCReviewTests(unittest.TestCase):
 
             with self.assertRaisesRegex(QCReviewError, "review_required"):
                 apply_qc_review_decision(review_path, decision="accepted", reviewer="Dr. Chen")
+
+    def test_validate_cli_accepts_qc_review_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path, qc_path = self.write_inputs(root, "warning")
+            review_path = root / "qc_review.json"
+            build_qc_review(metadata_path, qc_path, output_path=review_path)
+
+            result = self.run_cli("validate", "qc-review", str(review_path))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("qc-review valid", result.stdout)
+
+    def test_validate_cli_rejects_invalid_qc_review_artifact_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path, qc_path = self.write_inputs(root, "warning")
+            review_path = root / "qc_review.json"
+            review = build_qc_review(metadata_path, qc_path, output_path=review_path)
+            review["artifact_type"] = "qc_report"
+            review_path.write_text(json.dumps(review), encoding="utf-8")
+
+            result = self.run_cli("validate", "qc-review", str(review_path))
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("artifact_type", result.stderr)
 
     def test_apply_qc_review_decision_rejects_illegal_decision(self):
         with tempfile.TemporaryDirectory() as tmpdir:
