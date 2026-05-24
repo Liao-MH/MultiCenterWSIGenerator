@@ -1,14 +1,14 @@
 # MultiCenterWSIGenerator
 
-- 当前版本：v0.67.0
-- 当前状态：训练索引、RGB/mask training batch loader、WSI tissue overview、统计型 layout/mask、style、texture prior、prior manifest builder、generation condition packet 与 smoke/PyTorch diffusion smoke 条件包记录、PyTorch diffusion smoke 条件通道注入、PyTorch diffusion smoke cross-scale condition、PyTorch VAE smoke latent autoencoder、smoke latent U-Net denoiser、VAE latent diffusion smoke training/sampling、PyTorch diffusion smoke generation、generation tile traversal / overlap blending 基础设施、可恢复 tile manifest contract、smoke tile resume execution、OME-TIFF chunked write audit、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、QC reference robust IQR/MAD z-score estimator、outlier audit、显式分层阈值 artifact 与运行时 exact-match stratum QC 消费、自动 QC、文件级 `qc_review` 审阅工作流、`qc-review` 通用校验入口、本地 job runner/CLI 任务取消/查看/列表/cwd/输出摘要 metadata/QC/review 契约校验、可交互 PySide6 单页配置页、GUI 内同步执行/刷新 queued job 与输出摘要查看阶段
+- 当前版本：v0.68.0
+- 当前状态：训练索引、RGB/mask training batch loader、WSI tissue overview、统计型 layout/mask、style、texture prior、prior manifest builder、generation condition packet 与 smoke/PyTorch diffusion smoke 条件包记录、PyTorch diffusion smoke 条件通道注入、PyTorch diffusion smoke cross-scale condition、PyTorch VAE smoke latent autoencoder、smoke latent U-Net denoiser、VAE latent diffusion smoke training/sampling、PyTorch diffusion smoke generation、generation tile traversal / overlap blending 基础设施、可恢复 tile manifest contract、smoke tile resume execution、OME-TIFF chunked write audit、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、磁盘 tile source tiled iterator streaming 写出、QC reference robust IQR/MAD z-score estimator、outlier audit、显式分层阈值 artifact 与运行时 exact-match stratum QC 消费、自动 QC、文件级 `qc_review` 审阅工作流、`qc-review` 通用校验入口、本地 job runner/CLI 任务取消/查看/列表/cwd/输出摘要 metadata/QC/review 契约校验、可交互 PySide6 单页配置页、GUI 内同步执行/刷新 queued job 与输出摘要查看阶段
 - GitHub 仓库：[Liao-MH/MultiCenterWSIGenerator](https://github.com/Liao-MH/MultiCenterWSIGenerator)
 
 本项目用于开发一个面向 H&E 染色 Whole Slide Image（WSI）的本地化数据生成器。最终系统目标是从真实 WSI 学习组织 layout、疾病无关区域 mask、成像风格和多倍率纹理分布，生成新的 OME-TIFF pyramid WSI，并同步输出 mask、metadata、QC JSON 与 batch JSONL index。
 
 ## 当前已实现
 
-v0.67.0 在 v0.66.0 P4 contract 基础上继续推进输出可靠性：`run-generation --backend smoke-cascade` 现在会写出每个 40x tile 的 `.npy` 文件、`tile_manifest.json` 和 `tile_source_manifest.json`，并支持 `--resume-tile-manifest` 从已有 row-major partial manifest 继续 pending tile；failed、非 row-major gap、缺失 completed tile 文件或与当前 generation plan 不匹配的 manifest 会显式失败。OME-TIFF 输出层新增 `write_pyramid_ome_tiff_from_tile_sources()`，可从磁盘 `.npy` tile source manifest 校验 level shape、tile origin、write region 和 coverage 后组装 pyramid 并写出。该接口仍会先在内存中组装 level arrays，并在报告中明确 `production_streaming=false`，不能表述为 production 级逐 tile gigapixel writer。v0.66.0 已新增可恢复 tile manifest helper 和磁盘 `.npy` tile source contract gate。v0.65.1 已把 CLI 命令执行分发迁到 `src/he_wsi_generator/cli_commands.py`，把 `torch_training.py` 中的纯 manifest/schema/validation helper 迁到 `src/he_wsi_generator/models/torch_training_contracts.py`，以降低后续维护风险。当前仍不代表 production latent diffusion 训练/推理模型或真正逐 tile OME-TIFF streaming writer 已经实现。
+v0.68.0 在 v0.67.0 P4 contract/assembly 基础上继续推进输出可靠性：OME-TIFF 输出层新增 `write_pyramid_ome_tiff_streaming_from_tile_sources()`，可复用磁盘 `.npy` tile source contract，按 `tifffile` tiled writer 的 tile grid 从磁盘逐 tile iterator 写出 OME-TIFF，而不先组装整幅 level array；报告记录 `write_mode=tile_iterator_streaming_write`、`production_streaming=true` 与 `resume_capable=false`。`run-generation --backend smoke-cascade` 新增显式 `--wsi-writer tile-streaming` 入口，默认仍保留 `array` in-memory pyramid 写出路径；`torch-diffusion-smoke` 会拒绝该 writer。当前 smoke tile source manifest 仍只覆盖 level0，所以显式 tile-streaming 路径当前只写出 level0 单层 OME-TIFF；完整四层 tile source streaming、生产 backend streaming、以及中断后续写同一个 OME-TIFF 文件仍未实现。v0.67.0 已新增 smoke tile resume execution 和磁盘 tile source 内存组装写出。当前仍不代表 production latent diffusion 训练/推理模型或完整 production gigapixel OME-TIFF writer 已经实现。
 
 - Python core package：`he_wsi_generator`
 - CLI 入口：`he-wsi-gen`
@@ -64,6 +64,7 @@ v0.67.0 在 v0.66.0 P4 contract 基础上继续推进输出可靠性：`run-gene
 - End-to-end smoke generation：
   - `run-generation --backend smoke-cascade` 复用 generation plan 校验并拒绝未训练 checkpoint
   - `run-generation --backend smoke-cascade` 写出 `tile_manifest.json`、`tile_source_manifest.json` 和 `tiles/tile-*.npy`，metadata 与 generation run summary 记录 manifest 路径；`--resume-tile-manifest` 可从已有 partial manifest 继续 pending tile，failed/gapped/missing completed tile 会显式失败
+  - `run-generation --backend smoke-cascade --wsi-writer tile-streaming` 可显式选择磁盘 tile source tiled iterator writer，generation run summary 记录 `write_mode=tile_iterator_streaming_write`、`production_streaming=true` 和 `resume_capable=false`；默认 `--wsi-writer array` 行为不变，`torch-diffusion-smoke` 不支持该 writer
   - `run-generation --backend smoke-cascade --condition-packet <condition_packet.json>` 会校验 condition packet，并在 metadata 与 generation run summary 中记录路径和条件摘要；若条件包包含 `wsi_tissue_overview`，最终输出也会保留该组织轮廓 proxy 摘要
   - 当 condition packet 的 `conditions.mask.source=sampled_layout_mask` 时，smoke generation 会读取对应 `.npy` mask，校验 0-5 类 id，并把它写为最终 `generated_mask/mask.npy`
   - `run-generation --backend torch-diffusion-smoke --condition-packet <condition_packet.json>` 会校验 condition packet 的版本、类型、必要条件对象和 `prior_id`，把条件摘要编码为空间条件通道，并把同一份摘要写入 sampler manifest、metadata 与 generation run summary
@@ -74,6 +75,7 @@ v0.67.0 在 v0.66.0 P4 contract 基础上继续推进输出可靠性：`run-gene
   - OME-TIFF writer 基于 `tifffile` 写出小型 pyramid，并在 `pyramid_report.chunked_write_audit` 记录 chunk plan、BigTIFF 决策、估算字节数和非生产流式写入限制
   - `write_pyramid_ome_tiff(..., tile_source_manifest=...)` 可校验磁盘 `.npy` tile source manifest，检查 expected tile count、level/tile index、路径存在、shape、dtype 和 completed 状态；pending、failed、missing、duplicate 或文件契约不一致会显式抛出 `OutputWriteError`
   - `write_pyramid_ome_tiff_from_tile_sources(...)` 可从磁盘 `.npy` tile source manifest 组装 pyramid 并写出 OME-TIFF，要求 level shape、tile origin、write region 和 coverage 明确且无 overlap/gap/越界；报告记录 `assembly_mode=in_memory_disk_tile_assembly`，仍不是 production streaming writer
+  - `write_pyramid_ome_tiff_streaming_from_tile_sources(...)` 可从完整磁盘 `.npy` tile source manifest 按 tiled iterator 写出 OME-TIFF，不分配完整 level array；要求 `chunk_shape` 符合 tiled TIFF 约束、每个 tile 精确映射到一个 TIFF tile grid cell、无 gap/overlap/越界，报告记录 `resume_capable=false`
   - `pyramid_report.streaming_contract` 明确记录 `production_streaming=false`、`partial_contract_only=true`、tile source 覆盖率和限制，避免把当前内存数组 writer 误表述为 production 级 gigapixel streaming writer
   - 6 类 mask `.npy` 写出和 mask metadata
   - QC report builder 输出 WSI/tile/mask-region 三级状态、non-copy report 和轻量质量指标
@@ -109,7 +111,7 @@ he-wsi-gen --version
 he-wsi-gen validate generation-config configs/generation.default.json
 ```
 
-上述完整环境已在当前机器验证：Python `3.11.15`、PyTorch `2.12.0+cu130`、CUDA 可用、GPU 为 `NVIDIA GeForce RTX 5060 Ti`，并通过 `python -m unittest discover -s tests -v` 的 `230` 个测试。若只需要最小 CLI/schema 功能，也可以安装基础包：
+上述完整环境已在当前机器验证：Python `3.11.15`、PyTorch `2.12.0+cu130`、CUDA 可用、GPU 为 `NVIDIA GeForce RTX 5060 Ti`，并通过 `python -m unittest discover -s tests -v` 的 `234` 个测试。若只需要最小 CLI/schema 功能，也可以安装基础包：
 
 ```bash
 python -m pip install -e .
@@ -593,9 +595,9 @@ he-wsi-gen validate qc-review path/to/qc_review.json
 | M3 | 已实现基础能力 | PatchEmbedder 接口、embedding 缓存、cluster report |
 | M4 | 已实现基础能力 + WSI tissue overview + 统计型 layout/mask、style、texture prior 构建器与 manifest builder | layout/style/texture/QC prior manifest |
 | M5 | 已实现 smoke/proxy 骨架 + condition packet + training index + batch loader + PyTorch RGB/VAE/diffusion smoke training/sampling/generation + 四层 smoke cascade generation 链路 + tile traversal/blending 基础设施；production 模型未完成 | production LDM U-Net/ControlNet 训练入口、production cascade sampler |
-| M6 | 已实现基础能力 + 可恢复 tile manifest / smoke resume execution / 磁盘 tile source contract / 磁盘 tile source 内存组装写出；production streaming 未完成 | pyramid 写出、QC JSON、batch JSONL |
+| M6 | 已实现基础能力 + 可恢复 tile manifest / smoke resume execution / 磁盘 tile source contract / 磁盘 tile source 内存组装写出 / 受限 tiled iterator streaming 写出；完整 production streaming/resume 未完成 | pyramid 写出、QC JSON、batch JSONL |
 | M7 | 已实现控制层 + 同步本地 job runner + queued job CLI 取消/查看 + 输出摘要契约校验 + 可交互 PySide6 配置页 + GUI 内同步执行/刷新/输出摘要查看；后台 daemon 和运行中取消未完成 | PySide6 单页控制台 |
 
 ## 当前边界
 
-v0.67.0 继续完成上述工程骨架，并新增 smoke-cascade tile resume execution 与磁盘 `.npy` tile source 内存组装写出能力，能更早阻止不完整 tile source 被误标为可发布输出；但当前 OME-TIFF writer 仍不是 production 级逐 tile streaming writer。当前仅实现 thumbnail 级 tissue contour proxy、统计 prior、统计型 layout mask 采样、sampled mask 条件归档和匹配审计、轻量 tissue fraction QC proxy、全局 IQR/MAD 阈值估计、全局 IQR reference outlier filtering、reference artifact 级分层阈值审计、运行时 exact-match stratum 阈值选择、smoke 级上一尺度 RGB proxy 条件、smoke 级 latent U-Net denoiser、preview 级四层 cascade sampling、内存级 tile blending 基础设施、可恢复 tile 状态 contract、smoke tile resume execution、OME-TIFF chunk/tile source contract 审计和磁盘 tile source 内存组装写出，不实现 production-scale latent diffusion U-Net/ControlNet、production cascade sampler、production VAE latent、VAE-diffusion 联合训练、mask diffusion、trainable style encoder、style sampling policy、trainable texture codebook、VQ-VAE、生产级噪声调度和采样器、多倍率真实条件注入、WSI 一致性训练、真实推理 backend、真实训练集批量 QC 采集、基于层级优先级或相似度的自动最佳 stratum 选择、mask class 内部像素级分层阈值、权限/签名系统、数据库或远端协作审阅、真正磁盘级逐 tile OME-TIFF streaming、可恢复 OME-TIFF 逐 tile 写入或生产级 gigapixel chunked OME-TIFF；job runner 也只支持同步本地执行和 queued job 取消/查看/列表，不包含后台 daemon、并发队列、运行中进程终止、跨机器调度或线程化 PySide6 事件循环绑定。
+v0.68.0 继续完成上述工程骨架，并新增受限的磁盘 `.npy` tile source tiled iterator streaming 写出与 smoke-cascade 显式 `--wsi-writer tile-streaming` 接入；该路径能避免先组装整幅 level array，但当前 smoke tile source manifest 只覆盖 level0，且 writer 不支持中断后续写同一个 OME-TIFF 文件。当前仅实现 thumbnail 级 tissue contour proxy、统计 prior、统计型 layout mask 采样、sampled mask 条件归档和匹配审计、轻量 tissue fraction QC proxy、全局 IQR/MAD 阈值估计、全局 IQR reference outlier filtering、reference artifact 级分层阈值审计、运行时 exact-match stratum 阈值选择、smoke 级上一尺度 RGB proxy 条件、smoke 级 latent U-Net denoiser、preview 级四层 cascade sampling、内存级 tile blending 基础设施、可恢复 tile 状态 contract、smoke tile resume execution、OME-TIFF chunk/tile source contract 审计、磁盘 tile source 内存组装写出和受限 tile iterator streaming writer，不实现 production-scale latent diffusion U-Net/ControlNet、production cascade sampler、production VAE latent、VAE-diffusion 联合训练、mask diffusion、trainable style encoder、style sampling policy、trainable texture codebook、VQ-VAE、生产级噪声调度和采样器、多倍率真实条件注入、WSI 一致性训练、真实推理 backend、真实训练集批量 QC 采集、基于层级优先级或相似度的自动最佳 stratum 选择、mask class 内部像素级分层阈值、权限/签名系统、数据库或远端协作审阅、完整四层磁盘级逐 tile OME-TIFF streaming、可恢复 OME-TIFF 逐 tile 写入或生产级 gigapixel chunked OME-TIFF；job runner 也只支持同步本地执行和 queued job 取消/查看/列表，不包含后台 daemon、并发队列、运行中进程终止、跨机器调度或线程化 PySide6 事件循环绑定。
