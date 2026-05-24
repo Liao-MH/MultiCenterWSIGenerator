@@ -83,6 +83,39 @@ def validate_disk_tile_source_contract(tile_source_manifest: dict | str | Path) 
     return _validate_disk_tile_source_contract(tile_source_manifest, numpy=_import_numpy())
 
 
+def write_pyramid_ome_tiff_from_tile_sources(
+    tile_source_manifest: dict | str | Path,
+    output_path: str | Path,
+    metadata: dict | None = None,
+    chunk_shape: tuple[int, int] | list[int] = (512, 512),
+    bigtiff_threshold_bytes: int = 4 * 1024 * 1024 * 1024,
+) -> dict:
+    """Assemble validated .npy disk tiles before delegating to the OME-TIFF writer.
+
+    This is intentionally a contract-gated assembly path, not a production
+    gigapixel tile-by-tile writer: tiles are checked on disk, assembled into
+    level arrays in memory, then written through the existing tifffile backend.
+    """
+    numpy = _import_numpy()
+    assembly = _assemble_disk_tile_source_arrays(tile_source_manifest, numpy=numpy)
+    report = write_pyramid_ome_tiff(
+        assembly["levels"],
+        output_path,
+        metadata=metadata,
+        chunk_shape=chunk_shape,
+        bigtiff_threshold_bytes=bigtiff_threshold_bytes,
+        tile_source_manifest=tile_source_manifest,
+    )
+    report["write_mode"] = "disk_tile_source_assembly_write"
+    report["production_streaming"] = False
+    report["assembly_report"] = assembly["assembly_report"]
+    report["streaming_contract"]["assembly_mode"] = "in_memory_disk_tile_assembly"
+    limitations = report["streaming_contract"].setdefault("streaming_limitations", [])
+    if "assembled_in_memory_before_tifffile_write" not in limitations:
+        limitations.append("assembled_in_memory_before_tifffile_write")
+    return report
+
+
 def _validate_pyramid_arrays(arrays: list[Any]) -> None:
     previous_height = None
     previous_width = None
@@ -312,6 +345,89 @@ def _validate_disk_tile_source_contract(tile_source_manifest: dict | str | Path,
     }
 
 
+def _assemble_disk_tile_source_arrays(tile_source_manifest: dict | str | Path, *, numpy) -> dict:
+    manifest, manifest_path = _load_tile_source_manifest(tile_source_manifest)
+    # Reuse the existing publication gate first so pending/failed records,
+    # missing files, duplicate indexes, shape, dtype, and count mismatches fail
+    # before any canvas allocation or partial write can happen.
+    _validate_disk_tile_source_contract(tile_source_manifest, numpy=numpy)
+    records = _validate_tile_records(manifest.get("tiles", manifest.get("records")))
+    level_shapes = _level_shapes_by_index(manifest.get("levels", []))
+    if not level_shapes:
+        raise OutputWriteError("tile source levels must declare shape for assembly")
+
+    level_arrays: dict[int, Any] = {
+        level_index: numpy.zeros(shape, dtype=numpy.uint8)
+        for level_index, shape in level_shapes.items()
+    }
+    coverage_masks = {
+        level_index: numpy.zeros(shape[:2], dtype=numpy.uint8)
+        for level_index, shape in level_shapes.items()
+    }
+    per_level_records: dict[int, int] = {level_index: 0 for level_index in level_shapes}
+
+    for record_offset, record in enumerate(records):
+        record_path = f"tile_source.tiles[{record_offset}]"
+        level_index = _validate_non_negative_int(record.get("level_index"), f"{record_path}.level_index")
+        if level_index not in level_arrays:
+            raise OutputWriteError(f"{record_path}.level_index is not declared in tile_source.levels")
+        tile_path = _resolve_tile_path(record.get("path", record.get("tile_path")), manifest_path, record_path)
+        tile = _load_npy_tile(numpy, tile_path, record_path)
+        declared_shape = _validate_shape(record.get("shape"), f"{record_path}.shape")
+        if [int(value) for value in tile.shape] != declared_shape:
+            raise OutputWriteError(
+                f"{record_path}.shape mismatch: manifest {declared_shape}, file {[int(value) for value in tile.shape]}"
+            )
+        if str(tile.dtype) != _validate_dtype(record.get("dtype"), f"{record_path}.dtype"):
+            raise OutputWriteError(f"{record_path}.dtype mismatch")
+        region = _validate_write_region(
+            _first_present(record, ("write_region_40x", "write_region")),
+            record_path,
+        )
+        origin = _validate_tile_origin(
+            _first_present(record, ("tile_origin_40x", "tile_origin")),
+            record_path,
+        )
+        if origin != region[:2]:
+            raise OutputWriteError(f"{record_path}.tile_origin must match write_region origin")
+        canvas = level_arrays[level_index]
+        coverage = coverage_masks[level_index]
+        _write_tile_to_level(canvas, coverage, tile, region, record_path)
+        per_level_records[level_index] += 1
+
+    assembly_levels = []
+    assembly_report_levels = []
+    for level_index in sorted(level_arrays):
+        coverage = coverage_masks[level_index]
+        if numpy.any(coverage == 0):
+            raise OutputWriteError(f"tile source records must cover level_index={level_index}")
+        level_array = level_arrays[level_index]
+        assembly_levels.append(level_array)
+        assembly_report_levels.append(
+            {
+                "level_index": level_index,
+                "shape": [int(value) for value in level_array.shape],
+                "dtype": str(level_array.dtype),
+                "tile_count": per_level_records[level_index],
+                "covered_pixel_count": int(coverage.sum()),
+            }
+        )
+
+    return {
+        "levels": assembly_levels,
+        "assembly_report": {
+            "assembly_mode": "in_memory_disk_tile_assembly",
+            "production_streaming": False,
+            "assembled_level_count": len(assembly_levels),
+            "levels": assembly_report_levels,
+            "limitations": [
+                "assembled_in_memory_before_tifffile_write",
+                "not_a_resume_capable_gigapixel_streaming_writer",
+            ],
+        },
+    }
+
+
 def _load_tile_source_manifest(tile_source_manifest: dict | str | Path) -> tuple[dict, Path | None]:
     if isinstance(tile_source_manifest, dict):
         return tile_source_manifest, None
@@ -368,6 +484,25 @@ def _validate_level_contracts(value: Any) -> list[dict]:
             )
         levels.append(level_contract)
     return levels
+
+
+def _level_shapes_by_index(value: Any) -> dict[int, list[int]]:
+    if not isinstance(value, list):
+        raise OutputWriteError("tile_source.levels must be a list")
+    shapes: dict[int, list[int]] = {}
+    for index, level in enumerate(value):
+        if not isinstance(level, dict):
+            raise OutputWriteError(f"tile_source.levels[{index}] must be an object")
+        level_index = _validate_non_negative_int(
+            level.get("level_index"),
+            f"tile_source.levels[{index}].level_index",
+        )
+        if "shape" in level:
+            shapes[level_index] = _validate_shape(
+                level.get("shape"),
+                f"tile_source.levels[{index}].shape",
+            )
+    return shapes
 
 
 def _build_level_coverage(
@@ -432,6 +567,61 @@ def _inspect_npy_tile(numpy, path: Path, record_path: str) -> tuple[list[int], s
     except (OSError, ValueError) as exc:
         raise OutputWriteError(f"{record_path}.path must be a readable .npy tile array") from exc
     return [int(value) for value in tile_array.shape], str(tile_array.dtype)
+
+
+def _load_npy_tile(numpy, path: Path, record_path: str):
+    try:
+        tile_array = numpy.load(path, allow_pickle=False)
+    except (OSError, ValueError) as exc:
+        raise OutputWriteError(f"{record_path}.path must be a readable .npy tile array") from exc
+    if tile_array.dtype != numpy.uint8:
+        raise OutputWriteError(f"{record_path}.dtype must be uint8 for assembly")
+    if tile_array.ndim not in {2, 3}:
+        raise OutputWriteError(f"{record_path}.path must contain a 2D or RGB tile array")
+    return tile_array
+
+
+def _validate_tile_origin(value: Any, record_path: str) -> list[int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise OutputWriteError(f"{record_path}.tile_origin must contain [x, y]")
+    origin = []
+    for item in value:
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise OutputWriteError(f"{record_path}.tile_origin values must be non-negative integers")
+        origin.append(int(item))
+    return origin
+
+
+def _validate_write_region(value: Any, record_path: str) -> list[int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise OutputWriteError(f"{record_path}.write_region must contain [x, y, width, height]")
+    x_origin, y_origin, width, height = value
+    for item in (x_origin, y_origin):
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise OutputWriteError(f"{record_path}.write_region origin values must be non-negative integers")
+    for item in (width, height):
+        if not isinstance(item, int) or isinstance(item, bool) or item <= 0:
+            raise OutputWriteError(f"{record_path}.write_region size values must be positive integers")
+    return [int(x_origin), int(y_origin), int(width), int(height)]
+
+
+def _write_tile_to_level(canvas, coverage, tile, region: list[int], record_path: str) -> None:
+    x_origin, y_origin, width, height = region
+    if y_origin + height > canvas.shape[0] or x_origin + width > canvas.shape[1]:
+        raise OutputWriteError(f"{record_path}.write_region exceeds level bounds")
+    if tile.shape[0] < height or tile.shape[1] < width:
+        raise OutputWriteError(f"{record_path}.shape is smaller than write_region")
+    if canvas.ndim != tile.ndim:
+        raise OutputWriteError(f"{record_path}.shape dimensionality does not match level")
+    if canvas.ndim == 3 and tile.shape[2] != canvas.shape[2]:
+        raise OutputWriteError(f"{record_path}.shape channel count does not match level")
+
+    y_slice = slice(y_origin, y_origin + height)
+    x_slice = slice(x_origin, x_origin + width)
+    if coverage[y_slice, x_slice].any():
+        raise OutputWriteError(f"{record_path}.write_region overlaps another tile")
+    canvas[y_slice, x_slice] = tile[:height, :width]
+    coverage[y_slice, x_slice] = 1
 
 
 def _validate_shape(value: Any, path: str) -> list[int]:
