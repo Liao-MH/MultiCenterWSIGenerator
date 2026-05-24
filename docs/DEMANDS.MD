@@ -1,5 +1,39 @@
 # DEMANDS
 
+## v0.72.5 - 2026-05-25 P4 tile-streaming writer 原子发布事务需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-06` / P4 的保守可靠性增量：不把当前 writer 宣称为可恢复 OME-TIFF production writer，而是先为 `write_pyramid_ome_tiff_streaming_from_tile_sources()` 增加可审计的写入事务与原子发布证据，避免失败或中断时半成品被误认为完整输出。
+
+### 结构化需求
+
+- 使用单 worker 隔离开发：
+  - `p4-streaming-publish-transaction-20260525` 负责加固 `src/he_wsi_generator/outputs/ome_tiff.py` 的 tile iterator streaming writer，并更新直接相关测试。
+- 新增或调整最小实现能力：
+  - streaming writer 写出目标 OME-TIFF 时先写临时文件，成功校验 OME/pyramid 后再原子替换目标路径；
+  - 写入事务 manifest 记录 `schema_version`、writer 类型、目标路径、临时路径、tile source manifest、状态、开始/结束时间、失败原因、是否原子发布、是否 resume-capable；
+  - 成功时 transaction manifest 标记 `completed`，并在 writer report / streaming contract 中记录 transaction manifest path 与 `atomic_publish=true`；
+  - 失败时 transaction manifest 标记 `failed`，记录错误原因，并确保目标路径不会被半成品覆盖；
+  - 当前仍明确 `resume_capable=false`，不宣称支持中断后继续写同一个 OME-TIFF 文件。
+- 验证要求：
+  - 新增 RED 测试先证明旧实现没有 transaction manifest / atomic publish 证据；
+  - `tests.test_outputs_qc_archive` 通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.5`，属于向后兼容的 P4 输出可靠性补丁。
+
+### 边界说明
+
+- 本批次不实现 production backend 磁盘级逐 tile 生成。
+- 本批次不实现真正可恢复 OME-TIFF 文件追加/续写；失败后仍需要重新运行 writer。
+- 本批次不实现 production latent diffusion / ControlNet / DiT，不实现 production trainable style/texture prior。
+- 本批次不打 tag、不生成发布包、不清理历史 worker worktree。
+
+### 预期落地
+
+- tile iterator streaming writer 的发布流程从“直接写目标文件”收敛为“临时文件写出 + 校验 + 原子替换 + 事务 manifest”，降低半成品污染最终输出路径的风险，并为后续真正可恢复 production writer 提供审计入口。
+
 ## v0.72.4 - 2026-05-25 P3 checkpoint inference contract 加固需求
 
 ### 用户需求
