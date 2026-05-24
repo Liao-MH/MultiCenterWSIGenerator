@@ -436,11 +436,66 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertEqual(tile_source_manifest["expected_tile_count"], 2)
         self.assertEqual(
             tile_source_manifest["levels"],
-            [{"level_index": 0, "expected_tile_count": 2}],
+            [{"level_index": 0, "shape": [512, 768, 3], "expected_tile_count": 2}],
         )
         self.assertEqual(
             [record["status"] for record in tile_source_manifest["tiles"]],
             ["completed", "completed"],
+        )
+
+    def test_cli_runs_smoke_generation_with_tile_streaming_writer(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            config_path = root / "generation-config.json"
+            output_root = root / "generated" / "gen-cli-streaming"
+            config_path.write_text(json.dumps(self.generation_config()), encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "run-generation",
+                    str(config_path),
+                    "--backend",
+                    "smoke-cascade",
+                    "--prior-manifest",
+                    str(prior_manifest_path),
+                    "--checkpoint-manifest",
+                    str(checkpoint_manifest_path),
+                    "--wsi-writer",
+                    "tile-streaming",
+                    "--output-root",
+                    str(output_root),
+                    "--generated-id",
+                    "gen-cli-streaming",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            metadata = json.loads((output_root / "metadata.json").read_text(encoding="utf-8"))
+            run_summary = json.loads((output_root / "generation_run.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(metadata["generation"]["wsi_writer"], "tile-streaming")
+        self.assertEqual(
+            run_summary["pyramid_report"]["write_mode"],
+            "tile_iterator_streaming_write",
+        )
+        self.assertTrue(run_summary["pyramid_report"]["production_streaming"])
+        self.assertFalse(run_summary["pyramid_report"]["resume_capable"])
+        self.assertEqual(run_summary["pyramid_report"]["level_count"], 1)
+        self.assertEqual(
+            run_summary["pyramid_report"]["streaming_write_report"]["levels"][0]["tile_grid"],
+            [1, 1],
         )
 
     def test_run_smoke_generation_resumes_partial_tile_manifest(self):
@@ -982,6 +1037,47 @@ class GenerationRunnerTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--resume-tile-manifest", result.stderr)
+
+    def test_cli_rejects_tile_streaming_writer_for_torch_diffusion_smoke(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            config_path = root / "generation-config.json"
+            config_path.write_text(json.dumps(self.generation_config()), encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "run-generation",
+                    str(config_path),
+                    "--backend",
+                    "torch-diffusion-smoke",
+                    "--prior-manifest",
+                    str(prior_manifest_path),
+                    "--checkpoint-manifest",
+                    str(checkpoint_manifest_path),
+                    "--wsi-writer",
+                    "tile-streaming",
+                    "--output-root",
+                    str(root / "generated" / "gen-torch"),
+                    "--generated-id",
+                    "gen-torch",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--wsi-writer tile-streaming", result.stderr)
 
 
 if __name__ == "__main__":

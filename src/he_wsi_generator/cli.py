@@ -520,6 +520,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume-tile-manifest",
         help="Optional resumable tile manifest JSON for smoke-cascade resume execution.",
     )
+    run_parser.add_argument(
+        "--wsi-writer",
+        choices=["array", "tile-streaming"],
+        default="array",
+        help=(
+            "WSI writer backend. array preserves the default in-memory pyramid path; "
+            "tile-streaming is smoke-cascade only."
+        ),
+    )
 
     archive_parser = subparsers.add_parser(
         "archive-sample",
