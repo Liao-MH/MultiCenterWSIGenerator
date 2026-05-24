@@ -1,5 +1,38 @@
 # DEMANDS
 
+## v0.72.4 - 2026-05-25 P3 checkpoint inference contract 加固需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-MISS-04` / P3 的保守契约增量：不直接实现 production latent diffusion / ControlNet / DiT 模型本体，而是先收紧 checkpoint manifest 的 inference 可用性判定，避免任意手写薄 JSON 只要设置 `usable_for_inference=true` 就能通过 generation plan。
+
+### 结构化需求
+
+- 使用单 worker 隔离开发：
+  - `p3-checkpoint-inference-contract-20260525` 负责加固 `src/he_wsi_generator/models/training.py` 的 checkpoint manifest 校验，并更新直接相关测试。
+- 新增或调整最小实现能力：
+  - `usable_for_inference=false` 的 smoke / skeleton checkpoint manifest 继续保持现有可加载能力；
+  - `usable_for_inference=true` 时必须具备更严格、可审计的 inference artifact contract，例如训练 backend / target type / checkpoint 文件路径 / checkpoint hash / inference contract 元数据等必要字段；
+  - 缺失关键 inference 字段、checkpoint 文件不存在、hash 不匹配或 status 与 usable 状态矛盾时必须显式失败；
+  - generation plan 和 smoke generation 中现有手写 checkpoint 测试 fixture 需要改成满足新 contract 的最小 fixture。
+- 验证要求：
+  - 新增 RED 测试先证明薄 checkpoint manifest 会被拒绝；
+  - `tests.test_models_generation` 通过；
+  - `tests.test_generation_runner` 中依赖 checkpoint fixture 的路径继续通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.4`，属于向后兼容的 P3 契约加固补丁。
+
+### 边界说明
+
+- 本批次不实现 production 模型训练、不实现真实 production inference backend、不把 smoke / torch smoke checkpoint 标为 production 可推理。
+- 本批次不改变 `train_torch_*` smoke checkpoint 的 `usable_for_inference=false` 语义。
+- 本批次不打 tag、不生成发布包、不清理历史 worker worktree。
+
+### 预期落地
+
+- P3 的 checkpoint manifest 从“布尔字段声明可推理”收敛为“有文件、hash 和 inference contract 证据的可审计声明”，为后续 production backend 接入提供更可靠的入口契约。
+
 ## v0.72.3 - 2026-05-25 P4 tile blending 内存收敛需求
 
 ### 用户需求
