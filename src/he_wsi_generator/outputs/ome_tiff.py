@@ -116,6 +116,87 @@ def write_pyramid_ome_tiff_from_tile_sources(
     return report
 
 
+def write_pyramid_ome_tiff_streaming_from_tile_sources(
+    tile_source_manifest: dict | str | Path,
+    output_path: str | Path,
+    metadata: dict | None = None,
+    chunk_shape: tuple[int, int] | list[int] = (512, 512),
+    bigtiff_threshold_bytes: int = 4 * 1024 * 1024 * 1024,
+) -> dict:
+    """Write a tiled OME-TIFF pyramid from disk tiles without level assembly.
+
+    This path streams one TIFF tile at a time from validated `.npy` sources.
+    It is intentionally stricter than the in-memory assembly path: every
+    manifest record must map to exactly one TIFF tile grid cell. The output file
+    itself is not resume-capable after interruption, so the report keeps that
+    limitation explicit.
+    """
+    numpy = _import_numpy()
+    tifffile = _import_tifffile()
+    chunk_height, chunk_width = _validate_chunk_shape(chunk_shape)
+    _validate_tiff_tile_shape(chunk_height, chunk_width)
+    bigtiff_threshold = _validate_bigtiff_threshold(bigtiff_threshold_bytes)
+    manifest, manifest_path = _load_tile_source_manifest(tile_source_manifest)
+    streaming_contract = _validate_disk_tile_source_contract(tile_source_manifest, numpy=numpy)
+    plan = _build_tile_iterator_streaming_plan(
+        manifest,
+        manifest_path=manifest_path,
+        numpy=numpy,
+        chunk_height=chunk_height,
+        chunk_width=chunk_width,
+    )
+    estimated_total_bytes = _estimated_total_bytes_from_shapes(plan["level_shapes"], numpy.uint8)
+    use_bigtiff = estimated_total_bytes >= bigtiff_threshold
+
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tifffile.TiffWriter(target, bigtiff=use_bigtiff) as writer:
+        for offset, level in enumerate(plan["levels"]):
+            level_shape = tuple(level["shape"])
+            axes = "YXS" if len(level_shape) == 3 else "YX"
+            writer.write(
+                _iter_streaming_level_tiles(numpy, level, chunk_height, chunk_width),
+                shape=level_shape,
+                dtype=numpy.uint8,
+                tile=(chunk_height, chunk_width),
+                photometric="rgb" if len(level_shape) == 3 else "minisblack",
+                subifds=(len(plan["levels"]) - 1 if offset == 0 else None),
+                subfiletype=(1 if offset > 0 else None),
+                metadata=({"axes": axes, **(metadata or {})} if offset == 0 else {"axes": axes}),
+            )
+
+    with tifffile.TiffFile(target) as tiff:
+        if not tiff.is_ome:
+            raise OutputWriteError("written TIFF is not recognized as OME-TIFF")
+        level_shapes = [list(level.shape) for level in tiff.series[0].levels]
+
+    streaming_write_report = _tile_iterator_streaming_report(
+        plan,
+        chunk_height=chunk_height,
+        chunk_width=chunk_width,
+        estimated_total_bytes=estimated_total_bytes,
+        bigtiff=use_bigtiff,
+        bigtiff_threshold_bytes=bigtiff_threshold,
+    )
+    streaming_contract["contract_status"] = "streaming_write_validated"
+    streaming_contract["production_streaming"] = True
+    streaming_contract["partial_contract_only"] = False
+    streaming_contract["resume_capable"] = False
+    streaming_contract["streaming_limitations"] = streaming_write_report["streaming_limitations"]
+    return {
+        "status": "written",
+        "path": str(target),
+        "level_count": len(level_shapes),
+        "level_shapes": level_shapes,
+        "is_ome": True,
+        "production_streaming": True,
+        "resume_capable": False,
+        "write_mode": "tile_iterator_streaming_write",
+        "streaming_contract": streaming_contract,
+        "streaming_write_report": streaming_write_report,
+    }
+
+
 def _validate_pyramid_arrays(arrays: list[Any]) -> None:
     previous_height = None
     previous_width = None
@@ -149,6 +230,11 @@ def _validate_chunk_shape(value: tuple[int, int] | list[int]) -> tuple[int, int]
     return int(height), int(width)
 
 
+def _validate_tiff_tile_shape(height: int, width: int) -> None:
+    if height % 16 != 0 or width % 16 != 0:
+        raise OutputWriteError("chunk_shape values must be multiples of 16 for tiled TIFF writing")
+
+
 def _validate_bigtiff_threshold(value: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise OutputWriteError("bigtiff_threshold_bytes must be a positive integer")
@@ -157,6 +243,17 @@ def _validate_bigtiff_threshold(value: int) -> int:
 
 def _estimated_total_bytes(arrays: list[Any]) -> int:
     return int(sum(int(array.size) * int(array.dtype.itemsize) for array in arrays))
+
+
+def _estimated_total_bytes_from_shapes(shapes: list[list[int]], dtype) -> int:
+    itemsize = int(dtype().itemsize)
+    total = 0
+    for shape in shapes:
+        size = 1
+        for value in shape:
+            size *= int(value)
+        total += size * itemsize
+    return int(total)
 
 
 def _chunked_write_audit(
@@ -425,6 +522,174 @@ def _assemble_disk_tile_source_arrays(tile_source_manifest: dict | str | Path, *
                 "not_a_resume_capable_gigapixel_streaming_writer",
             ],
         },
+    }
+
+
+def _build_tile_iterator_streaming_plan(
+    manifest: dict,
+    *,
+    manifest_path: Path | None,
+    numpy,
+    chunk_height: int,
+    chunk_width: int,
+) -> dict:
+    records = _validate_tile_records(manifest.get("tiles", manifest.get("records")))
+    level_shapes = _level_shapes_by_index(manifest.get("levels", []))
+    if not level_shapes:
+        raise OutputWriteError("tile source levels must declare shape for streaming write")
+
+    level_records: dict[int, dict[tuple[int, int], dict]] = {
+        level_index: {} for level_index in level_shapes
+    }
+    level_counts: dict[int, int] = {level_index: 0 for level_index in level_shapes}
+
+    for record_offset, record in enumerate(records):
+        record_path = f"tile_source.tiles[{record_offset}]"
+        level_index = _validate_non_negative_int(record.get("level_index"), f"{record_path}.level_index")
+        if level_index not in level_shapes:
+            raise OutputWriteError(f"{record_path}.level_index is not declared in tile_source.levels")
+        tile_path = _resolve_tile_path(record.get("path", record.get("tile_path")), manifest_path, record_path)
+        tile = _load_npy_tile(numpy, tile_path, record_path)
+        shape = _validate_shape(record.get("shape"), f"{record_path}.shape")
+        if [int(value) for value in tile.shape] != shape:
+            raise OutputWriteError(
+                f"{record_path}.shape mismatch: manifest {shape}, file {[int(value) for value in tile.shape]}"
+            )
+        if str(tile.dtype) != _validate_dtype(record.get("dtype"), f"{record_path}.dtype"):
+            raise OutputWriteError(f"{record_path}.dtype mismatch")
+        region = _validate_write_region(
+            _first_present(record, ("write_region_40x", "write_region")),
+            record_path,
+        )
+        origin = _validate_tile_origin(
+            _first_present(record, ("tile_origin_40x", "tile_origin")),
+            record_path,
+        )
+        if origin != region[:2]:
+            raise OutputWriteError(f"{record_path}.tile_origin must match write_region origin")
+
+        level_shape = level_shapes[level_index]
+        cell_key = _validate_streaming_tile_grid_cell(
+            tile,
+            region,
+            level_shape,
+            record_path,
+            chunk_height=chunk_height,
+            chunk_width=chunk_width,
+        )
+        if cell_key in level_records[level_index]:
+            raise OutputWriteError(f"{record_path}.write_region overlaps another tile")
+        level_records[level_index][cell_key] = {
+            "record_path": record_path,
+            "path": tile_path,
+            "region": region,
+            "shape": shape,
+        }
+        level_counts[level_index] += 1
+
+    levels = []
+    for level_index in sorted(level_shapes):
+        level_shape = level_shapes[level_index]
+        height, width = level_shape[:2]
+        grid_y = _ceil_div(height, chunk_height)
+        grid_x = _ceil_div(width, chunk_width)
+        expected_cells = {(row, col) for row in range(grid_y) for col in range(grid_x)}
+        missing_cells = sorted(expected_cells - set(level_records[level_index]))
+        if missing_cells:
+            raise OutputWriteError(f"tile source records must cover level_index={level_index}")
+        levels.append(
+            {
+                "level_index": level_index,
+                "shape": level_shape,
+                "tile_grid": [grid_y, grid_x],
+                "tile_count": level_counts[level_index],
+                "records": level_records[level_index],
+            }
+        )
+
+    return {
+        "level_shapes": [level["shape"] for level in levels],
+        "levels": levels,
+    }
+
+
+def _validate_streaming_tile_grid_cell(
+    tile,
+    region: list[int],
+    level_shape: list[int],
+    record_path: str,
+    *,
+    chunk_height: int,
+    chunk_width: int,
+) -> tuple[int, int]:
+    x_origin, y_origin, width, height = region
+    level_height, level_width = level_shape[:2]
+    if y_origin + height > level_height or x_origin + width > level_width:
+        raise OutputWriteError(f"{record_path}.write_region exceeds level bounds")
+    if x_origin % chunk_width != 0 or y_origin % chunk_height != 0:
+        raise OutputWriteError(f"{record_path}.write_region origin must be aligned to chunk_shape")
+    expected_width = min(chunk_width, level_width - x_origin)
+    expected_height = min(chunk_height, level_height - y_origin)
+    if width != expected_width or height != expected_height:
+        raise OutputWriteError(f"{record_path}.write_region must match the TIFF tile grid")
+    if tile.shape[0] < height or tile.shape[1] < width:
+        raise OutputWriteError(f"{record_path}.shape is smaller than write_region")
+    if len(level_shape) != tile.ndim:
+        raise OutputWriteError(f"{record_path}.shape dimensionality does not match level")
+    if tile.ndim == 3 and tile.shape[2] != level_shape[2]:
+        raise OutputWriteError(f"{record_path}.shape channel count does not match level")
+    return y_origin // chunk_height, x_origin // chunk_width
+
+
+def _iter_streaming_level_tiles(numpy, level: dict, chunk_height: int, chunk_width: int):
+    shape = level["shape"]
+    channels = shape[2] if len(shape) == 3 else None
+    for row in range(level["tile_grid"][0]):
+        for col in range(level["tile_grid"][1]):
+            record = level["records"][(row, col)]
+            tile = _load_npy_tile(numpy, record["path"], record["record_path"])
+            _, _, width, height = record["region"]
+            if channels is None:
+                output_tile = numpy.zeros((chunk_height, chunk_width), dtype=numpy.uint8)
+                output_tile[:height, :width] = tile[:height, :width]
+            else:
+                output_tile = numpy.zeros((chunk_height, chunk_width, channels), dtype=numpy.uint8)
+                output_tile[:height, :width, :] = tile[:height, :width, :]
+            yield output_tile
+
+
+def _tile_iterator_streaming_report(
+    plan: dict,
+    *,
+    chunk_height: int,
+    chunk_width: int,
+    estimated_total_bytes: int,
+    bigtiff: bool,
+    bigtiff_threshold_bytes: int,
+) -> dict:
+    return {
+        "writer_backend": "tifffile",
+        "write_mode": "tile_iterator_streaming_write",
+        "production_streaming": True,
+        "resume_capable": False,
+        "bigtiff": bool(bigtiff),
+        "bigtiff_threshold_bytes": int(bigtiff_threshold_bytes),
+        "estimated_total_bytes": int(estimated_total_bytes),
+        "tile_shape": [chunk_height, chunk_width],
+        "levels": [
+            {
+                "level_index": level["level_index"],
+                "shape": level["shape"],
+                "tile_grid": level["tile_grid"],
+                "tile_count": level["tile_count"],
+            }
+            for level in plan["levels"]
+        ],
+        "streaming_limitations": [
+            "ome_tiff_file_resume_not_supported",
+            "requires_complete_tile_source_manifest_before_write",
+            "npy_tile_arrays_only",
+        ],
     }
 
 
