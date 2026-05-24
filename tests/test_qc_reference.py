@@ -22,7 +22,7 @@ class QCReferenceTests(unittest.TestCase):
         metadata: dict | None = None,
     ) -> dict:
         return {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "generated_id": generated_id,
             "metadata": metadata or {},
             "overall_status": "pass",
@@ -71,7 +71,7 @@ class QCReferenceTests(unittest.TestCase):
             )
             written = json.loads(output_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(reference["schema_version"], "v0.72.4")
+        self.assertEqual(reference["schema_version"], "v0.72.5")
         self.assertEqual(reference["sample_count"], 4)
         self.assertEqual(reference["metrics"]["mean_red"]["warning_min"], 100.0)
         self.assertEqual(reference["metrics"]["mean_red"]["warning_max"], 160.0)

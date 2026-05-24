@@ -50,7 +50,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.4",
+                "schema_version": "v0.72.5",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -105,7 +105,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.4",
+                "schema_version": "v0.72.5",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -127,7 +127,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.4",
+                    "schema_version": "v0.72.5",
                     "model_family": "latent_diffusion_unet",
                     "status": "trained",
                     "usable_for_inference": True,
@@ -152,7 +152,7 @@ class GenerationRunnerTests(unittest.TestCase):
 
     def generation_config(self, canvas_size_40x: list[int] | None = None) -> dict:
         config = {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -310,7 +310,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.4",
+                    "schema_version": "v0.72.5",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T15:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -354,7 +354,7 @@ class GenerationRunnerTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.4",
+                    "schema_version": "v0.72.5",
                     "artifact_type": "sampled_layout_mask",
                     "created_at": "2026-05-23T16:00:00Z",
                     "sample_id": "layout-smoke-001",
@@ -1033,7 +1033,7 @@ class GenerationRunnerTests(unittest.TestCase):
             checkpoint_manifest_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.4",
+                        "schema_version": "v0.72.5",
                         "model_family": "latent_diffusion_unet",
                         "status": "not_trained",
                         "usable_for_inference": False,

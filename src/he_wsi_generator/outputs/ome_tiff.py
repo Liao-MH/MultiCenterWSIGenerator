@@ -1,6 +1,10 @@
 import json
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from ..constants import PROJECT_VERSION
 
 
 class OutputWriteError(RuntimeError):
@@ -137,38 +141,103 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
     _validate_tiff_tile_shape(chunk_height, chunk_width)
     bigtiff_threshold = _validate_bigtiff_threshold(bigtiff_threshold_bytes)
     manifest, manifest_path = _load_tile_source_manifest(tile_source_manifest)
-    streaming_contract = _validate_disk_tile_source_contract(tile_source_manifest, numpy=numpy)
-    plan = _build_tile_iterator_streaming_plan(
-        manifest,
-        manifest_path=manifest_path,
-        numpy=numpy,
-        chunk_height=chunk_height,
-        chunk_width=chunk_width,
-    )
-    estimated_total_bytes = _estimated_total_bytes_from_shapes(plan["level_shapes"], numpy.uint8)
-    use_bigtiff = estimated_total_bytes >= bigtiff_threshold
 
     target = Path(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with tifffile.TiffWriter(target, bigtiff=use_bigtiff) as writer:
-        for offset, level in enumerate(plan["levels"]):
-            level_shape = tuple(level["shape"])
-            axes = "YXS" if len(level_shape) == 3 else "YX"
-            writer.write(
-                _iter_streaming_level_tiles(numpy, level, chunk_height, chunk_width),
-                shape=level_shape,
-                dtype=numpy.uint8,
-                tile=(chunk_height, chunk_width),
-                photometric="rgb" if len(level_shape) == 3 else "minisblack",
-                subifds=(len(plan["levels"]) - 1 if offset == 0 else None),
-                subfiletype=(1 if offset > 0 else None),
-                metadata=({"axes": axes, **(metadata or {})} if offset == 0 else {"axes": axes}),
-            )
+    temporary_path = _streaming_transaction_temporary_path(target)
+    transaction_manifest_path = _streaming_transaction_manifest_path(target)
+    started_at = _utc_now_isoformat()
+    _write_streaming_transaction_manifest(
+        transaction_manifest_path,
+        _build_streaming_transaction_manifest(
+            target=target,
+            temporary_path=temporary_path,
+            manifest=manifest,
+            manifest_path=manifest_path,
+            status="started",
+            started_at=started_at,
+            ended_at=None,
+            failure_reason=None,
+        ),
+    )
 
-    with tifffile.TiffFile(target) as tiff:
-        if not tiff.is_ome:
-            raise OutputWriteError("written TIFF is not recognized as OME-TIFF")
-        level_shapes = [list(level.shape) for level in tiff.series[0].levels]
+    try:
+        streaming_contract = _validate_disk_tile_source_contract(tile_source_manifest, numpy=numpy)
+        plan = _build_tile_iterator_streaming_plan(
+            manifest,
+            manifest_path=manifest_path,
+            numpy=numpy,
+            chunk_height=chunk_height,
+            chunk_width=chunk_width,
+        )
+        estimated_total_bytes = _estimated_total_bytes_from_shapes(plan["level_shapes"], numpy.uint8)
+        use_bigtiff = estimated_total_bytes >= bigtiff_threshold
+
+        with tifffile.TiffWriter(temporary_path, bigtiff=use_bigtiff) as writer:
+            for offset, level in enumerate(plan["levels"]):
+                level_shape = tuple(level["shape"])
+                axes = "YXS" if len(level_shape) == 3 else "YX"
+                writer.write(
+                    _iter_streaming_level_tiles(numpy, level, chunk_height, chunk_width),
+                    shape=level_shape,
+                    dtype=numpy.uint8,
+                    tile=(chunk_height, chunk_width),
+                    photometric="rgb" if len(level_shape) == 3 else "minisblack",
+                    subifds=(len(plan["levels"]) - 1 if offset == 0 else None),
+                    subfiletype=(1 if offset > 0 else None),
+                    metadata=({"axes": axes, **(metadata or {})} if offset == 0 else {"axes": axes}),
+                )
+
+        with tifffile.TiffFile(temporary_path) as tiff:
+            if not tiff.is_ome:
+                raise OutputWriteError("written TIFF is not recognized as OME-TIFF")
+            level_shapes = [list(level.shape) for level in tiff.series[0].levels]
+        if level_shapes != plan["level_shapes"]:
+            raise OutputWriteError("written OME-TIFF pyramid shapes do not match streaming plan")
+
+        # Publish only after the temporary OME-TIFF has passed the same pyramid
+        # checks used for the returned report. Path.replace maps to os.replace
+        # on local filesystems, so an existing target is swapped atomically.
+        temporary_path.replace(target)
+        _write_streaming_transaction_manifest(
+            transaction_manifest_path,
+            _build_streaming_transaction_manifest(
+                target=target,
+                temporary_path=temporary_path,
+                manifest=manifest,
+                manifest_path=manifest_path,
+                status="completed",
+                started_at=started_at,
+                ended_at=_utc_now_isoformat(),
+                failure_reason=None,
+            ),
+        )
+    except Exception as exc:
+        cleanup_error = None
+        try:
+            if temporary_path.exists():
+                temporary_path.unlink()
+        except OSError as cleanup_exc:
+            cleanup_error = str(cleanup_exc)
+        failed_manifest = _build_streaming_transaction_manifest(
+            target=target,
+            temporary_path=temporary_path,
+            manifest=manifest,
+            manifest_path=manifest_path,
+            status="failed",
+            started_at=started_at,
+            ended_at=_utc_now_isoformat(),
+            failure_reason=str(exc),
+        )
+        if cleanup_error is not None:
+            failed_manifest["cleanup_error"] = cleanup_error
+        try:
+            _write_streaming_transaction_manifest(transaction_manifest_path, failed_manifest)
+        except OutputWriteError as manifest_exc:
+            raise OutputWriteError(
+                f"{exc}; additionally failed to write transaction manifest: {manifest_exc}"
+            ) from exc
+        raise
 
     streaming_write_report = _tile_iterator_streaming_report(
         plan,
@@ -185,6 +254,10 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
     streaming_contract["pyramid_order"] = plan["pyramid_order"]
     streaming_contract["level_order"] = plan["level_order"]
     streaming_contract["streaming_limitations"] = streaming_write_report["streaming_limitations"]
+    streaming_contract["transaction_manifest_path"] = str(transaction_manifest_path)
+    streaming_contract["atomic_publish"] = True
+    streaming_write_report["transaction_manifest_path"] = str(transaction_manifest_path)
+    streaming_write_report["atomic_publish"] = True
     return {
         "status": "written",
         "path": str(target),
@@ -193,6 +266,8 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
         "is_ome": True,
         "production_streaming": True,
         "resume_capable": False,
+        "atomic_publish": True,
+        "transaction_manifest_path": str(transaction_manifest_path),
         "write_mode": "tile_iterator_streaming_write",
         "streaming_contract": streaming_contract,
         "streaming_write_report": streaming_write_report,
@@ -735,6 +810,68 @@ def _tile_iterator_streaming_report(
             "npy_tile_arrays_only",
         ],
     }
+
+
+def _streaming_transaction_manifest_path(target: Path) -> Path:
+    return target.with_name(f"{target.name}.transaction.json")
+
+
+def _streaming_transaction_temporary_path(target: Path) -> Path:
+    lower_name = target.name.lower()
+    if lower_name.endswith(".ome.tiff"):
+        base_name = target.name[: -len(".ome.tiff")]
+        return target.with_name(f".{base_name}.{uuid.uuid4().hex}.tmp.ome.tiff")
+    if lower_name.endswith(".ome.tif"):
+        base_name = target.name[: -len(".ome.tif")]
+        return target.with_name(f".{base_name}.{uuid.uuid4().hex}.tmp.ome.tif")
+    return target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp.ome.tiff")
+
+
+def _build_streaming_transaction_manifest(
+    *,
+    target: Path,
+    temporary_path: Path,
+    manifest: dict,
+    manifest_path: Path | None,
+    status: str,
+    started_at: str,
+    ended_at: str | None,
+    failure_reason: str | None,
+) -> dict:
+    if status not in {"started", "completed", "failed"}:
+        raise OutputWriteError("transaction status must be started, completed, or failed")
+    return {
+        "schema_version": PROJECT_VERSION,
+        "manifest_type": "ome_tiff_streaming_write_transaction",
+        "writer_type": "tile_iterator_streaming_write",
+        "writer_backend": "tifffile",
+        "target_path": str(target),
+        "temporary_path": str(temporary_path),
+        "tile_source_manifest": {
+            "manifest_path": str(manifest_path) if manifest_path is not None else None,
+            "manifest_type": manifest.get("manifest_type"),
+            "expected_tile_count": _first_present(manifest, ("expected_tile_count", "tile_count")),
+            "level_count": len(manifest.get("levels", [])) if isinstance(manifest.get("levels"), list) else None,
+        },
+        "status": status,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "failure_reason": failure_reason,
+        "atomic_publish": True,
+        "resume_capable": False,
+    }
+
+
+def _write_streaming_transaction_manifest(path: Path, manifest: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise OutputWriteError(f"failed to write transaction manifest: {exc}") from exc
+
+
+def _utc_now_isoformat() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _load_tile_source_manifest(tile_source_manifest: dict | str | Path) -> tuple[dict, Path | None]:

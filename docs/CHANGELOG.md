@@ -1,5 +1,61 @@
 # CHANGELOG
 
+## v0.72.5 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-06` / P4 的保守可靠性增量：不把当前 writer 宣称为可恢复 OME-TIFF production writer，而是先为 `write_pyramid_ome_tiff_streaming_from_tile_sources()` 增加可审计的写入事务与原子发布证据，避免失败或中断时半成品被误认为完整输出。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.5`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建并审查 P4 worker 任务：
+  - `.agent/tasks/p4-streaming-publish-transaction-20260525.md`
+  - `.agent/reports/p4-streaming-publish-transaction-20260525.md`
+- `src/he_wsi_generator/outputs/ome_tiff.py` 为 `write_pyramid_ome_tiff_streaming_from_tile_sources()` 增加同目录临时 OME-TIFF 写入、发布前 OME/pyramid shape 校验、`Path.replace()` 原子发布和 `<target>.transaction.json` 事务 manifest。
+- transaction manifest 记录 `schema_version`、writer 类型、目标路径、临时路径、tile source manifest 摘要、started/completed/failed 状态、时间戳、失败原因、`atomic_publish=true` 和 `resume_capable=false`。
+- 失败路径会清理临时 OME-TIFF、写入 failed transaction manifest，并保持既有目标文件不被半成品覆盖；成功 report、`streaming_contract` 和 `streaming_write_report` 均记录 `transaction_manifest_path` 与 `atomic_publish=true`。
+- `tests/test_outputs_qc_archive.py` 新增 transaction manifest、atomic publish、失败目标保留和 pyramid order 失败事务记录测试。
+- README 与 `docs/audit/` 同步记录当前能力边界：本轮只是 tile iterator streaming writer 的原子发布事务补丁，不是 production backend 磁盘级逐 tile 生成，也不是可恢复 OME-TIFF 逐 tile 写入。
+
+### 影响文件
+
+- `.agent/tasks/p4-streaming-publish-transaction-20260525.md`
+- `.agent/reports/p4-streaming-publish-transaction-20260525.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_version.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `git diff --check`
+  - 结果：通过，无 whitespace error
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive -v`
+  - 结果：通过，`Ran 31 tests in 0.242s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner -v`
+  - 结果：通过，`Ran 23 tests in 1.381s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 259 tests in 18.804s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.5`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.5`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/version check ... PY`
+  - 结果：包元数据 `0.72.5`，`PROJECT_VERSION` 为 `v0.72.5`，`PACKAGE_VERSION` 为 `0.72.5`
+
 ## v0.72.4 - 2026-05-25
 
 ### 用户需求

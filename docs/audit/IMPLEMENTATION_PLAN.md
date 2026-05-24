@@ -1,8 +1,8 @@
-# v0.72.4 审计补救实施计划
+# v0.72.5 审计补救实施计划
 
 ## 当前定位
 
-当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路、可交互 PySide6 配置页、GUI 内同步 queued job 执行/状态刷新/输出摘要查看、checkpoint inference artifact contract gate、可恢复 tile manifest contract、smoke tile resume execution、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、受限 tiled iterator streaming writer、streaming writer pyramid level contract、smoke 四层 tile source streaming 写出、tile blending 的 channel-wise 内存收敛、deterministic sampled style/texture policy artifact、condition packet 对 sampled style/texture policy 的可审计消费，以及 generation 输出对 sampled style/texture policy 摘要的保留。v0.72.4 继承当前环境真实 SVS smoke/proxy 复跑验证，并把 `usable_for_inference=true` checkpoint manifest 从薄布尔声明收紧为文件/hash/inference contract gate，但这仍不等于 production 级 latent diffusion、production prior 或 production writer。后续补救顺序应进入 production 模型、生产级 prior/WSI 输出能力，或继续把 P4 streaming 扩展到 production backend 和可恢复 OME-TIFF 写入。
+当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路、可交互 PySide6 配置页、GUI 内同步 queued job 执行/状态刷新/输出摘要查看、checkpoint inference artifact contract gate、可恢复 tile manifest contract、smoke tile resume execution、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、受限 tiled iterator streaming writer、streaming writer pyramid level contract、tile iterator streaming writer 原子发布事务 manifest、smoke 四层 tile source streaming 写出、tile blending 的 channel-wise 内存收敛、deterministic sampled style/texture policy artifact、condition packet 对 sampled style/texture policy 的可审计消费，以及 generation 输出对 sampled style/texture policy 摘要的保留。v0.72.5 继承当前环境真实 SVS smoke/proxy 复跑验证，并把 `usable_for_inference=true` checkpoint manifest 从薄布尔声明收紧为文件/hash/inference contract gate；同时为 tile iterator streaming writer 增加临时文件、发布前校验、原子替换和事务 manifest。但这仍不等于 production 级 latent diffusion、production prior、production backend 磁盘级逐 tile 生成或可恢复 OME-TIFF writer。后续补救顺序应进入 production 模型、生产级 prior/WSI 输出能力，或继续把 P4 streaming 扩展到 production backend 和可恢复 OME-TIFF 写入。
 
 ## P0. 审计材料归位与证据闭环
 
@@ -36,7 +36,7 @@
 ## P2. 可交互 PySide6 自定义配置页与本地 GUI flow
 
 - 目标：实现设计文档要求的本地单页控制台，让用户不手工编辑中间 JSON 也能完成配置。
-- 当前状态：v0.72.4 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看、首轮 CLI/torch smoke helper 维护性收敛，以及 P3 checkpoint inference artifact contract gate、P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source contract/assembly、受限 tile iterator streaming、streaming writer pyramid contract、smoke 四层 tile source streaming 接入和 tile-streaming 顺序物化、tile blending 的 channel-wise 内存收敛，以及 P5 deterministic sampled style/texture policy artifact、CLI、condition packet 审计消费、generation 输出摘要保留和当前环境真实 SVS smoke/proxy 复跑验证。
+- 当前状态：v0.72.5 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看、首轮 CLI/torch smoke helper 维护性收敛，以及 P3 checkpoint inference artifact contract gate、P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source contract/assembly、受限 tile iterator streaming、streaming writer pyramid contract、tile iterator streaming writer 原子发布事务 manifest、smoke 四层 tile source streaming 接入和 tile-streaming 顺序物化、tile blending 的 channel-wise 内存收敛，以及 P5 deterministic sampled style/texture policy artifact、CLI、condition packet 审计消费、generation 输出摘要保留和当前环境真实 SVS smoke/proxy 复跑验证。
 - 建议任务包：
   - 已完成：建立独立 conda UI 环境并验证 PySide6 offscreen。
   - 已完成：把 `pyside_app.py` 从只读字段展示升级为真实表单：路径选择、anchor preset、seed、sample steps、prior/checkpoint、输出目录、QC 设置。
@@ -52,7 +52,7 @@
 ## P3. Production 级生成模型补齐
 
 - 目标：从 smoke/proxy 生成升级到设计目标中的结构锚定多分辨率生成模型。
-- 当前状态：v0.72.4 已完成 checkpoint inference artifact contract gate：`usable_for_inference=true` 必须有 trained 状态、backend/target/checkpoint/hash 字段、真实 checkpoint 文件、matching SHA-256 和显式 `inference_contract`。这只加固入口契约，不实现 production 模型本体或 production inference backend。
+- 当前状态：v0.72.5 继承 checkpoint inference artifact contract gate：`usable_for_inference=true` 必须有 trained 状态、backend/target/checkpoint/hash 字段、真实 checkpoint 文件、matching SHA-256 和显式 `inference_contract`。这只加固入口契约，不实现 production 模型本体或 production inference backend。
 - 建议任务包：
   - 已完成：建立 checkpoint manifest 的真实 inference artifact contract gate。
   - 定义 production training dataset contract 和真实训练运行配置。
@@ -64,7 +64,7 @@
 ## P4. 生产级 WSI 输出、恢复和 QC 验证
 
 - 目标：补齐 gigapixel 级交付可靠性。
-- 当前状态：v0.72.4 继承四批 contract/执行级补救：`build_resumable_tile_manifest()` / `update_resumable_tile_manifest()` / `validate_resumable_tile_manifest()` / `require_complete_tile_manifest()` 可记录和校验 tile 执行状态；`run-generation --backend smoke-cascade --resume-tile-manifest` 可从 partial manifest 继续 pending tile并拒绝 failed/gapped/missing completed tile；`write_pyramid_ome_tiff(..., tile_source_manifest=...)` 可在写出前校验磁盘 `.npy` tile source manifest；`write_pyramid_ome_tiff_from_tile_sources()` 可从磁盘 tile source manifest 内存组装 pyramid 并写出；`write_pyramid_ome_tiff_streaming_from_tile_sources()` 可按 TIFF tile grid 从磁盘逐 tile iterator 写出且不组装完整 level array；streaming writer 现在校验 pyramid level order；`run-generation --backend smoke-cascade --wsi-writer tile-streaming` 现在会先顺序物化四层 smoke tile source manifest，再写出四层 OME-TIFF。该状态仍不是 production backend 级可恢复 OME-TIFF writer。
+- 当前状态：v0.72.5 继承并扩展 P4 contract/执行级补救：`build_resumable_tile_manifest()` / `update_resumable_tile_manifest()` / `validate_resumable_tile_manifest()` / `require_complete_tile_manifest()` 可记录和校验 tile 执行状态；`run-generation --backend smoke-cascade --resume-tile-manifest` 可从 partial manifest 继续 pending tile 并拒绝 failed/gapped/missing completed tile；`write_pyramid_ome_tiff(..., tile_source_manifest=...)` 可在写出前校验磁盘 `.npy` tile source manifest；`write_pyramid_ome_tiff_from_tile_sources()` 可从磁盘 tile source manifest 内存组装 pyramid 并写出；`write_pyramid_ome_tiff_streaming_from_tile_sources()` 可按 TIFF tile grid 从磁盘逐 tile iterator 写出且不组装完整 level array，并新增同目录临时 OME-TIFF、发布前 OME/pyramid shape 校验、原子替换和 `<target>.transaction.json` 事务 manifest；streaming writer 继续校验 pyramid level order；`run-generation --backend smoke-cascade --wsi-writer tile-streaming` 现在会先顺序物化四层 smoke tile source manifest，再写出四层 OME-TIFF。该状态仍不是 production backend 级可恢复 OME-TIFF writer。
 - 建议任务包：
   - 已完成：实现可恢复 tile manifest/state contract。
   - 已完成：实现磁盘 `.npy` tile source contract gate 和 streaming limitation report。
@@ -72,6 +72,7 @@
   - 已完成：实现磁盘 tile source manifest 的内存组装写出接口，并明确 production streaming 限制。
   - 已完成：实现受限的磁盘 tile source tiled iterator streaming writer，并显式接入 smoke-cascade writer 选择。
   - 已完成：为 streaming writer 加固 high-to-low pyramid level contract，并让 smoke-cascade 显式 `tile-streaming` 路径写出四层 OME-TIFF。
+  - 已完成：为 tile iterator streaming writer 增加临时文件写入、发布前校验、原子发布和事务 manifest，失败时保留既有目标。
   - 待完成：接入 production backend 磁盘级逐 tile 生成，支持可恢复 OME-TIFF 逐 tile 写入。
   - 扩展 QC 到更真实的 stain、focus、seam、mask-image consistency 和 non-copy 审计。
   - 保留当前自动 QC 的 pass/warning/fail 和 reference distribution 审计链。
@@ -80,7 +81,7 @@
 ## P4.5. 生产级 prior 与采样策略
 
 - 目标：补齐 production 级 layout/style/texture prior 与采样策略。
-- 当前状态：v0.72.4 继承 deterministic sampled style/texture policy artifact，让 `build-condition-packet` 可选读取 `sampled_style_policy` / `sampled_texture_policy`，校验 source prior path 与关键 selected 字段后写入 `artifact_inputs` 和 `conditions.style_seed` / `conditions.texture_token`，并在 smoke/torch generation 输出摘要中继续保留 selected style/token 摘要；该能力仍不是 production trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler。
+- 当前状态：v0.72.5 继承 deterministic sampled style/texture policy artifact，让 `build-condition-packet` 可选读取 `sampled_style_policy` / `sampled_texture_policy`，校验 source prior path 与关键 selected 字段后写入 `artifact_inputs` 和 `conditions.style_seed` / `conditions.texture_token`，并在 smoke/torch generation 输出摘要中继续保留 selected style/token 摘要；该能力仍不是 production trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler。
 - 建议任务包：
   - 已完成：从统计型 style prior 生成 `sampled_style_policy` artifact 和 CLI。
   - 已完成：从统计型 texture prior 生成 `sampled_texture_policy` artifact 和 CLI。
@@ -93,7 +94,7 @@
 ## P5. 环境化复跑验证
 
 - 目标：区分“历史上有工件”和“当前环境可复现”。
-- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI/P4/P5 定向测试、PySide6 offscreen 表单 smoke，以及 v0.72.4 定向测试、全量单元测试、editable install、CLI 版本和包元数据验证；真实 SVS smoke/proxy 复跑已在历史 v0.72.1 轮次完成。
+- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI/P4/P5 定向测试、PySide6 offscreen 表单 smoke，以及 v0.72.5 定向测试、全量单元测试、editable install、CLI 版本和包元数据验证；真实 SVS smoke/proxy 复跑已在历史 v0.72.1 轮次完成。
 - 建议任务包：
   - 已完成：准备独立 conda/pip 环境说明，覆盖 `torch`、`ui`、`wsi`、`outputs`、`yaml`。
   - 已完成：复跑完整单元测试、PyTorch smoke 路径和 PySide6 当前窗口创建 smoke。
@@ -104,7 +105,7 @@
 ## P6. 维护性收敛
 
 - 目标：降低后续补救风险，不做风格化大重构。
-- 当前状态：v0.65.1 已完成首轮维护性收敛；v0.72.4 保持统计 prior 的 deterministic policy helper、condition packet 审计消费和 generation 输出摘要保留，并加固 checkpoint inference artifact contract gate，但未扩展到 production prior/model。
+- 当前状态：v0.65.1 已完成首轮维护性收敛；v0.72.5 保持统计 prior 的 deterministic policy helper、condition packet 审计消费和 generation 输出摘要保留，并继承 checkpoint inference artifact contract gate；本轮只扩展 P4 streaming writer 发布事务，未扩展到 production prior/model。
 - 建议任务包：
   - 优先拆分 `src/he_wsi_generator/cli.py` 的命令注册和命令执行分支。
   - 再拆分 `src/he_wsi_generator/models/torch_training.py` 中训练、采样、manifest/schema 辅助逻辑。

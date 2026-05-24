@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15,11 +16,13 @@ if SRC_ROOT not in sys.path:
 import numpy as np
 import tifffile
 
+from he_wsi_generator.constants import PROJECT_VERSION
 from he_wsi_generator.metadata.archive import (
     append_batch_index,
     archive_sample,
     write_metadata,
 )
+from he_wsi_generator.outputs import ome_tiff as ome_tiff_module
 from he_wsi_generator.outputs.masks import write_mask_array
 from he_wsi_generator.outputs.ome_tiff import (
     OutputWriteError,
@@ -34,9 +37,9 @@ from he_wsi_generator.schemas import validate_metadata, validate_qc_report
 class OutputQCArchiveTests(unittest.TestCase):
     def metadata_payload(self, root: Path, qc_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "generated_id": "gen-001",
-            "version": "v0.72.4",
+            "version": "v0.72.5",
             "created_at": "2026-05-23T12:00:00",
             "output": {
                 "wsi_path": str(root / "generated.ome.tiff"),
@@ -471,6 +474,124 @@ class OutputQCArchiveTests(unittest.TestCase):
         self.assertEqual(level1.shape, (16, 16, 3))
         self.assertEqual(level1[0, 0, 0], 30)
 
+    def test_write_pyramid_ome_tiff_streaming_from_tile_sources_records_transaction_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            record = self.write_positioned_tile_record(
+                tile_root,
+                "level0_full.npy",
+                np.ones((16, 16, 3), dtype=np.uint8) * 10,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 16, 16],
+            )
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "expected_tile_count": 1,
+                        "levels": [
+                            {"level_index": 0, "shape": [16, 16, 3], "expected_tile_count": 1}
+                        ],
+                        "tiles": [
+                            {**record, "path": Path(record["path"]).relative_to(root).as_posix()}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_path = root / "generated.ome.tiff"
+
+            report = write_pyramid_ome_tiff_streaming_from_tile_sources(
+                manifest_path,
+                output_path,
+                chunk_shape=(16, 16),
+            )
+
+            transaction_path = Path(report["transaction_manifest_path"])
+            transaction = json.loads(transaction_path.read_text(encoding="utf-8"))
+            temporary_path_exists = Path(transaction["temporary_path"]).exists()
+
+        self.assertEqual(report["status"], "written")
+        self.assertTrue(report["atomic_publish"])
+        self.assertEqual(report["streaming_contract"]["transaction_manifest_path"], str(transaction_path))
+        self.assertTrue(report["streaming_contract"]["atomic_publish"])
+        self.assertFalse(report["streaming_contract"]["resume_capable"])
+        self.assertTrue(report["streaming_write_report"]["atomic_publish"])
+        self.assertEqual(transaction["schema_version"], PROJECT_VERSION)
+        self.assertEqual(transaction["manifest_type"], "ome_tiff_streaming_write_transaction")
+        self.assertEqual(transaction["writer_type"], "tile_iterator_streaming_write")
+        self.assertEqual(transaction["target_path"], str(output_path))
+        self.assertNotEqual(transaction["temporary_path"], str(output_path))
+        self.assertFalse(temporary_path_exists)
+        self.assertEqual(transaction["tile_source_manifest"]["manifest_path"], str(manifest_path))
+        self.assertEqual(transaction["status"], "completed")
+        self.assertIsNone(transaction["failure_reason"])
+        self.assertTrue(transaction["atomic_publish"])
+        self.assertFalse(transaction["resume_capable"])
+        self.assertIsInstance(transaction["started_at"], str)
+        self.assertIsInstance(transaction["ended_at"], str)
+
+    def test_write_pyramid_ome_tiff_streaming_from_tile_sources_failed_transaction_preserves_target(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            record = self.write_positioned_tile_record(
+                tile_root,
+                "level0_full.npy",
+                np.ones((16, 16, 3), dtype=np.uint8) * 10,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 16, 16],
+            )
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "expected_tile_count": 1,
+                        "levels": [
+                            {"level_index": 0, "shape": [16, 16, 3], "expected_tile_count": 1}
+                        ],
+                        "tiles": [
+                            {**record, "path": Path(record["path"]).relative_to(root).as_posix()}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_path = root / "existing.ome.tiff"
+            original_bytes = b"existing-target"
+            output_path.write_bytes(original_bytes)
+            transaction_path = output_path.with_name(f"{output_path.name}.transaction.json")
+
+            with mock.patch.object(
+                ome_tiff_module,
+                "_load_npy_tile",
+                side_effect=[
+                    np.ones((16, 16, 3), dtype=np.uint8) * 10,
+                    OutputWriteError("forced streaming failure"),
+                ],
+            ):
+                with self.assertRaisesRegex(OutputWriteError, "forced streaming failure"):
+                    write_pyramid_ome_tiff_streaming_from_tile_sources(
+                        manifest_path,
+                        output_path,
+                        chunk_shape=(16, 16),
+                    )
+
+            transaction = json.loads(transaction_path.read_text(encoding="utf-8"))
+            preserved_bytes = output_path.read_bytes()
+
+        self.assertEqual(preserved_bytes, original_bytes)
+        self.assertEqual(transaction["status"], "failed")
+        self.assertIn("forced streaming failure", transaction["failure_reason"])
+        self.assertEqual(transaction["target_path"], str(output_path))
+        self.assertTrue(transaction["atomic_publish"])
+        self.assertFalse(transaction["resume_capable"])
+
     def test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_low_to_high_level_order(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -518,6 +639,12 @@ class OutputQCArchiveTests(unittest.TestCase):
                     root / "low_to_high.ome.tiff",
                     chunk_shape=(16, 16),
                 )
+            transaction = json.loads(
+                (root / "low_to_high.ome.tiff.transaction.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(transaction["status"], "failed")
+        self.assertIn("pyramid level order", transaction["failure_reason"])
 
     def test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_missing_level_shape(self):
         with tempfile.TemporaryDirectory() as tmpdir:

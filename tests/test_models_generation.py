@@ -32,7 +32,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             path.write_text(json.dumps({"name": name}), encoding="utf-8")
             artifacts[name] = create_prior_artifact_entry(path, kind="json", metadata={})
         manifest = {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "prior_id": "prior-demo",
             "created_at": "2026-05-23T11:00:00Z",
             "random_seed": 11,
@@ -48,7 +48,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
 
     def training_config(self, prior_manifest_path: Path, output_dir: Path) -> dict:
         return {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "run_id": "train-demo",
             "random_seed": 11,
             "model_family": "latent_diffusion_unet",
@@ -64,7 +64,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
 
     def generation_config(self) -> dict:
         return {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -101,7 +101,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.4",
+                    "schema_version": "v0.72.5",
                     "model_family": "latent_diffusion_unet",
                     "status": status,
                     "usable_for_inference": True,
@@ -133,7 +133,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             run = create_training_run(self.training_config(prior_manifest_path, output_dir))
             checkpoint = load_checkpoint_manifest(run["checkpoint_manifest_path"])
 
-        self.assertEqual(run["schema_version"], "v0.72.4")
+        self.assertEqual(run["schema_version"], "v0.72.5")
         self.assertEqual(run["model_family"], "latent_diffusion_unet")
         self.assertEqual(run["stages"], ["prior_ready", "image_generator", "wsi_consistency"])
         self.assertEqual(checkpoint["status"], "not_trained")
@@ -167,7 +167,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             checkpoint_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.4",
+                        "schema_version": "v0.72.5",
                         "model_family": "latent_diffusion_unet",
                         "status": "trained",
                         "usable_for_inference": True,
@@ -276,7 +276,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
                 checkpoint_manifest_path=checkpoint_path,
             )
 
-        self.assertEqual(plan["schema_version"], "v0.72.4")
+        self.assertEqual(plan["schema_version"], "v0.72.5")
         self.assertEqual([stage["level"] for stage in plan["stages"]], ["1/32", "1/16", "1/4", "1/1"])
         self.assertEqual(plan["tile_traversal"], "row_major_with_resume_index")
         self.assertEqual(plan["tile_traversal_plan"]["tile_count"], 1)

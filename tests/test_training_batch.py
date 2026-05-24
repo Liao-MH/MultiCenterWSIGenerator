@@ -35,7 +35,7 @@ class TrainingBatchTests(unittest.TestCase):
     def manifest(self, root: Path, mask_path: Path, slide_path: Path | None = None) -> dict:
         wsi_path = slide_path if slide_path is not None else root / "slide-001.svs"
         return {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -71,7 +71,7 @@ class TrainingBatchTests(unittest.TestCase):
     def audit(self, root: Path, slide_path: Path | None = None) -> dict:
         wsi_path = slide_path if slide_path is not None else root / "slide-001.svs"
         return {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -97,7 +97,7 @@ class TrainingBatchTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.4",
+            "schema_version": "v0.72.5",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -151,7 +151,7 @@ class TrainingBatchTests(unittest.TestCase):
                 cascade_level="1/1",
             )
 
-        self.assertEqual(batch["schema_version"], "v0.72.4")
+        self.assertEqual(batch["schema_version"], "v0.72.5")
         self.assertEqual(batch["batch_size"], 2)
         self.assertEqual(batch["mask_batch_shape"], [2, 512, 512])
         self.assertEqual(batch["cascade_levels"], ["1/1"])
