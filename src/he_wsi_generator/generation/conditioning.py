@@ -27,6 +27,8 @@ def build_generation_condition_packet(
     cascade_level: str,
     tile_origin_40x: tuple[int, int] | list[int],
     sampled_layout_mask_path: str | Path | None = None,
+    sampled_style_policy_path: str | Path | None = None,
+    sampled_texture_policy_path: str | Path | None = None,
 ) -> dict[str, Any]:
     try:
         config = validate_generation_config(generation_config)
@@ -53,6 +55,22 @@ def build_generation_condition_packet(
         if sampled_layout_mask_path is not None
         else None
     )
+    sampled_style_policy = (
+        _load_sampled_style_policy(
+            sampled_style_policy_path,
+            expected_style_prior_path=prior["artifacts"]["style_prior"]["path"],
+        )
+        if sampled_style_policy_path is not None
+        else None
+    )
+    sampled_texture_policy = (
+        _load_sampled_texture_policy(
+            sampled_texture_policy_path,
+            expected_texture_prior_path=prior["artifacts"]["texture_prior"]["path"],
+        )
+        if sampled_texture_policy_path is not None
+        else None
+    )
     packet = {
         "schema_version": PROJECT_VERSION,
         "condition_packet_type": "generation_condition_packet",
@@ -72,15 +90,23 @@ def build_generation_condition_packet(
         "artifact_inputs": {
             **_artifact_inputs(prior),
             **_sampled_layout_mask_input(sampled_layout_mask),
+            **_sampled_style_policy_input(sampled_style_policy),
+            **_sampled_texture_policy_input(sampled_texture_policy),
         },
         "conditions": {
             "layout": layout,
             "mask": _mask_condition(layout, sampled_layout_mask),
-            "style_seed": _style_seed_condition(config, prior, artifacts["style_prior"]),
+            "style_seed": _style_seed_condition(
+                config,
+                prior,
+                artifacts["style_prior"],
+                sampled_style_policy,
+            ),
             "texture_token": _texture_token_condition(
                 config,
                 prior,
                 artifacts["texture_prior"],
+                sampled_texture_policy,
             ),
             "coord": coord,
             "source_condition": _source_condition(config),
@@ -284,6 +310,132 @@ def _load_sampled_layout_mask(path: str | Path) -> dict[str, Any]:
     }
 
 
+def _load_sampled_style_policy(path: str | Path, expected_style_prior_path: str) -> dict[str, Any]:
+    policy_path = Path(path)
+    policy = _load_json_file(policy_path, "sampled_style_policy")
+    if policy.get("schema_version") != PROJECT_VERSION:
+        raise GenerationConditionError(f"sampled_style_policy.schema_version must be {PROJECT_VERSION}")
+    if policy.get("artifact_type") != "sampled_style_policy":
+        raise GenerationConditionError(
+            "sampled_style_policy.artifact_type must be sampled_style_policy"
+        )
+    selected_style = _require_dict(policy, "selected_style", "sampled_style_policy.selected_style")
+    source = _require_dict(policy, "source", "sampled_style_policy.source")
+    style_prior_path = _require_non_empty_str(
+        source,
+        "style_prior_path",
+        "sampled_style_policy.source.style_prior_path",
+    )
+    if style_prior_path != expected_style_prior_path:
+        raise GenerationConditionError(
+            "sampled_style_policy.source.style_prior_path must match prior manifest style_prior path"
+        )
+    selected_style_summary = {
+        "tile_index": _require_int(
+            selected_style,
+            "tile_index",
+            "sampled_style_policy.selected_style.tile_index",
+        ),
+        "sample_id": selected_style.get("sample_id"),
+        "wsi_id": selected_style.get("wsi_id"),
+        "tile": deepcopy(selected_style.get("tile")),
+        "mean_rgb": _require_rgb_triplet(
+            selected_style,
+            "mean_rgb",
+            "sampled_style_policy.selected_style.mean_rgb",
+        ),
+    }
+    return {
+        "artifact_path": str(policy_path),
+        "sample_id": _require_non_empty_str(policy, "sample_id", "sampled_style_policy.sample_id"),
+        "random_seed": _require_int(policy, "random_seed", "sampled_style_policy.random_seed"),
+        "selection_policy": _require_non_empty_str(
+            policy,
+            "selection_policy",
+            "sampled_style_policy.selection_policy",
+        ),
+        "style_prior_path": style_prior_path,
+        "selected_style": selected_style_summary,
+        "rgb_statistics_reference": deepcopy(policy.get("rgb_statistics_reference", {})),
+        "limitations": deepcopy(policy.get("limitations", [])),
+    }
+
+
+def _load_sampled_texture_policy(path: str | Path, expected_texture_prior_path: str) -> dict[str, Any]:
+    policy_path = Path(path)
+    policy = _load_json_file(policy_path, "sampled_texture_policy")
+    if policy.get("schema_version") != PROJECT_VERSION:
+        raise GenerationConditionError(f"sampled_texture_policy.schema_version must be {PROJECT_VERSION}")
+    if policy.get("artifact_type") != "sampled_texture_policy":
+        raise GenerationConditionError(
+            "sampled_texture_policy.artifact_type must be sampled_texture_policy"
+        )
+    token = _require_dict(
+        policy,
+        "selected_texture_token",
+        "sampled_texture_policy.selected_texture_token",
+    )
+    source = _require_dict(policy, "source", "sampled_texture_policy.source")
+    texture_prior_path = _require_non_empty_str(
+        source,
+        "texture_prior_path",
+        "sampled_texture_policy.source.texture_prior_path",
+    )
+    if texture_prior_path != expected_texture_prior_path:
+        raise GenerationConditionError(
+            "sampled_texture_policy.source.texture_prior_path must match prior manifest texture_prior path"
+        )
+    token_summary = {
+        "prototype_index": _require_int(
+            token,
+            "prototype_index",
+            "sampled_texture_policy.selected_texture_token.prototype_index",
+        ),
+        "cluster_id": _require_int(
+            token,
+            "cluster_id",
+            "sampled_texture_policy.selected_texture_token.cluster_id",
+        ),
+        "representative_embedding_index": _require_int(
+            token,
+            "representative_embedding_index",
+            "sampled_texture_policy.selected_texture_token.representative_embedding_index",
+        ),
+        "sample_count": token.get("sample_count"),
+        "fraction": token.get("fraction"),
+        "mean_embedding": deepcopy(token.get("mean_embedding", [])),
+        "std_embedding": deepcopy(token.get("std_embedding", [])),
+    }
+    return {
+        "artifact_path": str(policy_path),
+        "sample_id": _require_non_empty_str(policy, "sample_id", "sampled_texture_policy.sample_id"),
+        "random_seed": _require_int(policy, "random_seed", "sampled_texture_policy.random_seed"),
+        "selection_policy": _require_non_empty_str(
+            policy,
+            "selection_policy",
+            "sampled_texture_policy.selection_policy",
+        ),
+        "texture_prior_path": texture_prior_path,
+        "cluster_count": policy.get("cluster_count"),
+        "selected_texture_token": token_summary,
+        "limitations": deepcopy(policy.get("limitations", [])),
+    }
+
+
+def _load_json_file(path: Path, artifact_label: str) -> dict[str, Any]:
+    if not path.exists():
+        raise GenerationConditionError(f"{artifact_label} file does not exist: {path}")
+    if not path.is_file():
+        raise GenerationConditionError(f"{artifact_label} path is not a file: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise GenerationConditionError(f"{artifact_label} is not valid JSON: {exc.msg}") from exc
+    if not isinstance(data, dict):
+        raise GenerationConditionError(f"{artifact_label} must be a JSON object")
+    return data
+
+
 def _mask_condition(
     layout: dict[str, Any],
     sampled_layout_mask: dict[str, Any] | None = None,
@@ -314,7 +466,20 @@ def _style_seed_condition(
     config: dict[str, Any],
     prior: dict[str, Any],
     style_prior: dict[str, Any],
+    sampled_style_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if sampled_style_policy is not None:
+        return {
+            "source": "sampled_style_policy",
+            "value": sampled_style_policy["random_seed"],
+            "artifact_path": sampled_style_policy["artifact_path"],
+            "sample_id": sampled_style_policy["sample_id"],
+            "random_seed": sampled_style_policy["random_seed"],
+            "selection_policy": sampled_style_policy["selection_policy"],
+            "selected_style": deepcopy(sampled_style_policy["selected_style"]),
+            "rgb_statistics_reference": deepcopy(sampled_style_policy["rgb_statistics_reference"]),
+            "limitations": deepcopy(sampled_style_policy["limitations"]),
+        }
     style_seed = config["style_seed"]
     if style_seed == "auto":
         value = config["random_seed"]
@@ -336,7 +501,26 @@ def _texture_token_condition(
     config: dict[str, Any],
     prior: dict[str, Any],
     texture_prior: dict[str, Any],
+    sampled_texture_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if sampled_texture_policy is not None:
+        token = sampled_texture_policy["selected_texture_token"]
+        return {
+            "source": "sampled_texture_policy",
+            "artifact_path": sampled_texture_policy["artifact_path"],
+            "sample_id": sampled_texture_policy["sample_id"],
+            "random_seed": sampled_texture_policy["random_seed"],
+            "selection_policy": sampled_texture_policy["selection_policy"],
+            "cluster_count": sampled_texture_policy["cluster_count"],
+            "cluster_id": token["cluster_id"],
+            "representative_embedding_index": token["representative_embedding_index"],
+            "prototype_index": token["prototype_index"],
+            "sample_count": token.get("sample_count"),
+            "fraction": token.get("fraction"),
+            "mean_embedding": deepcopy(token.get("mean_embedding", [])),
+            "std_embedding": deepcopy(token.get("std_embedding", [])),
+            "limitations": deepcopy(sampled_texture_policy["limitations"]),
+        }
     prototypes = texture_prior.get("texture_prototypes")
     if not isinstance(prototypes, list) or not prototypes:
         raise GenerationConditionError("texture_prior.texture_prototypes must be a non-empty list")
@@ -451,6 +635,40 @@ def _sampled_layout_mask_input(sampled_layout_mask: dict[str, Any] | None) -> di
     }
 
 
+def _sampled_style_policy_input(sampled_style_policy: dict[str, Any] | None) -> dict[str, Any]:
+    if sampled_style_policy is None:
+        return {}
+    return {
+        "sampled_style_policy": {
+            "path": sampled_style_policy["artifact_path"],
+            "kind": "json",
+            "metadata": {
+                "artifact_type": "sampled_style_policy",
+                "sample_id": sampled_style_policy["sample_id"],
+                "random_seed": sampled_style_policy["random_seed"],
+                "selection_policy": sampled_style_policy["selection_policy"],
+            },
+        }
+    }
+
+
+def _sampled_texture_policy_input(sampled_texture_policy: dict[str, Any] | None) -> dict[str, Any]:
+    if sampled_texture_policy is None:
+        return {}
+    return {
+        "sampled_texture_policy": {
+            "path": sampled_texture_policy["artifact_path"],
+            "kind": "json",
+            "metadata": {
+                "artifact_type": "sampled_texture_policy",
+                "sample_id": sampled_texture_policy["sample_id"],
+                "random_seed": sampled_texture_policy["random_seed"],
+                "selection_policy": sampled_texture_policy["selection_policy"],
+            },
+        }
+    }
+
+
 def _require_non_empty_str(data: dict[str, Any], key: str, path: str) -> str:
     value = data.get(key)
     if not isinstance(value, str) or value == "":
@@ -490,6 +708,17 @@ def _require_number(data: dict[str, Any], key: str, path: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise GenerationConditionError(f"{path} must be a number")
     return float(value)
+
+
+def _require_rgb_triplet(data: dict[str, Any], key: str, path: str) -> list[float]:
+    value = data.get(key)
+    if (
+        not isinstance(value, list)
+        or len(value) != 3
+        or not all(isinstance(channel, (int, float)) and not isinstance(channel, bool) for channel in value)
+    ):
+        raise GenerationConditionError(f"{path} must contain three numeric RGB values")
+    return [float(channel) for channel in value]
 
 
 def _now_iso() -> str:

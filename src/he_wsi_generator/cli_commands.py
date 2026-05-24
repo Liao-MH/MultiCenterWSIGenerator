@@ -405,6 +405,8 @@ def run_command(args: argparse.Namespace) -> int:
                 cascade_level=args.cascade_level,
                 tile_origin_40x=(args.tile_origin_x, args.tile_origin_y),
                 sampled_layout_mask_path=args.sampled_layout_mask,
+                sampled_style_policy_path=args.sampled_style_policy,
+                sampled_texture_policy_path=args.sampled_texture_policy,
             )
         except (ValidationError, GenerationConditionError) as exc:
             print(str(exc), file=sys.stderr)
