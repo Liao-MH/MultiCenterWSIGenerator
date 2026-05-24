@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 .worktrees/
 .agent/logs/
+.agent/reports/*.last-message.txt
 build/
 dist/
 *.egg-info/

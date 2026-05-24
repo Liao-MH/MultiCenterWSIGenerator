@@ -79,6 +79,34 @@ class GenerationTilingTests(unittest.TestCase):
         self.assertEqual(canvas.shape, (2, 4, 3))
         self.assertEqual(canvas[0, :, 0].tolist(), [0, 0, 50, 100])
 
+    def test_blend_rgb_tiles_avoids_whole_rgb_float64_tile_cast(self):
+        cast_events: list[tuple[tuple[int, ...], np.dtype]] = []
+
+        class TrackingTile(np.ndarray):
+            def __new__(cls, values, events):
+                instance = np.asarray(values).view(cls)
+                instance._cast_events = events
+                return instance
+
+            def __array_finalize__(self, source):
+                self._cast_events = getattr(source, "_cast_events", None)
+
+            def astype(self, dtype, *args, **kwargs):
+                if self._cast_events is not None:
+                    self._cast_events.append((tuple(self.shape), np.dtype(dtype)))
+                return super().astype(dtype, *args, **kwargs)
+
+        tile = TrackingTile(np.full((4, 4, 3), 37, dtype=np.uint8), cast_events)
+
+        canvas = blend_rgb_tiles(
+            [{"tile_origin_40x": [0, 0], "image": tile}],
+            canvas_size_40x=[4, 4],
+            overlap_px_40x=1,
+        )
+
+        self.assertTrue(np.array_equal(canvas, np.full((4, 4, 3), 37, dtype=np.uint8)))
+        self.assertNotIn(((4, 4, 3), np.dtype(np.float64)), cast_events)
+
     def test_blend_rgb_tiles_rejects_uncovered_canvas(self):
         tile = np.zeros((2, 2, 3), dtype=np.uint8)
 

@@ -107,21 +107,36 @@ def blend_rgb_tiles(
         if crop_width <= 0 or crop_height <= 0:
             raise GenerationTilingError(f"tile_records[{index}].image has no writable region")
 
-        # Each tile carries a soft edge ramp. Single-tile regions divide by their
-        # own positive weight, while overlaps become weighted averages.
+        # Each tile carries a soft edge ramp. Keep the weight contract unchanged,
+        # but accumulate channel-by-channel so edge tiles do not materialize a
+        # float64 RGB crop plus weighted RGB temporary for every input tile.
         weight = _tile_weight_mask(numpy, image.shape[0], image.shape[1], overlap_px_40x)
-        image_crop = image[:crop_height, :crop_width].astype(numpy.float64)
+        image_crop = image[:crop_height, :crop_width]
         weight_crop = weight[:crop_height, :crop_width]
         y_slice = slice(y_origin, y_origin + crop_height)
         x_slice = slice(x_origin, x_origin + crop_width)
-        accum[y_slice, x_slice] += image_crop * weight_crop[..., None]
+        weighted_channel = numpy.empty((crop_height, crop_width), dtype=numpy.float64)
+        for channel_index in range(3):
+            numpy.multiply(
+                image_crop[:, :, channel_index],
+                weight_crop,
+                out=weighted_channel,
+                casting="unsafe",
+            )
+            accum[y_slice, x_slice, channel_index] += weighted_channel
         weight_sum[y_slice, x_slice] += weight_crop
 
     if numpy.any(weight_sum <= 0):
         raise GenerationTilingError("tile inputs must cover canvas")
 
-    blended = accum / weight_sum[..., None]
-    return numpy.clip(numpy.rint(blended), 0, 255).astype(numpy.uint8)
+    output = numpy.empty((canvas_height, canvas_width, 3), dtype=numpy.uint8)
+    for channel_index in range(3):
+        channel = accum[:, :, channel_index]
+        numpy.divide(channel, weight_sum, out=channel)
+        numpy.rint(channel, out=channel)
+        numpy.clip(channel, 0, 255, out=channel)
+        numpy.copyto(output[:, :, channel_index], channel, casting="unsafe")
+    return output
 
 
 def complete_tile_traversal_plan(

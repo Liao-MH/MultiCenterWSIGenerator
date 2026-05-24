@@ -1,5 +1,55 @@
 # CHANGELOG
 
+## v0.72.3 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-DEV-04` / P4 的保守增量：在不改变 `blend_rgb_tiles()` 输出语义、tile traversal contract、smoke generation / resumable manifest 行为的前提下，降低 `src/he_wsi_generator/generation/tiling.py` 中 tile blending 的中间内存占用。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.3`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 更新 `docs/DEMANDS.MD` 顶部，新增 v0.72.3 P4 tile blending 内存收敛需求。
+- `src/he_wsi_generator/generation/tiling.py` 的 `blend_rgb_tiles()` 改为按 channel-by-channel 累积中间结果，减少 RGB tile blending 的 float64 临时数组峰值，保持 blending 语义不变。
+- `tests/test_generation_tiling.py` 新增回归测试，验证 `blend_rgb_tiles()` 不再对整块 RGB tile 先做 float64 cast。
+- `tests/test_generation_runner.py` 的既有 tile-streaming 顺序物化回归测试继续通过，确认本轮内存优化未改变 smoke tile-streaming 路径。
+- 更新 README 与 `docs/audit/`，将当前状态继续维持为 smoke/proxy 和 P4 contract 边界，不把该优化描述成 production writer。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/tiling.py`
+- `tests/test_generation_tiling.py`
+- `tests/test_generation_runner.py`
+- `tests/test_version.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_tiling -v`
+  - 结果：通过，`Ran 12 tests in 0.001s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_streaming_materializes_pyramid_levels_sequentially -v`
+  - 结果：通过，`Ran 1 test in 0.063s OK`
+- `git diff --check`
+  - 结果：通过，无 whitespace error
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.3`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.3`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 251 tests in 17.664s OK`
+
 ## v0.72.2 - 2026-05-24
 
 ### 用户需求
@@ -37,8 +87,6 @@
   - 结果：通过，`Ran 24 tests in ... OK`
 - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
   - 结果：通过，后续将再次复跑以覆盖本轮全部文档同步后的最终状态
-- `git diff --check`
-  - 结果：待本轮最终统一验证
 
 ## v0.72.1 - 2026-05-24
 

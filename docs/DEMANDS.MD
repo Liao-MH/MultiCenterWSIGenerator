@@ -1,5 +1,36 @@
 # DEMANDS
 
+## v0.72.3 - 2026-05-25 P4 tile blending 内存收敛需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-DEV-04` / P4 的保守增量：在不改变 `blend_rgb_tiles()` 输出语义、tile traversal contract、smoke generation / resumable manifest 行为的前提下，降低 `src/he_wsi_generator/generation/tiling.py` 中 tile blending 的中间内存占用。
+
+### 结构化需求
+
+- 使用单 worker 隔离开发：
+  - `p4-tile-blend-memory-reduction-20260524` 负责重构 `src/he_wsi_generator/generation/tiling.py` 的 `blend_rgb_tiles()`，让 RGB tile blending 改为按 channel-wise 累积中间结果，避免整块 RGB tile 先 materialize 为 float64 临时数组。
+- 新增或调整最小实现能力：
+  - `blend_rgb_tiles()` 的加权平均、边缘 crop 和覆盖校验语义保持不变；
+  - 回归测试继续验证 overlap blending 和 uncover canvas 的失败行为；
+  - 不增加新的 CLI 参数，不改变默认生成行为，不改 smoke / resumable manifest contract。
+- 验证要求：
+  - `tests.test_generation_tiling` 继续通过；
+  - `tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_streaming_materializes_pyramid_levels_sequentially` 继续通过；
+  - `git diff --check` 继续通过。
+- 版本号规划升级到 `v0.72.3`，属于向后兼容的 P4 审计/实现补丁。
+
+### 边界说明
+
+- 本批次不实现 production backend 磁盘级逐 tile 生成，不实现可恢复 OME-TIFF 逐 tile 写入。
+- 本批次不实现 production latent diffusion / ControlNet / DiT，不实现 production trainable style/texture prior。
+- 本批次不打 tag、不生成发布包、不清理 worker worktree。
+
+### 预期落地
+
+- tile blending 的峰值内存进一步收敛，但输出语义、测试边界和 smoke 行为保持不变。
+
 ## v0.72.2 - 2026-05-24 P4 smoke tile-streaming 顺序物化需求
 
 ### 用户需求
