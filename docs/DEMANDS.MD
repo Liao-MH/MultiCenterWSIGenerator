@@ -1,5 +1,44 @@
 # DEMANDS
 
+## v0.72.1 - 2026-05-24 真实 SVS 当前环境复跑验证需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-VER-03`：在当前 `MultiCenterWSIGenerator` conda 环境和当前代码基线上，使用真实 SVS `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新执行 smoke/proxy 全链路验证，避免只引用历史 `build/validation/v0.62.0-291288/` 工件。
+
+### 结构化需求
+
+- 本批次为串行验证链路，不拆分并行 worker：
+  - 复跑步骤之间存在输入输出依赖，且主要写入同一个 ignored 验证目录 `build/validation/v0.72.1-291288/`；
+  - 保留历史 `.worktrees/` 和 `build/validation/` 工件作为审计证据，不清理、不覆盖历史目录。
+- 使用当前 CLI 与当前 schema 重建或校验以下工件：
+  - `input_manifest.json`、`wsi_tissue_overview.json`、`qc_reference_distribution.json`、`prior/prior_manifest.json`；
+  - `sampled-layout/sampled_layout_mask.json` 与 `.npy`；
+  - `condition_packet.json`；
+  - smoke generation 输出目录内的 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`qc_review.json`、`generation_run.json` 和 `batch.jsonl`。
+- 验证要求：
+  - `he-wsi-gen --version` 返回 `v0.72.1`，包元数据与常量同步；
+  - 默认 generation config 校验通过；
+  - 真实 SVS 链路输出的 metadata、QC、QC review、prior manifest 和 output summary 均通过当前 CLI 校验；
+  - `generated.ome.tiff` 可由 `tifffile` 读取，且仍为四层 pyramid；
+  - `generated_mask/mask.npy` 可读取并覆盖预期 6 类 mask id。
+- 版本号规划升级到 `v0.72.1`，属于验证和审计文档补丁，不新增 production 模型、production prior 或 production writer。
+
+### 边界说明
+
+- 本批次不把 smoke/proxy 真实 SVS 复跑表述为完整 production 生成器验收。
+- 本批次不实现 latent diffusion / ControlNet / DiT production backend，不实现 production trainable style/texture prior，不实现可恢复 OME-TIFF 逐 tile 写入。
+- 本批次不打 tag、不生成发布包、不清理 worker worktree。
+
+### 已落地
+
+- 已在当前 `MultiCenterWSIGenerator` conda 环境中将 editable 安装切换到 `multi-center-wsi-generator 0.72.1`，`he-wsi-gen --version` 返回 `v0.72.1`，包元数据/常量返回 `0.72.1`、`v0.72.1`、`0.72.1`。
+- 已使用真实 SVS `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新生成 `build/validation/v0.72.1-291288/` 下的 ignored 验证工件，历史 `build/validation/v0.62.0-291288/` 未覆盖。
+- 当前真实 SVS smoke/proxy 链路输出 `metadata.json`、`qc.json`、`qc_review.json`、`generation_run.json`、`batch.jsonl`、`generated.ome.tiff` 和 `generated_mask/mask.npy`；output summary 为 `qc_status=pass`，QC review 为 `accepted`。
+- `generated.ome.tiff` 可由 `tifffile` 读取为 4 层 pyramid，首层 shape 为 `[512, 512, 3]`；`generated_mask/mask.npy` shape 为 `[512, 512]`，类别 id 覆盖 `[0, 1, 2, 3, 4, 5]`。
+- 当前落地范围仍是当前环境真实 SVS 的 smoke/proxy 验证复跑，不是 production latent diffusion、production prior 或 production OME-TIFF writer。
+
 ## v0.72.0 - 2026-05-24 P5 sampled policy 生成摘要贯通需求
 
 ### 用户需求

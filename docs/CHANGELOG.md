@@ -1,5 +1,100 @@
 # CHANGELOG
 
+## v0.72.1 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本轮选择 `AC-VER-03`：在当前 `MultiCenterWSIGenerator` conda 环境和当前代码基线上，使用真实 SVS `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 重新执行 smoke/proxy 全链路验证，避免只引用历史 `build/validation/v0.62.0-291288/` 工件。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.1`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 更新 `docs/DEMANDS.MD` 顶部，新增 v0.72.1 真实 SVS 当前环境复跑验证需求。
+- 在 `build/validation/v0.72.1-291288/` 下重新生成真实 SVS smoke/proxy 验证工件：
+  - `input_manifest.json`
+  - `wsi_tissue_overview.json`
+  - `qc_reference_distribution.json`
+  - `prior/prior_manifest.json`
+  - `sampled-layout/sampled_layout_mask.json`
+  - `sampled-policy/sampled_style_policy.json`
+  - `sampled-policy/sampled_texture_policy.json`
+  - `condition_packet.json`
+  - `generated/gen-291288-smoke-sampled-policy-v0721/metadata.json`
+  - `generated/gen-291288-smoke-sampled-policy-v0721/qc.json`
+  - `generated/gen-291288-smoke-sampled-policy-v0721/qc_review.json`
+  - `generated/gen-291288-smoke-sampled-policy-v0721/generation_run.json`
+  - `generated/gen-291288-smoke-sampled-policy-v0721/batch.jsonl`
+  - `generated/gen-291288-smoke-sampled-policy-v0721/generated.ome.tiff`
+  - `generated/gen-291288-smoke-sampled-policy-v0721/generated_mask/mask.npy`
+- 当前验证结果：
+  - `he-wsi-gen --version` 返回 `v0.72.1`
+  - 默认 generation config 校验通过
+  - `inspect-output-summary` 返回 `qc_status=pass`
+  - `qc_review.json` 为 `artifact_type=qc_review`、`review_required=false`、`decision=accepted`
+  - `generated.ome.tiff` 为 4 层 pyramid，`generated_mask/mask.npy` 覆盖 6 类 mask id
+- 当前不改变 production 模型、production prior、production writer 或默认生成行为。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `tests/test_version.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `build/validation/v0.72.1-291288/`（ignored 验证工件）
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.1`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.1`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+  - 结果：`generation-config valid: configs/generation.default.json`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate manifest build/validation/v0.72.1-291288/input_manifest.json`
+  - 结果：通过
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen build-wsi-tissue-overview ...`
+  - 结果：`WSI tissue overview written`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen build-qc-reference ...`
+  - 结果：`qc reference distribution written`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen build-prior-manifest ...`
+  - 结果：`prior manifest written`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen sample-layout-mask ...`
+  - 结果：`sampled layout mask written`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen sample-style-policy ...`
+  - 结果：`sampled style policy written`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen sample-texture-policy ...`
+  - 结果：`sampled texture policy written`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen build-condition-packet ...`
+  - 结果：`condition packet written`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen run-generation ... --backend smoke-cascade ...`
+  - 结果：`generation run completed`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate metadata ...`
+  - 结果：通过
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate qc ...`
+  - 结果：通过
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen create-qc-review ...`
+  - 结果：通过，0 review items
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen apply-qc-review-decision ...`
+  - 结果：`accepted`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate qc-review ...`
+  - 结果：通过
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen inspect-output-summary ...`
+  - 结果：`qc_status=pass`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version tests.test_generation_conditioning tests.test_generation_runner tests.test_style_prior tests.test_texture_prior tests.test_layout_mask_sampler tests.test_priors -v`
+  - 结果：通过，`Ran 60 tests in 1.999s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 249 tests in 13.496s OK`
+- `git diff --check`
+  - 结果：通过，无 whitespace error
+
 ## v0.72.0 - 2026-05-24
 
 ### 用户需求
