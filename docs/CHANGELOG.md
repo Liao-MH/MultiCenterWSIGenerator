@@ -1,5 +1,56 @@
 # CHANGELOG
 
+## Audit Snapshot - 2026-05-24（基于 v0.62.0）
+
+### 用户需求
+
+- 用户要求进入项目补救审计模式。
+- 本轮先输出偏差审计，再给出最小补救计划；在确认前不开始修代码。
+
+### 已做改动
+
+- 未修改 `src/`、`tests/`、`configs/` 中的实现代码。
+- 更新 `docs/DEMANDS.MD`，把本轮审计需求置顶记录。
+- 新增 `docs/ACCEPTANCE_CHECKLIST.md`，把当前基线拆成“已完成 / 缺失 / 偏离 / 未验证”的可验收项。
+- 新增 `docs/IMPLEMENTATION_PLAN.md`，整理补救任务包和优先级。
+- 新增 `docs/DECISIONS.md`，冻结当前审计基线、关键设计决策和禁止变更项。
+- 本轮审计额外确认：
+  - 当前仓库内不存在实体 `AGENTS.md` 文件。
+  - `qc_review` 具备内部校验函数，但尚未接入通用 `validate` CLI/schema kind。
+  - `collect_output_summary()` 当前只校验 QC/review，不校验 metadata schema。
+  - 当前环境缺少 `torch` 和 `PySide6`，所以 PyTorch 路径和真实 GUI 启动未在本轮复跑验证。
+
+### 影响文件
+
+- `docs/DEMANDS.MD`
+- `docs/ACCEPTANCE_CHECKLIST.md`
+- `docs/IMPLEMENTATION_PLAN.md`
+- `docs/DECISIONS.md`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_version -v`
+  - 结果：2 个测试通过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过。
+- `PYTHONPATH=src python -m unittest discover -s tests -v`
+  - 结果：187 个测试通过，21 个 PyTorch 相关测试因当前环境未安装 `torch` 被跳过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate metadata build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/metadata.json`
+  - 结果：通过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate qc build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc.json`
+  - 结果：通过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate-prior-manifest build/validation/v0.62.0-291288/prior/prior_manifest.json`
+  - 结果：通过。
+- `PYTHONPATH=src python -m he_wsi_generator.cli inspect-output-summary --metadata build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/metadata.json --qc build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc.json --qc-review build/validation/v0.62.0-291288/generated/gen-291288-smoke-sampled-mask-v062/qc_review.json`
+  - 结果：返回 `qc_status=pass`、三级状态全 `pass`、`review_required=false`、`decision=accepted`。
+- `python - <<'PY' import torch ...`
+  - 结果：`ModuleNotFoundError`。
+- `python - <<'PY' import PySide6 ...`
+  - 结果：`ModuleNotFoundError`。
+- `python - <<'PY' import openslide ...`
+  - 结果：可导入。
+
 ## v0.62.0 - 2026-05-23
 
 ### 用户需求

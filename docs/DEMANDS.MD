@@ -1,5 +1,29 @@
 # DEMANDS
 
+## 2026-05-24 审计需求（针对 v0.62.0）
+
+### 用户需求
+
+- 用户要求进入项目补救审计模式。
+- 本轮先做偏差审计，不开始修代码。
+
+### 结构化需求
+
+- 读取当前会话提供的 `AGENTS.md` 约束、现有设计说明、开发附录、`README.md`、`docs/` 目录和当前代码结构。
+- 先输出当前项目的偏差审计，并按“已完成 / 缺失 / 偏离 / 未验证”分类。
+- 生成或更新 `docs/DEMANDS.MD`、`docs/ACCEPTANCE_CHECKLIST.md`、`docs/IMPLEMENTATION_PLAN.md`、`docs/DECISIONS.md`、`docs/CHANGELOG.md`。
+- `docs/ACCEPTANCE_CHECKLIST.md` 需要把每项验收条件绑定到文件、测试或命令证据。
+- `docs/IMPLEMENTATION_PLAN.md` 需要拆成最小补救任务包，并按优先级排序。
+- `docs/DECISIONS.md` 需要记录关键设计决策和禁止变更项。
+- 在用户确认前，不开始实现层修复。
+
+### 边界说明
+
+- 本轮允许更新审计类文档，但不修改 `src/`、`tests/`、`configs/` 中的实现逻辑。
+- 本轮不做版本号升级，基线仍为 `v0.62.0`；避免在未修复实现前制造新的版本同步面。
+- 若仓库内不存在实体 `AGENTS.md` 文件，应显式记录该事实，而不是假设仓库自带该文件。
+- 历史 `build/validation/` 工件可作为存在性证据，但不等价于本轮重新执行真实 SVS 全链路生成。
+
 ## v0.62.0 - 2026-05-23
 
 ### 用户需求
