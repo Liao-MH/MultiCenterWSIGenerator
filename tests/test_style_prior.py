@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 from he_wsi_generator.models.training_index import build_training_index
+from he_wsi_generator.priors import style as style_module
 from he_wsi_generator.priors.style import (
     StylePriorBuildError,
     build_style_prior_from_training_index,
@@ -227,6 +228,93 @@ class StylePriorTests(unittest.TestCase):
         self.assertIn("style prior written", result.stdout)
         self.assertEqual(style_prior["prior_type"], "style_prior")
         self.assertEqual(style_prior["rgb_statistics"]["mean_rgb"], [130.0, 110.0, 100.0])
+
+    def test_sample_style_policy_from_prior_writes_selected_style_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            index_path = self.write_training_index(root)
+            prior_path = root / "style_prior.json"
+            output_path = root / "sampled_style_policy.json"
+            build_style_prior_from_training_index(
+                index_path,
+                output_path=prior_path,
+                batch_size=2,
+                split="train",
+                cascade_level="1/1",
+            )
+
+            policy = self.sample_style_policy(
+                style_prior_path=prior_path,
+                output_path=output_path,
+                sample_id="style-sample-001",
+                random_seed=3,
+            )
+            saved = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(policy, saved)
+        self.assertEqual(policy["schema_version"], "v0.69.0")
+        self.assertEqual(policy["artifact_type"], "sampled_style_policy")
+        self.assertEqual(policy["sample_id"], "style-sample-001")
+        self.assertEqual(policy["random_seed"], 3)
+        self.assertEqual(policy["selection_policy"], "deterministic_random_seed_mod_tile_count")
+        self.assertEqual(policy["selected_style"]["tile_index"], 1)
+        self.assertEqual(policy["selected_style"]["mean_rgb"], [40.0, 180.0, 120.0])
+        self.assertEqual(policy["rgb_statistics_reference"]["mean_rgb"], [130.0, 110.0, 100.0])
+        self.assertIn("not_a_trainable_style_encoder", policy["limitations"])
+
+    def test_sample_style_policy_from_prior_rejects_invalid_inputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_path = root / "style_prior.json"
+            prior = {
+                "schema_version": "v0.69.0",
+                "prior_type": "style_prior",
+                "rgb_statistics": {"mean_rgb": [1.0, 2.0, 3.0]},
+                "tile_style_records": [
+                    {
+                        "sample_id": "slide-001:0",
+                        "wsi_id": "slide-001",
+                        "tile": {"cascade_level": "1/1"},
+                        "mean_rgb": [1.0, 2.0, 3.0],
+                    }
+                ],
+            }
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
+
+            with self.assertRaisesRegex(StylePriorBuildError, "random_seed"):
+                self.sample_style_policy(
+                    style_prior_path=prior_path,
+                    output_path=root / "bad-seed.json",
+                    sample_id="style-sample-001",
+                    random_seed=True,
+                )
+
+            prior["tile_style_records"] = []
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
+            with self.assertRaisesRegex(StylePriorBuildError, "tile_style_records"):
+                self.sample_style_policy(
+                    style_prior_path=prior_path,
+                    output_path=root / "empty.json",
+                    sample_id="style-sample-001",
+                    random_seed=1,
+                )
+
+            prior["tile_style_records"] = [{"sample_id": "slide-001:0"}]
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
+            with self.assertRaisesRegex(StylePriorBuildError, "mean_rgb"):
+                self.sample_style_policy(
+                    style_prior_path=prior_path,
+                    output_path=root / "missing-mean.json",
+                    sample_id="style-sample-001",
+                    random_seed=1,
+                )
+
+    def sample_style_policy(self, **kwargs):
+        self.assertTrue(
+            hasattr(style_module, "sample_style_policy_from_prior"),
+            "sample_style_policy_from_prior helper is missing",
+        )
+        return style_module.sample_style_policy_from_prior(**kwargs)
 
 
 if __name__ == "__main__":
