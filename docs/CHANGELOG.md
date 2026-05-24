@@ -1,5 +1,77 @@
 # CHANGELOG
 
+## v0.66.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 P4 输出可靠性，推进 `AC-MISS-06` 中的可恢复 tile 状态、磁盘 tile source 校验和不完整输出显式失败能力。
+
+### 已做改动
+
+- 版本号升级到 `v0.66.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建两个 P4 worker 任务：
+  - `.agent/tasks/p4-resumable-tile-manifest-20260524.md`
+  - `.agent/tasks/p4-ome-tiff-streaming-contract-20260524.md`
+- 回收两个 worker 报告：
+  - `.agent/reports/p4-resumable-tile-manifest-20260524.md`
+  - `.agent/reports/p4-ome-tiff-streaming-contract-20260524.md`
+- `src/he_wsi_generator/generation/tiling.py` 新增可恢复 tile manifest contract helper：
+  - `build_resumable_tile_manifest()`
+  - `update_resumable_tile_manifest()`
+  - `validate_resumable_tile_manifest()`
+  - `require_complete_tile_manifest()`
+- `src/he_wsi_generator/outputs/ome_tiff.py` 新增磁盘 `.npy` tile source contract 校验，可在写出前拒绝 pending/failed/missing/duplicate tile、缺文件和 shape/dtype 不一致。
+- OME-TIFF 返回报告新增 `production_streaming=false` 与 `streaming_contract.partial_contract_only=true`，明确当前仍是 in-memory writer + contract gate，不是 production 逐 tile streaming writer。
+- 新增/更新测试，覆盖 resumable tile manifest 状态更新、非连续 row-major 完成、失败/待执行完成门控，以及磁盘 tile source contract 的正向与负向路径。
+- 更新 README 与 `docs/audit/`，将 `AC-MISS-06` 从“缺失”调整为“部分完成 / 仍缺失 production writer”，并保留 production streaming 未完成边界。
+
+### 影响文件
+
+- `.agent/tasks/p4-resumable-tile-manifest-20260524.md`
+- `.agent/tasks/p4-ome-tiff-streaming-contract-20260524.md`
+- `.agent/reports/p4-resumable-tile-manifest-20260524.md`
+- `.agent/reports/p4-ome-tiff-streaming-contract-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/tiling.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `tests/test_generation_tiling.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.66.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker / orchestrator 定向验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_tiling -v`
+    - 结果：通过，`Ran 11 tests in 0.001s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive -v`
+    - 结果：通过，`Ran 23 tests in 0.081s OK`
+- Orchestrator 合并后复核：
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.66.0`
+  - `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+    - 结果：通过，editable package 从 `0.64.0` 刷新安装为 `0.66.0`
+  - `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... importlib.metadata.version ... PY`
+    - 结果：package metadata `0.66.0`，`PROJECT_VERSION` 为 `v0.66.0`，`PACKAGE_VERSION` 为 `0.66.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_tiling tests.test_generation_runner -v`
+    - 结果：通过，`Ran 47 tests in 0.794s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 223 tests in 13.671s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+
 ## v0.65.1 - 2026-05-24
 
 ### 用户需求
