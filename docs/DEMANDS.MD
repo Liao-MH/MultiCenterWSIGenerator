@@ -1,5 +1,32 @@
 # DEMANDS
 
+## v0.68.0 - 2026-05-24 P4 tile iterator streaming 写出需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-06` / P4，在 v0.67.0 磁盘 tile source contract 与内存组装写出基础上，推进“不先组装整幅 level array 的 OME-TIFF tiled iterator 写出”和 smoke-cascade 显式接入。
+
+### 结构化需求
+
+- 使用 worker 隔离开发：
+  - `p4-tile-iterator-writer-20260524` 负责在 OME-TIFF 输出层新增受限的磁盘 `.npy` tile source tiled iterator writer：先复用现有 tile source contract，再按 TIFF tile 顺序从磁盘加载 tile，不分配整层 canvas；必须校验 level shape、tile origin、write region、coverage、dtype、tile grid 对齐、缺口、overlap 和越界。
+  - `p4-smoke-streaming-writer-integration-20260524` 负责让 `run-generation --backend smoke-cascade` 通过显式参数选择 tile source streaming writer；默认仍保留现有内存数组写出路径，避免破坏已有 CLI 行为。
+- Orchestrator 在 worker 回收后统一处理共享文档、版本号、README、`docs/audit/`、`docs/CHANGELOG.md` 和全局版本断言。
+- 版本号规划升级到 `v0.68.0`，属于向后兼容的 P4 功能增量。
+- 增加定向单元测试覆盖：
+  - tile iterator writer 写出多层 OME-TIFF，并能用 `tifffile` 读回每层像素；
+  - writer 报告明确 `write_mode=tile_iterator_streaming_write`、`production_streaming=true`、`resume_capable=false`，并记录仍不支持中断后续写 OME-TIFF resume；
+  - 非 TIFF tile grid 对齐、缺口、overlap、越界、shape/dtype/status 不一致显式失败；
+  - smoke-cascade 通过显式 CLI 参数使用 tile source streaming writer，generation run summary 和 metadata 记录对应 write mode。
+
+### 边界说明
+
+- 本批次仍不实现 production latent diffusion / ControlNet / DiT。
+- 本批次仍不实现生产级 layout/style/texture prior 和 style sampling policy。
+- 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
+- 本批次的 streaming writer 目标是不分配完整 level array、按磁盘 tile iterator 写出 OME-TIFF；它仍不实现中断后继续写同一个 OME-TIFF 文件，因此必须在报告中保留 `resume_capable=false` 与相关限制。
+
 ## v0.67.0 - 2026-05-24 P4 恢复执行与磁盘 tile 组装写出需求
 
 ### 用户需求
