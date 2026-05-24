@@ -1,8 +1,8 @@
-# v0.70.0 审计补救实施计划
+# v0.71.0 审计补救实施计划
 
 ## 当前定位
 
-当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路、可交互 PySide6 配置页、GUI 内同步 queued job 执行/状态刷新/输出摘要查看、可恢复 tile manifest contract、smoke tile resume execution、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、受限 tiled iterator streaming writer、streaming writer pyramid level contract、smoke 四层 tile source streaming 写出，以及 deterministic sampled style/texture policy artifact。后续补救顺序应进入 production 模型、生产级 prior/WSI 输出能力，或继续把 P4 streaming 扩展到 production backend 和可恢复 OME-TIFF 写入。
+当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路、可交互 PySide6 配置页、GUI 内同步 queued job 执行/状态刷新/输出摘要查看、可恢复 tile manifest contract、smoke tile resume execution、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、受限 tiled iterator streaming writer、streaming writer pyramid level contract、smoke 四层 tile source streaming 写出、deterministic sampled style/texture policy artifact，以及 condition packet 对 sampled style/texture policy 的可审计消费。后续补救顺序应进入 production 模型、生产级 prior/WSI 输出能力，或继续把 P4 streaming 扩展到 production backend 和可恢复 OME-TIFF 写入。
 
 ## P0. 审计材料归位与证据闭环
 
@@ -36,7 +36,7 @@
 ## P2. 可交互 PySide6 自定义配置页与本地 GUI flow
 
 - 目标：实现设计文档要求的本地单页控制台，让用户不手工编辑中间 JSON 也能完成配置。
-- 当前状态：v0.70.0 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看、首轮 CLI/torch smoke helper 维护性收敛，以及 P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source contract/assembly、受限 tile iterator streaming、streaming writer pyramid contract 与 smoke 四层 tile source streaming 接入，以及 P5 deterministic sampled style/texture policy artifact 与 CLI。
+- 当前状态：v0.71.0 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看、首轮 CLI/torch smoke helper 维护性收敛，以及 P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source contract/assembly、受限 tile iterator streaming、streaming writer pyramid contract 与 smoke 四层 tile source streaming 接入，以及 P5 deterministic sampled style/texture policy artifact、CLI 和 condition packet 审计消费。
 - 建议任务包：
   - 已完成：建立独立 conda UI 环境并验证 PySide6 offscreen。
   - 已完成：把 `pyside_app.py` 从只读字段展示升级为真实表单：路径选择、anchor preset、seed、sample steps、prior/checkpoint、输出目录、QC 设置。
@@ -63,7 +63,7 @@
 ## P4. 生产级 WSI 输出、恢复和 QC 验证
 
 - 目标：补齐 gigapixel 级交付可靠性。
-- 当前状态：v0.70.0 已完成四批 contract/执行级补救：`build_resumable_tile_manifest()` / `update_resumable_tile_manifest()` / `validate_resumable_tile_manifest()` / `require_complete_tile_manifest()` 可记录和校验 tile 执行状态；`run-generation --backend smoke-cascade --resume-tile-manifest` 可从 partial manifest 继续 pending tile并拒绝 failed/gapped/missing completed tile；`write_pyramid_ome_tiff(..., tile_source_manifest=...)` 可在写出前校验磁盘 `.npy` tile source manifest；`write_pyramid_ome_tiff_from_tile_sources()` 可从磁盘 tile source manifest 内存组装 pyramid 并写出；`write_pyramid_ome_tiff_streaming_from_tile_sources()` 可按 TIFF tile grid 从磁盘逐 tile iterator 写出且不组装完整 level array；streaming writer 现在校验 pyramid level order；`run-generation --backend smoke-cascade --wsi-writer tile-streaming` 会物化四层 smoke tile source manifest 并写出四层 OME-TIFF。该状态仍不是 production backend 级可恢复 OME-TIFF writer。
+- 当前状态：v0.71.0 继承四批 contract/执行级补救：`build_resumable_tile_manifest()` / `update_resumable_tile_manifest()` / `validate_resumable_tile_manifest()` / `require_complete_tile_manifest()` 可记录和校验 tile 执行状态；`run-generation --backend smoke-cascade --resume-tile-manifest` 可从 partial manifest 继续 pending tile并拒绝 failed/gapped/missing completed tile；`write_pyramid_ome_tiff(..., tile_source_manifest=...)` 可在写出前校验磁盘 `.npy` tile source manifest；`write_pyramid_ome_tiff_from_tile_sources()` 可从磁盘 tile source manifest 内存组装 pyramid 并写出；`write_pyramid_ome_tiff_streaming_from_tile_sources()` 可按 TIFF tile grid 从磁盘逐 tile iterator 写出且不组装完整 level array；streaming writer 现在校验 pyramid level order；`run-generation --backend smoke-cascade --wsi-writer tile-streaming` 会物化四层 smoke tile source manifest 并写出四层 OME-TIFF。该状态仍不是 production backend 级可恢复 OME-TIFF writer。
 - 建议任务包：
   - 已完成：实现可恢复 tile manifest/state contract。
   - 已完成：实现磁盘 `.npy` tile source contract gate 和 streaming limitation report。
@@ -79,10 +79,11 @@
 ## P4.5. 生产级 prior 与采样策略
 
 - 目标：补齐 production 级 layout/style/texture prior 与采样策略。
-- 当前状态：v0.70.0 已新增 deterministic sampled style/texture policy artifact，可从统计型 `style_prior` / `texture_prior` 中按 seed 选择 tile style 或 texture prototype，并写出可审计 JSON；该能力仍不是 production trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler。
+- 当前状态：v0.71.0 已新增 deterministic sampled style/texture policy artifact，并让 `build-condition-packet` 可选读取 `sampled_style_policy` / `sampled_texture_policy`，校验 source prior path 与关键 selected 字段后写入 `artifact_inputs` 和 `conditions.style_seed` / `conditions.texture_token`；该能力仍不是 production trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler。
 - 建议任务包：
   - 已完成：从统计型 style prior 生成 `sampled_style_policy` artifact 和 CLI。
   - 已完成：从统计型 texture prior 生成 `sampled_texture_policy` artifact 和 CLI。
+  - 已完成：让 condition packet 显式消费 sampled style/texture policy artifact，记录可审计 style/texture 条件摘要。
   - 待完成：实现 production 级 trainable style encoder / stain-style latent。
   - 待完成：实现 production 级 texture codebook / morphology token sampler，并接入真实 generation backend。
 - 完成标准：style/texture prior 不再只是统计 artifact，能被 production inference backend 以可解释、可复现的方式消费。
@@ -90,7 +91,7 @@
 ## P5. 环境化复跑验证
 
 - 目标：区分“历史上有工件”和“当前环境可复现”。
-- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI/P4/P5 定向测试、PySide6 offscreen 表单 smoke 和 `242` 个全量单元测试；真实 SVS 全链路仍未在本轮复跑。
+- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI/P4/P5 定向测试、PySide6 offscreen 表单 smoke 和 v0.71.0 `245` 个全量单元测试；真实 SVS 全链路仍未在本轮复跑。
 - 建议任务包：
   - 已完成：准备独立 conda/pip 环境说明，覆盖 `torch`、`ui`、`wsi`、`outputs`、`yaml`。
   - 已完成：复跑完整单元测试、PyTorch smoke 路径和 PySide6 当前窗口创建 smoke。
@@ -101,7 +102,7 @@
 ## P6. 维护性收敛
 
 - 目标：降低后续补救风险，不做风格化大重构。
-- 当前状态：v0.65.1 已完成首轮维护性收敛；v0.70.0 增加了统计 prior 的 deterministic policy helper，但未扩展到 production prior/model。
+- 当前状态：v0.65.1 已完成首轮维护性收敛；v0.71.0 增加了统计 prior 的 deterministic policy helper 和 condition packet 审计消费，但未扩展到 production prior/model。
 - 建议任务包：
   - 优先拆分 `src/he_wsi_generator/cli.py` 的命令注册和命令执行分支。
   - 再拆分 `src/he_wsi_generator/models/torch_training.py` 中训练、采样、manifest/schema 辅助逻辑。

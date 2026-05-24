@@ -65,7 +65,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(prior, saved)
-        self.assertEqual(prior["schema_version"], "v0.70.0")
+        self.assertEqual(prior["schema_version"], "v0.71.0")
         self.assertEqual(prior["prior_type"], "texture_prior")
         self.assertEqual(prior["source"]["cache_dir"], str(cache_dir))
         self.assertEqual(prior["source"]["cache_key"], cache_key)
@@ -174,7 +174,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(policy, saved)
-        self.assertEqual(policy["schema_version"], "v0.70.0")
+        self.assertEqual(policy["schema_version"], "v0.71.0")
         self.assertEqual(policy["artifact_type"], "sampled_texture_policy")
         self.assertEqual(policy["sample_id"], "texture-sample-001")
         self.assertEqual(policy["random_seed"], 3)
@@ -191,7 +191,7 @@ class TexturePriorTests(unittest.TestCase):
             root = Path(tmpdir)
             prior_path = root / "texture_prior.json"
             prior = {
-                "schema_version": "v0.70.0",
+                "schema_version": "v0.71.0",
                 "prior_type": "texture_prior",
                 "cluster_count": 1,
                 "texture_prototypes": [

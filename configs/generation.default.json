@@ -1,5 +1,5 @@
 {
-  "schema_version": "v0.70.0",
+  "schema_version": "v0.71.0",
   "random_seed": 0,
   "model_family": "latent_diffusion_unet",
   "max_magnification": "40x",

@@ -5,7 +5,7 @@
 - 结果：`完成`
 - Worker 分支：`worker/p5-condition-sampled-policy-20260524`
 - Worker worktree：`.worktrees/p5-condition-sampled-policy-20260524`
-- Commit：`df8907d`（初版实现）；最终提交将包含本报告和 source path consistency 补充校验。
+- Commit：`53badad`（最终 worker 提交，包含本报告和 source path consistency 补充校验）。
 
 ## 摘要
 

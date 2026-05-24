@@ -1,5 +1,68 @@
 # CHANGELOG
 
+## v0.71.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-05` 的保守可交付子集：在 v0.70.0 已能生成 `sampled_style_policy` / `sampled_texture_policy` 的基础上，让 `build-condition-packet` 可选读取这些 policy artifact，并写入 condition packet 的可审计条件摘要，同时保持非 production 边界。
+
+### 已做改动
+
+- 版本号升级到 `v0.71.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建并合并 P5 worker 任务：
+  - `.agent/tasks/p5-condition-sampled-policy-20260524.md`
+  - `.agent/reports/p5-condition-sampled-policy-20260524.md`
+- `build_generation_condition_packet()` 新增可选 `sampled_style_policy_path` 和 `sampled_texture_policy_path`，读取并校验 sampled policy JSON。
+- `he-wsi-gen build-condition-packet` 新增 `--sampled-style-policy` 和 `--sampled-texture-policy` 参数。
+- condition packet 现在会在 `artifact_inputs.sampled_style_policy` / `artifact_inputs.sampled_texture_policy` 记录 policy artifact，并在 `conditions.style_seed` / `conditions.texture_token` 中记录 sample id、seed、selection policy、selected style/token 摘要和 limitations。
+- sampled policy 校验覆盖 schema version、artifact type、source prior path、RGB triplet、selected texture token、representative embedding index 等关键字段；source prior path 必须匹配当前 prior manifest 对应 artifact path。
+- 更新 README、`docs/DEMANDS.MD` 与 `docs/audit/`，将 `AC-MISS-05` 进一步调整为“sampled policy artifact 与 condition packet 审计链部分完成 / 仍缺失 production prior”，并明确当前不是 trainable style encoder、texture codebook、VQ-VAE 或 runtime generation model。
+
+### 影响文件
+
+- `.agent/tasks/p5-condition-sampled-policy-20260524.md`
+- `.agent/reports/p5-condition-sampled-policy-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `src/he_wsi_generator/generation/conditioning.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.71.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker / orchestrator 定向验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_conditioning -v`
+    - 结果：红灯符合预期，写生产代码前失败原因包括 `build_generation_condition_packet() got an unexpected keyword argument 'sampled_style_policy_path'`，CLI 子进程未写出 condition packet；实现后通过，`Ran 10 tests in 0.082s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_conditioning tests.test_style_prior tests.test_texture_prior tests.test_priors -v`
+    - 结果：通过，`Ran 31 tests in 0.649s OK`
+- Orchestrator 文档/版本同步后最终验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+    - 结果：通过，卸载 `multi-center-wsi-generator 0.70.0` 并安装 editable `multi-center-wsi-generator 0.71.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.71.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`
+  - `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... importlib.metadata / PROJECT_VERSION / PACKAGE_VERSION ... PY`
+    - 结果：`0.71.0`、`v0.71.0`、`0.71.0`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_conditioning tests.test_style_prior tests.test_texture_prior tests.test_priors -v`
+    - 结果：通过，`Ran 31 tests in 0.594s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 245 tests in 13.985s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+
 ## v0.70.0 - 2026-05-24
 
 ### 用户需求

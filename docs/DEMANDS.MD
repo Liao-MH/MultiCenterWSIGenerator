@@ -37,6 +37,14 @@
 - 本批次只让 condition packet 记录 sampled policy artifact，不自动调用 policy sampler，不改变 smoke/torch generation backend 的条件特征编码方式。
 - 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
 
+### 已落地
+
+- 已创建并合并单 worker 分支 `worker/p5-condition-sampled-policy-20260524`，保留 `.agent/tasks/p5-condition-sampled-policy-20260524.md` 与 `.agent/reports/p5-condition-sampled-policy-20260524.md` 作为审计证据。
+- `build_generation_condition_packet()` 已新增 `sampled_style_policy_path` 与 `sampled_texture_policy_path` 可选参数；`he-wsi-gen build-condition-packet` 已新增 `--sampled-style-policy` 与 `--sampled-texture-policy`。
+- condition packet 已能在 `artifact_inputs.sampled_style_policy` / `artifact_inputs.sampled_texture_policy` 记录 policy artifact，并在 `conditions.style_seed` / `conditions.texture_token` 中记录 selected style/token 摘要。
+- 实现已显式校验 sampled policy 的 schema version、artifact type、source prior path 和关键 selected 字段，不提供 sampled policy 时保持原有 style seed 与 texture prior 行为。
+- 当前落地范围仍是可审计条件摘要接入，不是 production style encoder、texture codebook、VQ-VAE、morphology token sampler 或 runtime generation backend 自动采样。
+
 ## v0.70.0 - 2026-05-24 P5 prior 采样策略可审计化需求
 
 ### 用户需求
