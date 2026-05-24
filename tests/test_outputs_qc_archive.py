@@ -25,6 +25,7 @@ from he_wsi_generator.outputs.ome_tiff import (
     OutputWriteError,
     write_pyramid_ome_tiff,
     write_pyramid_ome_tiff_from_tile_sources,
+    write_pyramid_ome_tiff_streaming_from_tile_sources,
 )
 from he_wsi_generator.qc.engine import QCReferenceError, build_qc_report
 from he_wsi_generator.schemas import validate_metadata, validate_qc_report
@@ -389,6 +390,143 @@ class OutputQCArchiveTests(unittest.TestCase):
                                 "tiles": records,
                             },
                             root / f"{name}.ome.tiff",
+                        )
+
+    def test_write_pyramid_ome_tiff_streaming_from_tile_sources_writes_tiled_pyramid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            records = [
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "level0_left.npy",
+                    np.ones((16, 16, 3), dtype=np.uint8) * 10,
+                    level_index=0,
+                    tile_index=0,
+                    tile_origin=[0, 0],
+                    write_region=[0, 0, 16, 16],
+                ),
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "level0_right.npy",
+                    np.ones((16, 16, 3), dtype=np.uint8) * 20,
+                    level_index=0,
+                    tile_index=1,
+                    tile_origin=[16, 0],
+                    write_region=[16, 0, 16, 16],
+                ),
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "level1_full.npy",
+                    np.ones((16, 16, 3), dtype=np.uint8) * 30,
+                    level_index=1,
+                    tile_index=0,
+                    tile_origin=[0, 0],
+                    write_region=[0, 0, 16, 16],
+                ),
+            ]
+            manifest = {
+                "expected_tile_count": 3,
+                "levels": [
+                    {"level_index": 0, "shape": [16, 32, 3], "expected_tile_count": 2},
+                    {"level_index": 1, "shape": [16, 16, 3], "expected_tile_count": 1},
+                ],
+                "tiles": [
+                    {
+                        **record,
+                        "path": Path(record["path"]).relative_to(root).as_posix(),
+                    }
+                    for record in records
+                ],
+            }
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            report = write_pyramid_ome_tiff_streaming_from_tile_sources(
+                manifest_path,
+                root / "generated.ome.tiff",
+                chunk_shape=(16, 16),
+            )
+
+            with tifffile.TiffFile(root / "generated.ome.tiff") as tiff:
+                level0 = tiff.series[0].levels[0].asarray()
+                level1 = tiff.series[0].levels[1].asarray()
+
+        self.assertEqual(report["status"], "written")
+        self.assertEqual(report["write_mode"], "tile_iterator_streaming_write")
+        self.assertTrue(report["production_streaming"])
+        self.assertFalse(report["resume_capable"])
+        self.assertEqual(report["level_count"], 2)
+        self.assertEqual(report["streaming_write_report"]["levels"][0]["tile_grid"], [1, 2])
+        self.assertIn(
+            "ome_tiff_file_resume_not_supported",
+            report["streaming_write_report"]["streaming_limitations"],
+        )
+        self.assertEqual(level0.shape, (16, 32, 3))
+        self.assertEqual(level0[0, 0, 0], 10)
+        self.assertEqual(level0[0, 31, 0], 20)
+        self.assertEqual(level1.shape, (16, 16, 3))
+        self.assertEqual(level1[0, 0, 0], 30)
+
+    def test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_invalid_grid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            base_tile = np.ones((16, 16, 3), dtype=np.uint8)
+            valid_left = self.write_positioned_tile_record(
+                tile_root,
+                "valid_left.npy",
+                base_tile,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 16, 16],
+            )
+            gap_record = dict(valid_left)
+            overlap_records = [
+                valid_left,
+                self.write_positioned_tile_record(
+                    tile_root,
+                    "overlap.npy",
+                    base_tile,
+                    level_index=0,
+                    tile_index=1,
+                    tile_origin=[0, 0],
+                    write_region=[0, 0, 16, 16],
+                ),
+            ]
+            misaligned_record = self.write_positioned_tile_record(
+                tile_root,
+                "misaligned.npy",
+                base_tile,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[4, 0],
+                write_region=[4, 0, 16, 16],
+            )
+            cases = [
+                ("gap", [gap_record], 1, "cover"),
+                ("overlap", overlap_records, 2, "overlap"),
+                ("misaligned", [misaligned_record], 1, "aligned"),
+            ]
+
+            for name, records, expected_tile_count, pattern in cases:
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(OutputWriteError, pattern):
+                        write_pyramid_ome_tiff_streaming_from_tile_sources(
+                            {
+                                "expected_tile_count": expected_tile_count,
+                                "levels": [
+                                    {
+                                        "level_index": 0,
+                                        "shape": [16, 32, 3],
+                                        "expected_tile_count": expected_tile_count,
+                                    }
+                                ],
+                                "tiles": records,
+                            },
+                            root / f"{name}.ome.tiff",
+                            chunk_shape=(16, 16),
                         )
 
     def test_write_pyramid_ome_tiff_rejects_invalid_chunk_shape(self):
