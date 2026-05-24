@@ -2,12 +2,12 @@
 
 ## 当前审计基线
 
-- 原始审计基线为 `v0.62.0`；当前补救开发版本为 `v0.72.3`。
-- v0.72.3 允许修改 P4 输出可靠性相关的 `src/he_wsi_generator/generation/executor.py`、`src/he_wsi_generator/generation/tiling.py`、`src/he_wsi_generator/outputs/ome_tiff.py`、`src/he_wsi_generator/outputs/__init__.py`、CLI 分发、`tests/`、配置、README 和审计文档，以及 P5 可审计 style/texture policy helper、condition packet sampled policy 集成与 generation 输出摘要贯通，并允许为真实 SVS smoke/proxy 复跑补齐审计工件。
+- 原始审计基线为 `v0.62.0`；当前补救开发版本为 `v0.72.4`。
+- v0.72.4 允许修改 P3 checkpoint inference contract 相关的 `src/he_wsi_generator/models/training.py`、generation/model 测试、配置、README 和审计文档；同时继承 P4 输出可靠性、P5 可审计 style/texture policy helper、condition packet sampled policy 集成与 generation 输出摘要贯通等既有补救边界。
 - 审计文件统一维护在 `docs/audit/`，不再放在 `docs/` 根目录。
-- 本轮按仓库版本规则升级版本号，因为真实 SVS smoke/proxy 复跑验证新增了向后兼容的审计工件。
-- 截至本次复审计，v0.72.3 作为 `main` 分支补救基线提交，但不是已 tag 或打包发布的 release；不能表述为已经发布。
-- 本轮已创建 conda 环境 `MultiCenterWSIGenerator` 并验证 PyTorch、CUDA、PySide6 依赖和全量单元测试，同时复跑了真实 SVS smoke/proxy 链路；该结论只覆盖当前机器环境，不替代 production 验收。
+- 本轮按仓库版本规则升级版本号，因为 checkpoint inference manifest contract gate 新增了向后兼容的审计/实现补丁。
+- 截至本次复审计，v0.72.4 作为 `main` 分支补救基线提交，但不是已 tag 或打包发布的 release；不能表述为已经发布。
+- 当前审计周期已创建 conda 环境 `MultiCenterWSIGenerator` 并验证 PyTorch、CUDA、PySide6 依赖和全量单元测试；真实 SVS smoke/proxy 链路复跑证据来自历史 v0.72.1 轮次。该结论只覆盖当前机器环境，不替代 production 验收。
 
 ## 完整项目成果定义
 
@@ -19,7 +19,7 @@
 - OME-TIFF pyramid WSI、6 类 mask、metadata JSON、QC JSON 和 batch JSONL index。
 - 自动 QC、非复制审计、可追踪 seed/model/prior/source/config。
 
-当前 `v0.72.3` 不能被表述为完整项目成果，只能表述为可审计工程骨架、smoke/proxy 级验证链、可交互配置页、本地同步 GUI flow、首轮维护性收敛结果，以及 P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source 发布前校验、内存组装写出、受限 tiled iterator streaming writer、streaming writer pyramid contract、smoke 四层 tile source streaming 写出、tile-streaming 顺序物化、tile blending 的 channel-wise 内存收敛、P5 deterministic sampled style/texture policy artifact、sampled policy condition packet 条件摘要接入、generation 输出摘要保留和真实 SVS smoke/proxy 复跑结果。
+当前 `v0.72.4` 不能被表述为完整项目成果，只能表述为可审计工程骨架、smoke/proxy 级验证链、可交互配置页、本地同步 GUI flow、首轮维护性收敛结果、P3 checkpoint inference artifact contract gate，以及 P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source 发布前校验、内存组装写出、受限 tiled iterator streaming writer、streaming writer pyramid contract、smoke 四层 tile source streaming 写出、tile-streaming 顺序物化、tile blending 的 channel-wise 内存收敛、P5 deterministic sampled style/texture policy artifact、sampled policy condition packet 条件摘要接入、generation 输出摘要保留和真实 SVS smoke/proxy 复跑结果。
 
 ## 关键设计决策
 
@@ -64,16 +64,22 @@
    - 该接入与输出保留不能被描述为 production style encoder、texture codebook、VQ-VAE、morphology token sampler、runtime sampler 自动调用或真实生成模型条件学习。
    - sampled policy source prior path 必须匹配当前 prior manifest 中的对应 artifact path；不允许用 silent fallback 混用来源不一致的 policy。
 
+11. 保持 P3 checkpoint inference contract 与 production 模型边界
+   - `usable_for_inference=true` 必须由真实 checkpoint 文件、matching SHA-256 和显式 `inference_contract` 支撑，不能再由薄 JSON 布尔字段冒充。
+   - `inference_contract.production_ready=false` 的 smoke/test fixture 只能表述为契约就绪的非 production artifact；不能表述为 production latent diffusion / ControlNet / DiT backend。
+   - smoke / torch smoke checkpoint 默认继续保持 `usable_for_inference=false`，除非后续接入真实 production inference backend 并补齐 payload 语义校验。
+
 ## 禁止变更项
 
 - 未经确认，不做与 P1 无关的实现重构、不改默认生成行为。
 - 不把审计记录本身包装成新发布；只有实际功能补救才升级版本。
 - 不删除现有 `build/validation/` 工件；它们是历史验证证据。
 - 不把“现存工件仍可校验”表述成“本轮已重新执行真实 SVS 全链路”。
-- 不把当前 v0.72.3 基线提交表述为已发布版本；tag、打包需另行执行并验证。
+- 不把当前 v0.72.4 基线提交表述为已发布版本；tag、打包需另行执行并验证。
 - 不把当前 PySide6 GUI flow 描述为后台任务系统；它支持同步本地 queued job 执行、刷新和输出摘要查看，但不包含后台 daemon、并发队列、运行中取消、跨机器调度或线程化 Qt 执行。
 - 不把 v0.72.3 的 tile source contract/assembly/iterator writer 和 smoke 四层 tile source streaming 描述为完整 production gigapixel writer；当前 iterator writer 不组装完整 level array，但 smoke 接入仍基于内存中已生成的 smoke canvas，且不支持中断后续写同一个 OME-TIFF 文件。
 - 不把 v0.72.3 的 sampled policy condition packet 集成或 generation 输出摘要保留描述为 production style/texture model；它只记录显式传入的 sampled policy artifact 摘要，不自动调用 sampler 或改变 generation backend。
+- 不把 v0.72.4 的 checkpoint inference artifact contract gate 描述为 production 生成模型；它只加固 manifest 入口契约，不训练或运行真实 production backend。
 - 不因为补救而扩展到当前系统边界外内容，例如 IHC/IF、临床分子标签、真人专家盲评、下游训练验证、权限/签名系统、数据库或远端协作审阅。
 
 ## 补救优先级决策

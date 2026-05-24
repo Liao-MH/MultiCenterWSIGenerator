@@ -1,5 +1,62 @@
 # CHANGELOG
 
+## v0.72.4 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-MISS-04` / P3 的保守契约增量：不直接实现 production latent diffusion / ControlNet / DiT 模型本体，而是先收紧 checkpoint manifest 的 inference 可用性判定，避免任意手写薄 JSON 只要设置 `usable_for_inference=true` 就能通过 generation plan。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.4`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建并审查 P3 worker 任务：
+  - `.agent/tasks/p3-checkpoint-inference-contract-20260525.md`
+  - `.agent/reports/p3-checkpoint-inference-contract-20260525.md`
+- `src/he_wsi_generator/models/training.py` 加固 `usable_for_inference=true` checkpoint manifest 契约：要求 `status=trained`、非空 `training_backend` / `target_type` / `checkpoint_path` / `checkpoint_sha256`、checkpoint 文件存在且 SHA-256 匹配，并显式声明 `inference_contract.backend_type`、`artifact_role`、`production_ready` 和 `limitations`。
+- `usable_for_inference=false` 的 skeleton / smoke checkpoint manifest 继续可加载，但 generation plan 仍拒绝其用于推理。
+- `tests/test_models_generation.py` 新增薄 inference manifest、缺失 checkpoint 文件、hash mismatch、缺失 `inference_contract`、矛盾 status/usable 状态和相对 checkpoint artifact path 的显式测试，并更新可推理 checkpoint fixture 为真实小文件 + matching SHA-256 + 非 production inference contract。
+- `tests/test_generation_runner.py` 更新 smoke generation checkpoint fixture，使既有 smoke generation 路径满足新的 checkpoint inference artifact contract。
+- README 与 `docs/audit/` 同步记录当前能力边界：本轮只是 checkpoint inference contract gate，不是 production 生成模型或真实 production inference backend。
+
+### 影响文件
+
+- `.agent/tasks/p3-checkpoint-inference-contract-20260525.md`
+- `.agent/reports/p3-checkpoint-inference-contract-20260525.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training.py`
+- `tests/test_models_generation.py`
+- `tests/test_generation_runner.py`
+- `tests/test_version.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation -v`
+  - 结果：通过，`Ran 12 tests in 0.143s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner -v`
+  - 结果：通过，`Ran 23 tests in 1.578s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 257 tests in 16.210s OK`
+- `git diff --check`
+  - 结果：通过，无 whitespace error
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.4`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.4`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/version check ... PY`
+  - 结果：包元数据 `0.72.4`，`PROJECT_VERSION` 为 `v0.72.4`，`PACKAGE_VERSION` 为 `0.72.4`
+
 ## v0.72.3 - 2026-05-25
 
 ### 用户需求

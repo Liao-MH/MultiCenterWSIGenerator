@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -31,7 +32,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             path.write_text(json.dumps({"name": name}), encoding="utf-8")
             artifacts[name] = create_prior_artifact_entry(path, kind="json", metadata={})
         manifest = {
-            "schema_version": "v0.72.3",
+            "schema_version": "v0.72.4",
             "prior_id": "prior-demo",
             "created_at": "2026-05-23T11:00:00Z",
             "random_seed": 11,
@@ -47,7 +48,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
 
     def training_config(self, prior_manifest_path: Path, output_dir: Path) -> dict:
         return {
-            "schema_version": "v0.72.3",
+            "schema_version": "v0.72.4",
             "run_id": "train-demo",
             "random_seed": 11,
             "model_family": "latent_diffusion_unet",
@@ -63,7 +64,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
 
     def generation_config(self) -> dict:
         return {
-            "schema_version": "v0.72.3",
+            "schema_version": "v0.72.4",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -78,6 +79,51 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             "non_copy_patch_nearest_neighbor_search": False,
         }
 
+    def checkpoint_manifest(
+        self,
+        root: Path,
+        name: str = "trained-checkpoint",
+        checkpoint_hash: str | None = None,
+        write_checkpoint_file: bool = True,
+        relative_checkpoint_path: bool = False,
+        status: str = "trained",
+    ) -> Path:
+        checkpoint_file = root / f"{name}.bin"
+        if write_checkpoint_file:
+            checkpoint_file.write_bytes(b"unit-test checkpoint artifact\n")
+        actual_hash = (
+            hashlib.sha256(checkpoint_file.read_bytes()).hexdigest()
+            if checkpoint_file.exists()
+            else ""
+        )
+        manifest_path = root / f"{name}.json"
+        checkpoint_path = checkpoint_file.name if relative_checkpoint_path else str(checkpoint_file)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v0.72.4",
+                    "model_family": "latent_diffusion_unet",
+                    "status": status,
+                    "usable_for_inference": True,
+                    "model_version": "unit-test",
+                    "training_backend": "unit-test-contract-backend",
+                    "target_type": "unit_test_generation",
+                    "checkpoint_path": checkpoint_path,
+                    "checkpoint_sha256": checkpoint_hash or actual_hash,
+                    "inference_contract": {
+                        "backend_type": "smoke_contract_fixture",
+                        "artifact_role": "generation_plan_fixture",
+                        "production_ready": False,
+                        "limitations": ["unit_test_fixture_not_production_backend"],
+                    },
+                    "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
+                    "tile_size_40x": [512, 512],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return manifest_path
+
     def test_create_training_run_writes_manifest_and_untrained_checkpoint(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -87,7 +133,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             run = create_training_run(self.training_config(prior_manifest_path, output_dir))
             checkpoint = load_checkpoint_manifest(run["checkpoint_manifest_path"])
 
-        self.assertEqual(run["schema_version"], "v0.72.3")
+        self.assertEqual(run["schema_version"], "v0.72.4")
         self.assertEqual(run["model_family"], "latent_diffusion_unet")
         self.assertEqual(run["stages"], ["prior_ready", "image_generator", "wsi_consistency"])
         self.assertEqual(checkpoint["status"], "not_trained")
@@ -113,15 +159,15 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
                     checkpoint_manifest_path=run["checkpoint_manifest_path"],
                 )
 
-    def test_generation_plan_accepts_trained_checkpoint_manifest(self):
+    def test_generation_plan_rejects_thin_inference_checkpoint_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             prior_manifest_path = self.create_prior_manifest(root)
-            checkpoint_path = root / "trained-checkpoint.json"
+            checkpoint_path = root / "thin-trained-checkpoint.json"
             checkpoint_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.3",
+                        "schema_version": "v0.72.4",
                         "model_family": "latent_diffusion_unet",
                         "status": "trained",
                         "usable_for_inference": True,
@@ -133,13 +179,104 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            with self.assertRaisesRegex(ModelRunError, "training_backend"):
+                create_generation_plan(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_path,
+                )
+
+    def test_generation_plan_rejects_missing_inference_checkpoint_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_path = self.checkpoint_manifest(
+                root,
+                name="missing-artifact-checkpoint",
+                checkpoint_hash="0" * 64,
+                write_checkpoint_file=False,
+            )
+
+            with self.assertRaisesRegex(ModelRunError, "checkpoint_path must exist"):
+                create_generation_plan(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_path,
+                )
+
+    def test_generation_plan_rejects_inference_checkpoint_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_path = self.checkpoint_manifest(
+                root,
+                name="bad-hash-checkpoint",
+                checkpoint_hash="0" * 64,
+            )
+
+            with self.assertRaisesRegex(ModelRunError, "checkpoint_sha256"):
+                create_generation_plan(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_path,
+                )
+
+    def test_generation_plan_rejects_missing_inference_contract(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_path = self.checkpoint_manifest(root, name="missing-contract-checkpoint")
+            checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            del checkpoint["inference_contract"]
+            checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+
+            with self.assertRaisesRegex(ModelRunError, "inference_contract"):
+                create_generation_plan(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_path,
+                )
+
+    def test_generation_plan_rejects_untrained_usable_checkpoint_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_path = self.checkpoint_manifest(root, name="contradictory-checkpoint", status="not_trained")
+
+            with self.assertRaisesRegex(ModelRunError, "status must be trained"):
+                create_generation_plan(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_path,
+                )
+
+    def test_generation_plan_accepts_relative_checkpoint_artifact_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_path = self.checkpoint_manifest(root, relative_checkpoint_path=True)
+
             plan = create_generation_plan(
                 self.generation_config(),
                 prior_manifest_path=prior_manifest_path,
                 checkpoint_manifest_path=checkpoint_path,
             )
 
-        self.assertEqual(plan["schema_version"], "v0.72.3")
+        self.assertEqual(plan["checkpoint_manifest_path"], str(checkpoint_path))
+
+    def test_generation_plan_accepts_trained_checkpoint_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_path = self.checkpoint_manifest(root)
+
+            plan = create_generation_plan(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_path,
+            )
+
+        self.assertEqual(plan["schema_version"], "v0.72.4")
         self.assertEqual([stage["level"] for stage in plan["stages"]], ["1/32", "1/16", "1/4", "1/1"])
         self.assertEqual(plan["tile_traversal"], "row_major_with_resume_index")
         self.assertEqual(plan["tile_traversal_plan"]["tile_count"], 1)
@@ -183,23 +320,9 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             prior_manifest_path = self.create_prior_manifest(root)
-            checkpoint_path = root / "trained-checkpoint.json"
+            checkpoint_path = self.checkpoint_manifest(root, name="trained-checkpoint-cli")
             generation_config_path = root / "generation-config.json"
             plan_path = root / "generation-plan.json"
-            checkpoint_path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": "v0.72.3",
-                        "model_family": "latent_diffusion_unet",
-                        "status": "trained",
-                        "usable_for_inference": True,
-                        "model_version": "unit-test",
-                        "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
-                        "tile_size_40x": [512, 512],
-                    }
-                ),
-                encoding="utf-8",
-            )
             generation_config_path.write_text(
                 json.dumps(self.generation_config()),
                 encoding="utf-8",

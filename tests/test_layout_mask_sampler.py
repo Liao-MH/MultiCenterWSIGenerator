@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class LayoutMaskSamplerTests(unittest.TestCase):
     def layout_prior(self) -> dict:
         return {
-            "schema_version": "v0.72.3",
+            "schema_version": "v0.72.4",
             "prior_type": "layout_mask_prior",
             "created_at": "2026-05-23T15:00:00Z",
             "source": {"source_type": "unit_test"},
@@ -53,7 +53,7 @@ class LayoutMaskSamplerTests(unittest.TestCase):
 
     def tissue_overview(self) -> dict:
         return {
-            "schema_version": "v0.72.3",
+            "schema_version": "v0.72.4",
             "artifact_type": "wsi_tissue_overview",
             "record_count": 1,
             "source": {
@@ -94,7 +94,7 @@ class LayoutMaskSamplerTests(unittest.TestCase):
             saved_manifest = json.loads((output_dir / "sampled_layout_mask.json").read_text())
 
         self.assertEqual(manifest, saved_manifest)
-        self.assertEqual(manifest["schema_version"], "v0.72.3")
+        self.assertEqual(manifest["schema_version"], "v0.72.4")
         self.assertEqual(manifest["artifact_type"], "sampled_layout_mask")
         self.assertEqual(manifest["sample_id"], "layout-001")
         self.assertEqual(manifest["mask_shape"], [4, 8])

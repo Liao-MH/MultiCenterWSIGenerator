@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,10 +61,13 @@ def load_checkpoint_manifest(path: str | Path) -> dict[str, Any]:
         data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ModelRunError(f"{checkpoint_path} is not valid JSON: {exc.msg}") from exc
-    return validate_checkpoint_manifest(data)
+    return validate_checkpoint_manifest(data, manifest_path=checkpoint_path)
 
 
-def validate_checkpoint_manifest(data: dict[str, Any]) -> dict[str, Any]:
+def validate_checkpoint_manifest(
+    data: dict[str, Any],
+    manifest_path: str | Path | None = None,
+) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ModelRunError("checkpoint manifest must be a JSON object")
     if data.get("schema_version") != PROJECT_VERSION:
@@ -79,7 +83,66 @@ def validate_checkpoint_manifest(data: dict[str, Any]) -> dict[str, Any]:
         raise ModelRunError("checkpoint status must be not_trained or trained")
     if not isinstance(data.get("usable_for_inference"), bool):
         raise ModelRunError("checkpoint usable_for_inference must be boolean")
+    if data["usable_for_inference"]:
+        _validate_inference_checkpoint_contract(data, manifest_path=manifest_path)
     return data
+
+
+def _validate_inference_checkpoint_contract(
+    data: dict[str, Any],
+    manifest_path: str | Path | None,
+) -> None:
+    if data.get("status") != "trained":
+        raise ModelRunError("checkpoint status must be trained when usable_for_inference is true")
+    for key in (
+        "training_backend",
+        "target_type",
+        "checkpoint_path",
+        "checkpoint_sha256",
+    ):
+        _require_non_empty_str(data, key)
+
+    resolved_checkpoint_path = _resolve_checkpoint_path(data["checkpoint_path"], manifest_path)
+    if not resolved_checkpoint_path.exists() or not resolved_checkpoint_path.is_file():
+        raise ModelRunError(f"checkpoint_path must exist and be a file: {resolved_checkpoint_path}")
+    actual_hash = _sha256_file(resolved_checkpoint_path)
+    if actual_hash != data["checkpoint_sha256"]:
+        raise ModelRunError("checkpoint_sha256 does not match checkpoint_path contents")
+
+    # Only inference-ready manifests need the heavier artifact contract.  Skeleton
+    # and smoke training manifests stay loadable with usable_for_inference=false,
+    # while a true flag must carry explicit backend role and production status.
+    contract = data.get("inference_contract")
+    if not isinstance(contract, dict):
+        raise ModelRunError("inference_contract must be a JSON object")
+    for key in ("backend_type", "artifact_role"):
+        _require_non_empty_str(contract, key)
+    if "production_ready" not in contract:
+        raise ModelRunError("inference_contract.production_ready must be explicitly declared")
+    if not isinstance(contract["production_ready"], bool):
+        raise ModelRunError("inference_contract.production_ready must be boolean")
+    if "limitations" not in contract:
+        raise ModelRunError("inference_contract.limitations must be explicitly declared")
+    if not isinstance(contract["limitations"], list):
+        raise ModelRunError("inference_contract.limitations must be a list")
+
+
+def _resolve_checkpoint_path(
+    checkpoint_path: str,
+    manifest_path: str | Path | None,
+) -> Path:
+    path = Path(checkpoint_path)
+    if path.is_absolute() or manifest_path is None:
+        return path
+    return Path(manifest_path).parent / path
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _validate_training_config(config: dict[str, Any]) -> dict[str, Any]:
