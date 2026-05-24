@@ -1,8 +1,8 @@
-# v0.66.0 审计补救实施计划
+# v0.67.0 审计补救实施计划
 
 ## 当前定位
 
-当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路、可交互 PySide6 配置页、GUI 内同步 queued job 执行/状态刷新/输出摘要查看、可恢复 tile manifest contract 和磁盘 `.npy` tile source contract 校验。后续补救顺序应进入 production 模型、生产级 prior/WSI 输出能力，或继续把 P4 contract 接入真实恢复执行与逐 tile writer。
+当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路、可交互 PySide6 配置页、GUI 内同步 queued job 执行/状态刷新/输出摘要查看、可恢复 tile manifest contract、smoke tile resume execution、磁盘 `.npy` tile source contract 校验和磁盘 tile source 内存组装写出。后续补救顺序应进入 production 模型、生产级 prior/WSI 输出能力，或继续把 P4 contract 接入真正逐 tile OME-TIFF writer。
 
 ## P0. 审计材料归位与证据闭环
 
@@ -36,7 +36,7 @@
 ## P2. 可交互 PySide6 自定义配置页与本地 GUI flow
 
 - 目标：实现设计文档要求的本地单页控制台，让用户不手工编辑中间 JSON 也能完成配置。
-- 当前状态：v0.66.0 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看、首轮 CLI/torch smoke helper 维护性收敛，以及 P4 可恢复 tile 状态与磁盘 tile source contract。
+- 当前状态：v0.67.0 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看、首轮 CLI/torch smoke helper 维护性收敛，以及 P4 可恢复 tile 状态、smoke resume execution 与磁盘 tile source contract/assembly。
 - 建议任务包：
   - 已完成：建立独立 conda UI 环境并验证 PySide6 offscreen。
   - 已完成：把 `pyside_app.py` 从只读字段展示升级为真实表单：路径选择、anchor preset、seed、sample steps、prior/checkpoint、输出目录、QC 设置。
@@ -63,12 +63,13 @@
 ## P4. 生产级 WSI 输出、恢复和 QC 验证
 
 - 目标：补齐 gigapixel 级交付可靠性。
-- 当前状态：v0.66.0 已完成第一批 contract 级补救：`build_resumable_tile_manifest()` / `update_resumable_tile_manifest()` / `validate_resumable_tile_manifest()` / `require_complete_tile_manifest()` 可记录和校验 tile 执行状态；`write_pyramid_ome_tiff(..., tile_source_manifest=...)` 可在写出前校验磁盘 `.npy` tile source manifest，并阻止 pending/failed/missing/duplicate 或 shape/dtype 不一致的 tile 被发布。该状态仍不是 production 级逐 tile OME-TIFF streaming writer。
+- 当前状态：v0.67.0 已完成两批 contract/执行级补救：`build_resumable_tile_manifest()` / `update_resumable_tile_manifest()` / `validate_resumable_tile_manifest()` / `require_complete_tile_manifest()` 可记录和校验 tile 执行状态；`run-generation --backend smoke-cascade --resume-tile-manifest` 可从 partial manifest 继续 pending tile 并拒绝 failed/gapped/missing completed tile；`write_pyramid_ome_tiff(..., tile_source_manifest=...)` 可在写出前校验磁盘 `.npy` tile source manifest；`write_pyramid_ome_tiff_from_tile_sources()` 可从磁盘 tile source manifest 内存组装 pyramid 并写出。该状态仍不是 production 级逐 tile OME-TIFF streaming writer。
 - 建议任务包：
   - 已完成：实现可恢复 tile manifest/state contract。
   - 已完成：实现磁盘 `.npy` tile source contract gate 和 streaming limitation report。
-  - 待完成：实现真正磁盘级 tile streaming 和可恢复 OME-TIFF 写入。
-  - 将 run manifest 的 completed/pending tile 信息接入恢复执行。
+  - 已完成：将 smoke generation run manifest 的 completed/pending tile 信息接入恢复执行。
+  - 已完成：实现磁盘 tile source manifest 的内存组装写出接口，并明确 production streaming 限制。
+  - 待完成：实现真正磁盘级逐 tile OME-TIFF streaming 和可恢复 OME-TIFF 写入。
   - 扩展 QC 到更真实的 stain、focus、seam、mask-image consistency 和 non-copy 审计。
   - 保留当前自动 QC 的 pass/warning/fail 和 reference distribution 审计链。
 - 完成标准：中断后可恢复生成；不完整输出不能被标为 pass；writer 本体能在不持有完整 gigapixel canvas 的情况下逐 tile 写入/恢复 OME-TIFF。
@@ -76,7 +77,7 @@
 ## P5. 环境化复跑验证
 
 - 目标：区分“历史上有工件”和“当前环境可复现”。
-- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI/P4 定向测试、PySide6 offscreen 表单 smoke 和 `223` 个全量单元测试；真实 SVS 全链路仍未在本轮复跑。
+- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI/P4 定向测试、PySide6 offscreen 表单 smoke 和 `230` 个全量单元测试；真实 SVS 全链路仍未在本轮复跑。
 - 建议任务包：
   - 已完成：准备独立 conda/pip 环境说明，覆盖 `torch`、`ui`、`wsi`、`outputs`、`yaml`。
   - 已完成：复跑完整单元测试、PyTorch smoke 路径和 PySide6 当前窗口创建 smoke。
@@ -87,7 +88,7 @@
 ## P6. 维护性收敛
 
 - 目标：降低后续补救风险，不做风格化大重构。
-- 当前状态：v0.65.1 已完成首轮维护性收敛；v0.66.0 P4 contract 补救未增加新的大文件拆分任务。
+- 当前状态：v0.65.1 已完成首轮维护性收敛；v0.67.0 P4 补救未增加新的大文件拆分任务。
 - 建议任务包：
   - 优先拆分 `src/he_wsi_generator/cli.py` 的命令注册和命令执行分支。
   - 再拆分 `src/he_wsi_generator/models/torch_training.py` 中训练、采样、manifest/schema 辅助逻辑。

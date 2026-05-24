@@ -1,5 +1,80 @@
 # CHANGELOG
 
+## v0.67.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 P4 输出可靠性，在 v0.66.0 可恢复 tile manifest contract 与磁盘 tile source contract 基础上，推进 smoke tile resume execution 和磁盘 tile source 组装写出。
+
+### 已做改动
+
+- 版本号升级到 `v0.67.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建两个 P4 worker 任务：
+  - `.agent/tasks/p4-generation-resume-execution-20260524.md`
+  - `.agent/tasks/p4-disk-tile-assembly-writer-20260524.md`
+- 回收两个 worker 报告：
+  - `.agent/reports/p4-generation-resume-execution-20260524.md`
+  - `.agent/reports/p4-disk-tile-assembly-writer-20260524.md`
+- `run_smoke_generation()` 新增 `resume_tile_manifest_path` 参数；`run-generation --backend smoke-cascade` 新增 `--resume-tile-manifest`。
+- smoke generation 现在写出 `tiles/tile-*.npy`、`tile_manifest.json` 和 `tile_source_manifest.json`，并把路径写入 plan、metadata 和 generation run summary。
+- resume execution 会拒绝 failed tile、非 row-major completion gap、缺失 completed tile 文件、与当前 generation plan 不匹配的 manifest 和最终不完整 manifest。
+- `torch-diffusion-smoke` backend 显式拒绝 `--resume-tile-manifest`，避免把 smoke-only resume contract 误用于 torch smoke sampler。
+- `src/he_wsi_generator/outputs/ome_tiff.py` 新增 `write_pyramid_ome_tiff_from_tile_sources()`，可从磁盘 `.npy` tile source manifest 校验 level shape、tile origin、write region 和 coverage 后内存组装 pyramid 并写出 OME-TIFF。
+- 新增/更新测试，覆盖 smoke 首次 tile manifest 写出、partial resume、bad resume manifest、CLI resume、磁盘 tile source 组装写出、coverage gap/overlap/越界和 shape/status 失败路径。
+- 更新 README 与 `docs/audit/`，将 P4 状态调整为“smoke resume 与磁盘 tile source assembly 已完成 / 仍缺失 production writer”，并继续保留非 production streaming 边界。
+
+### 影响文件
+
+- `.agent/tasks/p4-generation-resume-execution-20260524.md`
+- `.agent/tasks/p4-disk-tile-assembly-writer-20260524.md`
+- `.agent/reports/p4-generation-resume-execution-20260524.md`
+- `.agent/reports/p4-disk-tile-assembly-writer-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/outputs/__init__.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `tests/test_generation_runner.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.67.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker / orchestrator 定向验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive -v`
+    - 结果：通过，`Ran 25 tests in 0.082s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner -v`
+    - 结果：通过，`Ran 18 tests in 1.116s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_tiling tests.test_generation_runner -v`
+    - 结果：通过，`Ran 29 tests in 1.143s OK`
+- Orchestrator 合并后复核：
+  - `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+    - 结果：通过，editable package 从 `0.66.0` 刷新安装为 `0.67.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.67.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：通过，默认 generation config valid
+  - `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... importlib.metadata.version(...) ... PY`
+    - 结果：package metadata `0.67.0`，`PROJECT_VERSION` 为 `v0.67.0`，`PACKAGE_VERSION` 为 `0.67.0`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_tiling tests.test_generation_runner tests.test_outputs_qc_archive -v`
+    - 结果：通过，`Ran 54 tests in 1.197s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 230 tests in 14.495s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+
 ## v0.66.0 - 2026-05-24
 
 ### 用户需求
