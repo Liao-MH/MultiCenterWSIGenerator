@@ -1,5 +1,33 @@
 # DEMANDS
 
+## v0.67.0 - 2026-05-24 P4 恢复执行与磁盘 tile 组装写出需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-06` / P4，在 v0.66.0 可恢复 tile manifest contract 与磁盘 `.npy` tile source contract 基础上，推进“恢复执行”和“从磁盘 tile source 组装写出”的可验证闭环。
+
+### 结构化需求
+
+- 使用 worker 隔离开发：
+  - `p4-generation-resume-execution-20260524` 负责把 smoke generation 执行器接入可恢复 tile manifest：运行时写出每个 tile 的 `.npy` 文件和 `tile_manifest.json`，支持从已有 manifest 继续 pending tile，并在 failed、非 row-major gap、缺失 completed tile 文件或最终 manifest 不完整时显式失败。
+  - `p4-disk-tile-assembly-writer-20260524` 负责在 OME-TIFF 输出层新增从磁盘 `.npy` tile source manifest 组装 pyramid 并写出的明确接口，校验 tile origin / write region / coverage，不允许 overlap、缺口、越界、shape/dtype 不一致或 incomplete tile 被静默发布。
+- Orchestrator 在 worker 回收后统一处理共享文档、版本号、README、`docs/audit/`、`docs/CHANGELOG.md` 和全局版本断言。
+- 版本号规划升级到 `v0.67.0`，属于向后兼容的 P4 功能增量。
+- 增加定向单元测试覆盖：
+  - 首次 smoke generation 写出 completed tile manifest 与 tile source manifest；
+  - 从部分完成 manifest 恢复 pending tile；
+  - failed/gapped/missing tile manifest 阻塞生成；
+  - 从磁盘 tile source manifest 组装 OME-TIFF；
+  - tile coverage 缺口、overlap、越界、dtype/shape 不一致显式失败。
+
+### 边界说明
+
+- 本批次仍不实现 production latent diffusion / ControlNet / DiT。
+- 本批次仍不实现生产级 layout/style/texture prior 和 style sampling policy。
+- 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
+- 从磁盘 tile source 组装写出可以降低调用方对完整数组输入的依赖，但只要底层仍需要组装内存数组或不能做到真正逐 tile 写入 OME-TIFF，就必须继续在报告中标记 `production_streaming=false`，不得宣称为 production gigapixel streaming writer。
+
 ## v0.66.0 - 2026-05-24 P4 可恢复输出与磁盘 tile 契约需求
 
 ### 用户需求
