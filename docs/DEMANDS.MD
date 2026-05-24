@@ -1,5 +1,29 @@
 # DEMANDS
 
+## v0.64.0 - 2026-05-24 P2 可交互 PySide6 配置页开发需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 P2“可交互 PySide6 自定义配置页”，优先补齐 `AC-MISS-02` 与 `AC-DEV-01` 中指出的 UI 缺口。
+
+### 结构化需求
+
+- 将 `src/he_wsi_generator/ui/pyside_app.py` 从只读字段展示升级为真实单页配置界面。
+- UI 至少支持编辑或选择：generation config 保存路径、prior manifest、checkpoint manifest、输出目录、generated id、backend、anchor preset、structure anchor、random seed、sample steps、overlap、可选 condition packet / training index，以及 QC non-copy 开关。
+- UI 需要提供 6 类 label mapping 的最小可编辑面板；明显非法的 raw label 输入、重复映射或空必填运行参数必须阻塞保存/运行并显示错误。
+- UI 需要能把表单保存为 generation config JSON，并能通过现有 CLI/local job runner 创建或执行 generation job，不把核心生成逻辑写入 Qt 事件处理。
+- 增加非 Qt workflow helper，用于把 UI form state 转换为 generation config、`run-generation` 命令和 local job record，便于 UI 层薄封装与单元测试。
+- 使用 worker 隔离开发：
+  - `p2-ui-form-20260524` 负责 PySide6 表单与 GUI smoke 测试。
+  - `p2-ui-job-command-20260524` 负责非 Qt workflow helper 与单元测试。
+
+### 边界说明
+
+- 本批次不让 `run-generation` 默认弹 GUI，继续保留 CLI 自动化入口；GUI 优先通过 `launch-ui` 使用。
+- 本批次不实现 production latent diffusion / ControlNet / DiT，不实现生产级 WSI streaming writer。
+- 本批次允许将项目版本升级到 `v0.64.0`，由 orchestrator 在 worker 回收后统一同步版本、README、审计清单和变更日志。
+
 ## 2026-05-24 MultiCenterWSIGenerator conda 环境与环境化验证需求
 
 ### 用户需求
