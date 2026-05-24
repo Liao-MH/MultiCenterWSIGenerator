@@ -1,5 +1,28 @@
 # DEMANDS
 
+## v0.66.0 - 2026-05-24 P4 可恢复输出与磁盘 tile 契约需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-MISS-06` / P4，推进 production 级 gigapixel OME-TIFF 流式写出、恢复和磁盘级 tile streaming 缺口中可验证、可增量交付的部分。
+
+### 结构化需求
+
+- 使用 worker 隔离开发：
+  - `p4-resumable-tile-manifest-20260524` 负责在 tiling 层新增可恢复 tile manifest/state helper，支持记录 pending/completed/failed 状态、下一个待执行 tile、覆盖率校验和不完整 manifest 的显式失败。
+  - `p4-ome-tiff-streaming-contract-20260524` 负责在 OME-TIFF 输出层新增磁盘 tile source/streaming contract 校验与报告能力，确保 incomplete tile input 不会被误判为可发布输出。
+- 本批次可以把 `AC-MISS-06` 从“完全缺失”推进为“部分完成/仍偏离 production”，但不得把现有 tifffile 内存数组 writer 宣称为真正 production 级 gigapixel streaming writer。
+- 版本号升级到 `v0.66.0`，由 orchestrator 在 worker 回收后统一同步版本文件、README、`docs/audit/`、`docs/CHANGELOG.md` 和测试断言。
+- 增加定向单元测试覆盖 tile manifest 恢复语义、incomplete manifest 显式失败、tile source 覆盖校验和输出报告契约。
+
+### 边界说明
+
+- 本批次不实现 production latent diffusion / ControlNet / DiT。
+- 本批次不实现生产级 layout/style/texture prior 和 style sampling policy。
+- 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
+- 如底层 tifffile 能力不足以直接写入真正逐 tile 的 OME-TIFF pyramid，本批次必须保守记录为磁盘 tile streaming contract/可恢复状态能力，而不是完整 production streaming writer。
+
 ## v0.65.1 - 2026-05-24 P6 维护性收敛需求
 
 ### 用户需求
