@@ -182,6 +182,8 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
     streaming_contract["production_streaming"] = True
     streaming_contract["partial_contract_only"] = False
     streaming_contract["resume_capable"] = False
+    streaming_contract["pyramid_order"] = plan["pyramid_order"]
+    streaming_contract["level_order"] = plan["level_order"]
     streaming_contract["streaming_limitations"] = streaming_write_report["streaming_limitations"]
     return {
         "status": "written",
@@ -534,9 +536,8 @@ def _build_tile_iterator_streaming_plan(
     chunk_width: int,
 ) -> dict:
     records = _validate_tile_records(manifest.get("tiles", manifest.get("records")))
-    level_shapes = _level_shapes_by_index(manifest.get("levels", []))
-    if not level_shapes:
-        raise OutputWriteError("tile source levels must declare shape for streaming write")
+    ordered_levels = _streaming_levels_from_manifest(manifest.get("levels", []))
+    level_shapes = {level["level_index"]: level["shape"] for level in ordered_levels}
 
     level_records: dict[int, dict[tuple[int, int], dict]] = {
         level_index: {} for level_index in level_shapes
@@ -588,8 +589,9 @@ def _build_tile_iterator_streaming_plan(
         level_counts[level_index] += 1
 
     levels = []
-    for level_index in sorted(level_shapes):
-        level_shape = level_shapes[level_index]
+    for pyramid_position, level in enumerate(ordered_levels):
+        level_index = level["level_index"]
+        level_shape = level["shape"]
         height, width = level_shape[:2]
         grid_y = _ceil_div(height, chunk_height)
         grid_x = _ceil_div(width, chunk_width)
@@ -600,6 +602,7 @@ def _build_tile_iterator_streaming_plan(
         levels.append(
             {
                 "level_index": level_index,
+                "pyramid_position": pyramid_position,
                 "shape": level_shape,
                 "tile_grid": [grid_y, grid_x],
                 "tile_count": level_counts[level_index],
@@ -608,9 +611,47 @@ def _build_tile_iterator_streaming_plan(
         )
 
     return {
+        "pyramid_order": "high_to_low_resolution",
+        "level_order": [level["level_index"] for level in levels],
         "level_shapes": [level["shape"] for level in levels],
         "levels": levels,
     }
+
+
+def _streaming_levels_from_manifest(value: Any) -> list[dict]:
+    if not isinstance(value, list) or not value:
+        raise OutputWriteError("tile source levels must declare shape for streaming write")
+    levels = []
+    seen_indexes: set[int] = set()
+    previous_height = None
+    previous_width = None
+    for index, level in enumerate(value):
+        if not isinstance(level, dict):
+            raise OutputWriteError(f"tile_source.levels[{index}] must be an object")
+        level_index = _validate_non_negative_int(
+            level.get("level_index"),
+            f"tile_source.levels[{index}].level_index",
+        )
+        if level_index in seen_indexes:
+            raise OutputWriteError(f"duplicate tile source level_index={level_index}")
+        if "shape" not in level:
+            raise OutputWriteError(
+                f"tile_source.levels[{index}].shape is required for streaming write"
+            )
+        shape = _validate_shape(level.get("shape"), f"tile_source.levels[{index}].shape")
+        height, width = shape[:2]
+        # Streaming writes the OME-TIFF in this manifest order; accepting a
+        # later level that is larger would silently invert the pyramid.
+        if previous_height is not None and (height > previous_height or width > previous_width):
+            raise OutputWriteError(
+                "streaming pyramid level order must be high-to-low resolution; "
+                f"tile_source.levels[{index}].shape is larger than the previous level"
+            )
+        levels.append({"level_index": level_index, "shape": shape})
+        seen_indexes.add(level_index)
+        previous_height = height
+        previous_width = width
+    return levels
 
 
 def _validate_streaming_tile_grid_cell(
@@ -672,6 +713,8 @@ def _tile_iterator_streaming_report(
         "write_mode": "tile_iterator_streaming_write",
         "production_streaming": True,
         "resume_capable": False,
+        "pyramid_order": plan["pyramid_order"],
+        "level_order": plan["level_order"],
         "bigtiff": bool(bigtiff),
         "bigtiff_threshold_bytes": int(bigtiff_threshold_bytes),
         "estimated_total_bytes": int(estimated_total_bytes),
@@ -679,6 +722,7 @@ def _tile_iterator_streaming_report(
         "levels": [
             {
                 "level_index": level["level_index"],
+                "pyramid_position": level["pyramid_position"],
                 "shape": level["shape"],
                 "tile_grid": level["tile_grid"],
                 "tile_count": level["tile_count"],
