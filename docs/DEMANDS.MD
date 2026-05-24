@@ -1,5 +1,36 @@
 # DEMANDS
 
+## v0.72.0 - 2026-05-24 P5 sampled policy 生成摘要贯通需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-05` 的保守可交付子集：在 v0.71.0 已能把 `sampled_style_policy` / `sampled_texture_policy` 写入 condition packet 的基础上，让 smoke generation metadata、generation run summary 和 torch diffusion smoke sample manifest 继续保留 selected style/token 的可审计摘要，避免 condition packet 后续输出只剩 style seed / texture cluster 的弱摘要。
+
+### 结构化需求
+
+- 使用单 worker 隔离开发：
+  - `p5-generation-sampled-policy-summary-20260524` 负责补齐 generation/runtime summary helper 对 sampled style/texture policy 的摘要保留。
+- 新增最小 API/输出能力：
+  - `src/he_wsi_generator/generation/executor.py` 的 condition packet summary 在 `conditions.style_seed.source == "sampled_style_policy"` 时记录 `sampled_style_policy` 摘要；
+  - 在 `conditions.texture_token.source == "sampled_texture_policy"` 时记录 `sampled_texture_policy` 摘要；
+  - `src/he_wsi_generator/models/torch_training.py` 的 condition packet summary 同步记录相同摘要，确保 `sample_torch_diffusion_smoke_model()` 的 sample manifest 与 `run_torch_diffusion_smoke_generation()` 的 metadata/run summary 保留该信息。
+- 摘要字段保持精简、可审计：
+  - sampled style 摘要记录 `source`、`artifact_path`、`sample_id`、`random_seed`、`selection_policy`、`selected_style`、`rgb_statistics_reference` 和 `limitations`；
+  - sampled texture 摘要记录 `source`、`artifact_path`、`sample_id`、`random_seed`、`selection_policy`、`cluster_id`、`representative_embedding_index`、`prototype_index`、`sample_count`、`fraction`、`mean_embedding`、`std_embedding` 和 `limitations`。
+- 增加定向单元测试覆盖：
+  - smoke generation metadata 与 generation run summary 会保留 sampled style/texture policy 摘要；
+  - torch condition packet loader / sample manifest / torch smoke generation metadata 会保留 sampled style/texture policy 摘要；
+  - 缺失 sampled policy 关键摘要字段时显式失败，不静默降级。
+- 版本号规划升级到 `v0.72.0`，属于向后兼容的审计摘要贯通功能增量。
+
+### 边界说明
+
+- 本批次仍不实现 production latent diffusion / ControlNet / DiT。
+- 本批次仍不实现生产级 trainable style encoder、texture codebook、VQ-VAE token sampler 或真实 morphology token generator。
+- 本批次只补齐 condition packet 摘要在 generation 输出中的可审计保留，不改变 condition feature vector 编码、不自动调用 policy sampler、不改变 smoke/torch generation backend 的生成行为。
+- 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
+
 ## v0.71.0 - 2026-05-24 P5 sampled policy 条件包接入需求
 
 ### 用户需求
