@@ -8,6 +8,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 import he_wsi_generator.cli as cli_module
 from he_wsi_generator.constants import (
     CASCADE_LEVELS,
@@ -16,6 +21,7 @@ from he_wsi_generator.constants import (
     PROJECT_VERSION,
     TILE_SIZE_40X,
 )
+from he_wsi_generator.schemas import validate_generation_config
 from he_wsi_generator.ui.config import (
     create_default_ui_config,
     load_ui_config,
@@ -26,10 +32,11 @@ from he_wsi_generator.ui.controller import (
     JobStateStore,
     collect_output_summary,
 )
-from he_wsi_generator.ui.pyside_app import UIUnavailableError, ensure_pyside_available
-
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from he_wsi_generator.ui.pyside_app import (
+    UIUnavailableError,
+    create_main_window,
+    ensure_pyside_available,
+)
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -150,7 +157,7 @@ class UITests(unittest.TestCase):
     def test_default_ui_config_contains_single_page_sections(self):
         config = create_default_ui_config()
 
-        self.assertEqual(config["schema_version"], "v0.63.0")
+        self.assertEqual(config["schema_version"], "v0.64.0")
         self.assertEqual(
             list(config["sections"]),
             [
@@ -192,7 +199,7 @@ class UITests(unittest.TestCase):
                 save_ui_config(config, path)
                 loaded = load_ui_config(path)
 
-        self.assertEqual(loaded["schema_version"], "v0.63.0")
+        self.assertEqual(loaded["schema_version"], "v0.64.0")
         self.assertEqual(loaded["sections"]["qc_output"]["status_levels"], ["pass", "warning", "fail"])
 
     def test_ui_config_yaml_requires_optional_dependency(self):
@@ -341,7 +348,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
-        self.assertEqual(config["schema_version"], "v0.63.0")
+        self.assertEqual(config["schema_version"], "v0.64.0")
 
     def test_cli_writes_yaml_ui_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -355,7 +362,7 @@ class UITests(unittest.TestCase):
                 config = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(result, 0)
-        self.assertEqual(config["schema_version"], "v0.63.0")
+        self.assertEqual(config["schema_version"], "v0.64.0")
 
     def test_cli_launches_ui_with_yaml_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -371,7 +378,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertTrue(launch_mock.called)
-        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.63.0")
+        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.64.0")
 
     def test_cli_inspects_output_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -489,6 +496,139 @@ class UITests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("non_copy_report.patch_nearest_neighbor_search must be false", result.stderr)
+
+
+class PySideFormTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        try:
+            from PySide6.QtWidgets import QApplication
+        except ImportError as exc:
+            raise unittest.SkipTest("PySide6 is not installed") from exc
+        cls.app = QApplication.instance() or QApplication([])
+
+    def tearDown(self):
+        self.app.processEvents()
+
+    def test_main_window_exposes_enabled_form_controls(self):
+        from PySide6.QtWidgets import QComboBox, QLineEdit, QPushButton
+
+        window = create_main_window()
+
+        self.assertIsNotNone(window.findChild(QLineEdit, "generation_config_path_input"))
+        self.assertIsNotNone(window.findChild(QLineEdit, "prior_manifest_input"))
+        self.assertIsNotNone(window.findChild(QLineEdit, "checkpoint_manifest_input"))
+        self.assertIsNotNone(window.findChild(QLineEdit, "output_root_input"))
+        self.assertIsNotNone(window.findChild(QLineEdit, "generated_id_input"))
+        self.assertIsNotNone(window.findChild(QComboBox, "backend_select"))
+        self.assertIsNotNone(window.findChild(QComboBox, "anchor_preset_select"))
+        for class_name in MASK_CLASSES:
+            self.assertIsNotNone(window.findChild(QLineEdit, f"label_mapping_{class_name}_input"))
+        self.assertTrue(window.findChild(QPushButton, "save_config_button").isEnabled())
+        self.assertTrue(window.findChild(QPushButton, "create_job_button").isEnabled())
+
+    def test_save_config_writes_valid_generation_json(self):
+        from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+
+            window.findChild(QPushButton, "save_config_button").click()
+            self.app.processEvents()
+
+            config_path = root / "generation-config.json"
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+
+        validated = validate_generation_config(payload)
+        self.assertEqual(validated["schema_version"], PROJECT_VERSION)
+        self.assertEqual(validated["anchor_preset"], "fully_de_novo")
+        self.assertIn("Saved generation config", window.findChild(QLabel, "ui_status_label").text())
+
+    def test_invalid_label_mapping_blocks_save(self):
+        from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+            window.findChild(QLineEdit, "label_mapping_tissue_input").setText("1, not-an-int")
+
+            window.findChild(QPushButton, "save_config_button").click()
+            self.app.processEvents()
+
+            status = window.findChild(QLabel, "ui_status_label").text()
+
+        self.assertFalse((root / "generation-config.json").exists())
+        self.assertIn("label mapping", status)
+
+    def test_missing_run_parameters_and_torch_training_index_block_job_creation(self):
+        from PySide6.QtWidgets import QLabel, QComboBox, QLineEdit, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+            window.findChild(QLineEdit, "prior_manifest_input").clear()
+
+            window.findChild(QPushButton, "create_job_button").click()
+            self.app.processEvents()
+            missing_prior_status = window.findChild(QLabel, "ui_status_label").text()
+
+            self._populate_valid_form(window, root)
+            window.findChild(QLineEdit, "generated_id_input").clear()
+            window.findChild(QPushButton, "create_job_button").click()
+            self.app.processEvents()
+            missing_generated_id_status = window.findChild(QLabel, "ui_status_label").text()
+
+            self._populate_valid_form(window, root)
+            window.findChild(QComboBox, "backend_select").setCurrentText("torch-diffusion-smoke")
+            window.findChild(QLineEdit, "training_index_input").clear()
+            window.findChild(QPushButton, "create_job_button").click()
+            self.app.processEvents()
+            missing_training_status = window.findChild(QLabel, "ui_status_label").text()
+
+        self.assertIn("prior manifest", missing_prior_status)
+        self.assertIn("generated id", missing_generated_id_status)
+        self.assertIn("training index", missing_training_status)
+        self.assertFalse((root / "generation-config.json").exists())
+        self.assertFalse((root / "outputs" / "ui_jobs" / "gen-001" / "job.json").exists())
+
+    def test_create_job_writes_queued_local_job_record(self):
+        from PySide6.QtWidgets import QLineEdit, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+
+            window.findChild(QPushButton, "create_job_button").click()
+            self.app.processEvents()
+            record_path = root / "outputs" / "ui_jobs" / "gen-001" / "job.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(record["status"], "queued")
+        self.assertEqual(record["command"][2:4], ["he_wsi_generator.cli", "run-generation"])
+        self.assertIn(str(root / "generation-config.json"), record["command"])
+
+    def _populate_valid_form(self, window, root: Path) -> None:
+        from PySide6.QtWidgets import QLineEdit
+
+        values = {
+            "generation_config_path_input": root / "generation-config.json",
+            "prior_manifest_input": root / "prior_manifest.json",
+            "checkpoint_manifest_input": root / "checkpoint_manifest.json",
+            "output_root_input": root / "outputs",
+            "generated_id_input": "gen-001",
+            "condition_packet_input": "",
+            "training_index_input": root / "training-index.jsonl",
+        }
+        for object_name, value in values.items():
+            window.findChild(QLineEdit, object_name).setText(str(value))
+        for raw_label, class_name in enumerate(MASK_CLASSES):
+            window.findChild(QLineEdit, f"label_mapping_{class_name}_input").setText(str(raw_label))
 
 
 if __name__ == "__main__":

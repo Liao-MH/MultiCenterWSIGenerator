@@ -1,5 +1,81 @@
 # CHANGELOG
 
+## v0.64.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/` 中的未完成项继续开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 P2“可交互 PySide6 自定义配置页”，优先补齐只读 UI 骨架缺口。
+
+### 已做改动
+
+- 版本号升级到 `v0.64.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建并派发两个 P2 worker：
+  - `.agent/tasks/p2-ui-form-20260524.md`
+  - `.agent/tasks/p2-ui-job-command-20260524.md`
+- 回收 worker 报告：
+  - `.agent/reports/p2-ui-form-20260524.md`
+  - `.agent/reports/p2-ui-job-command-20260524.md`
+- 新增 `src/he_wsi_generator/ui/workflow.py`，提供非 Qt helper：从 UI form state 构建 generation config、`run-generation` 命令和 queued local job record。
+- `src/he_wsi_generator/ui/pyside_app.py` 从只读展示窗口升级为可交互单页表单，支持保存 generation config、填写 run-generation 参数、编辑 6 类 label mapping，并通过 `JobRunner` 创建 queued job record。
+- 新增/更新 UI 测试，覆盖 PySide6 offscreen 表单控件、保存配置、非法 label mapping、缺失必填参数、torch backend 缺 training index 和 workflow helper 成功/失败路径。
+- 更新 README 和 `docs/audit/`，把“真实可交互 PySide6 自定义配置页”从缺失项调整为已完成，同时保留 GUI 内执行/监控/输出查看未完成边界。
+
+### 影响文件
+
+- `.agent/tasks/p2-ui-form-20260524.md`
+- `.agent/tasks/p2-ui-job-command-20260524.md`
+- `.agent/reports/p2-ui-form-20260524.md`
+- `.agent/reports/p2-ui-job-command-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/ui/__init__.py`
+- `src/he_wsi_generator/ui/pyside_app.py`
+- `src/he_wsi_generator/ui/workflow.py`
+- `tests/test_ui.py`
+- `tests/test_ui_workflow.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.64.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker `p2-ui-form-20260524`：
+  - RED：`QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui.PySideFormTests -v` 初次失败于旧窗口缺少目标表单控件。
+  - GREEN：`QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui -v` 通过，`Ran 22 tests ... OK`。
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v` 通过。
+  - `git diff --check` 通过。
+- Worker `p2-ui-job-command-20260524`：
+  - GREEN：`mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui_workflow tests.test_job_runner -v` 通过，`Ran 23 tests ... OK`。
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v` 通过。
+  - `git diff --check` 通过。
+- Orchestrator 合并后复核：
+  - `QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui tests.test_ui_workflow -v`
+    - 结果：通过，`Ran 32 tests ... OK`。
+  - `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+    - 结果：主 worktree editable install 成功，包版本为 `0.64.0`。
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.64.0`。
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`。
+  - `QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python - <<'PY' ... create_main_window() ... PY`
+    - 结果：窗口标题为 `MultiCenterWSIGenerator`，`generation_config_path_input` 存在，保存按钮可用，widget count 为 `126`。
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 206 tests in 18.622s OK`。
+  - `git diff --check`
+    - 结果：通过，无 whitespace error。
+  - `git status --short`
+    - 结果：v0.64.0 基线提交后主工作区干净。
+  - `git log -1 --oneline`
+    - 结果：最新提交信息包含版本号 `v0.64.0 interactive PySide configuration page`。
+
 ## Audit Snapshot - 2026-05-24（v0.63.0 conda 环境验证）
 
 ### 用户需求
