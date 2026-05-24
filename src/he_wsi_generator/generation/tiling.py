@@ -169,6 +169,241 @@ def complete_tile_traversal_plan(
     return updated_plan
 
 
+def build_resumable_tile_manifest(tile_traversal_plan: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(tile_traversal_plan, dict):
+        raise GenerationTilingError("tile_traversal_plan must be an object")
+    base_plan = complete_tile_traversal_plan(
+        tile_traversal_plan,
+        completed_tile_count=_validate_resume_count(tile_traversal_plan),
+    )
+    tiles = []
+    for index, tile in enumerate(base_plan["tiles"]):
+        tile_copy = dict(tile)
+        tile_copy.setdefault("tile_index", index)
+        tile_copy["attempt_count"] = 0
+        tile_copy["output_path"] = None
+        tile_copy["error_message"] = None
+        tiles.append(tile_copy)
+
+    manifest = {
+        "schema_version": PROJECT_VERSION,
+        "manifest_type": "resumable_tile_manifest",
+        "tile_traversal": base_plan["tile_traversal"],
+        "cascade_level": base_plan["cascade_level"],
+        "canvas_size_40x": list(base_plan["canvas_size_40x"]),
+        "model_tile_size_40x": list(base_plan["model_tile_size_40x"]),
+        "overlap_px_40x": base_plan["overlap_px_40x"],
+        "stride_40x": list(base_plan["stride_40x"]),
+        "edge_policy": base_plan["edge_policy"],
+        "tile_count": base_plan["tile_count"],
+        "tiles": tiles,
+    }
+    return _refresh_resumable_tile_manifest(manifest)
+
+
+def update_resumable_tile_manifest(
+    tile_manifest: dict[str, Any],
+    *,
+    tile_index: int,
+    status: str,
+    output_path: str | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    manifest = validate_resumable_tile_manifest(tile_manifest)
+    index = _validate_tile_index_value(tile_index, "tile_index")
+    if index >= manifest["tile_count"]:
+        raise GenerationTilingError("tile_index must be smaller than tile_count")
+    if status not in {"pending", "completed", "failed"}:
+        raise GenerationTilingError("status must be pending, completed, or failed")
+    if output_path is not None and (not isinstance(output_path, str) or output_path == ""):
+        raise GenerationTilingError("output_path must be a non-empty string")
+    if error_message is not None and (
+        not isinstance(error_message, str) or error_message == ""
+    ):
+        raise GenerationTilingError("error_message must be a non-empty string")
+
+    tiles = [dict(tile) for tile in manifest["tiles"]]
+    tile = dict(tiles[index])
+    tile["status"] = status
+    tile["attempt_count"] = int(tile.get("attempt_count", 0)) + 1
+    if status == "completed":
+        tile["output_path"] = output_path
+        tile["error_message"] = None
+    elif status == "failed":
+        tile["output_path"] = output_path
+        tile["error_message"] = error_message
+    else:
+        tile["output_path"] = None
+        tile["error_message"] = None
+    tiles[index] = tile
+
+    updated = dict(manifest)
+    updated["tiles"] = tiles
+    return _refresh_resumable_tile_manifest(updated)
+
+
+def validate_resumable_tile_manifest(tile_manifest: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(tile_manifest, dict):
+        raise GenerationTilingError("tile_manifest must be an object")
+    if tile_manifest.get("schema_version") != PROJECT_VERSION:
+        raise GenerationTilingError(f"tile_manifest.schema_version must be {PROJECT_VERSION}")
+    if tile_manifest.get("manifest_type") != "resumable_tile_manifest":
+        raise GenerationTilingError("tile_manifest.manifest_type must be resumable_tile_manifest")
+    tile_count = _validate_tile_count_value(tile_manifest.get("tile_count"), "tile_count")
+    tiles = tile_manifest.get("tiles")
+    if not isinstance(tiles, list):
+        raise GenerationTilingError("tile_manifest.tiles must be a list")
+    if len(tiles) != tile_count:
+        raise GenerationTilingError("tile_manifest.tiles length must match tile_count")
+
+    validated_tiles = []
+    for index, tile in enumerate(tiles):
+        if not isinstance(tile, dict):
+            raise GenerationTilingError(f"tile_manifest.tiles[{index}] must be an object")
+        tile_index = _validate_tile_index_value(
+            tile.get("tile_index"),
+            f"tile_manifest.tiles[{index}].tile_index",
+        )
+        if tile_index != index:
+            raise GenerationTilingError("tile_manifest tile_index values must be sequential")
+        status = tile.get("status")
+        if status not in {"pending", "completed", "failed"}:
+            raise GenerationTilingError(f"tile_manifest.tiles[{index}].status is invalid")
+        attempt_count = tile.get("attempt_count", 0)
+        if not isinstance(attempt_count, int) or isinstance(attempt_count, bool) or attempt_count < 0:
+            raise GenerationTilingError(
+                f"tile_manifest.tiles[{index}].attempt_count must be non-negative"
+            )
+        output_path = tile.get("output_path")
+        if output_path is not None and (not isinstance(output_path, str) or output_path == ""):
+            raise GenerationTilingError(
+                f"tile_manifest.tiles[{index}].output_path must be a non-empty string"
+            )
+        error_message = tile.get("error_message")
+        if error_message is not None and (
+            not isinstance(error_message, str) or error_message == ""
+        ):
+            raise GenerationTilingError(
+                f"tile_manifest.tiles[{index}].error_message must be a non-empty string"
+            )
+        validated_tile = dict(tile)
+        validated_tile["attempt_count"] = attempt_count
+        validated_tile.setdefault("output_path", None)
+        validated_tile.setdefault("error_message", None)
+        validated_tiles.append(validated_tile)
+
+    refreshed = dict(tile_manifest)
+    refreshed["tile_count"] = tile_count
+    refreshed["tiles"] = validated_tiles
+    expected = _summarize_tile_statuses(validated_tiles, tile_count)
+    for key, value in expected.items():
+        if refreshed.get(key) != value:
+            raise GenerationTilingError(f"tile_manifest.{key} does not match tile statuses")
+    return refreshed
+
+
+def require_complete_tile_manifest(tile_manifest: dict[str, Any]) -> dict[str, Any]:
+    manifest = validate_resumable_tile_manifest(tile_manifest)
+    if manifest["failed_tile_count"] > 0:
+        raise GenerationTilingError("tile manifest contains failed tiles")
+    if _has_row_major_gap(manifest["tiles"]):
+        raise GenerationTilingError("tile manifest must complete tiles in row-major resume order")
+    if manifest["pending_tile_count"] > 0:
+        raise GenerationTilingError("tile manifest contains pending tiles")
+    if manifest["completed_tile_count"] != manifest["tile_count"]:
+        raise GenerationTilingError("tile manifest is incomplete")
+    return manifest
+
+
+def _refresh_resumable_tile_manifest(tile_manifest: dict[str, Any]) -> dict[str, Any]:
+    tile_count = _validate_tile_count_value(tile_manifest.get("tile_count"), "tile_count")
+    tiles = tile_manifest.get("tiles")
+    if not isinstance(tiles, list):
+        raise GenerationTilingError("tile_manifest.tiles must be a list")
+    if len(tiles) != tile_count:
+        raise GenerationTilingError("tile_manifest.tiles length must match tile_count")
+
+    normalized_tiles = []
+    for index, tile in enumerate(tiles):
+        if not isinstance(tile, dict):
+            raise GenerationTilingError(f"tile_manifest.tiles[{index}] must be an object")
+        normalized = dict(tile)
+        normalized["tile_index"] = _validate_tile_index_value(
+            normalized.get("tile_index"),
+            f"tile_manifest.tiles[{index}].tile_index",
+        )
+        if normalized["tile_index"] != index:
+            raise GenerationTilingError("tile_manifest tile_index values must be sequential")
+        normalized.setdefault("attempt_count", 0)
+        normalized.setdefault("output_path", None)
+        normalized.setdefault("error_message", None)
+        normalized_tiles.append(normalized)
+
+    refreshed = dict(tile_manifest)
+    refreshed["schema_version"] = PROJECT_VERSION
+    refreshed["manifest_type"] = "resumable_tile_manifest"
+    refreshed["tile_count"] = tile_count
+    refreshed["tiles"] = normalized_tiles
+    refreshed.update(_summarize_tile_statuses(normalized_tiles, tile_count))
+    return refreshed
+
+
+def _summarize_tile_statuses(tiles: list[dict[str, Any]], tile_count: int) -> dict[str, Any]:
+    completed = sum(1 for tile in tiles if tile.get("status") == "completed")
+    failed = sum(1 for tile in tiles if tile.get("status") == "failed")
+    pending = sum(1 for tile in tiles if tile.get("status") == "pending")
+    resume_index = 0
+    for tile in tiles:
+        if tile.get("status") != "completed":
+            break
+        resume_index += 1
+    next_tile_index = None if resume_index == tile_count else resume_index
+    if failed > 0:
+        execution_status = "failed"
+    elif completed == tile_count:
+        execution_status = "completed"
+    else:
+        execution_status = "in_progress"
+    return {
+        "completed_tile_count": completed,
+        "pending_tile_count": pending,
+        "failed_tile_count": failed,
+        "resume_index": resume_index,
+        "next_tile_index": next_tile_index,
+        "execution_status": execution_status,
+    }
+
+
+def _has_row_major_gap(tiles: list[dict[str, Any]]) -> bool:
+    seen_open_tile = False
+    for tile in tiles:
+        if tile.get("status") == "completed":
+            if seen_open_tile:
+                return True
+        else:
+            seen_open_tile = True
+    return False
+
+
+def _validate_resume_count(tile_traversal_plan: dict[str, Any]) -> int:
+    resume_index = tile_traversal_plan.get("resume_index", 0)
+    if not isinstance(resume_index, int) or isinstance(resume_index, bool) or resume_index < 0:
+        raise GenerationTilingError("tile_traversal_plan.resume_index must be non-negative")
+    return resume_index
+
+
+def _validate_tile_count_value(value: Any, path: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise GenerationTilingError(f"{path} must be a non-negative integer")
+    return int(value)
+
+
+def _validate_tile_index_value(value: Any, path: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise GenerationTilingError(f"{path} must be a non-negative integer")
+    return int(value)
+
+
 def _axis_origins(length: int, tile_size: int, stride: int) -> list[int]:
     origins = [0]
     while origins[-1] + tile_size < length:
