@@ -483,6 +483,8 @@ class GenerationRunnerTests(unittest.TestCase):
             )
             metadata = json.loads((output_root / "metadata.json").read_text(encoding="utf-8"))
             run_summary = json.loads((output_root / "generation_run.json").read_text(encoding="utf-8"))
+            with tifffile.TiffFile(metadata["output"]["wsi_path"]) as tiff:
+                shapes = [page.shape for page in tiff.series[0].levels]
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(metadata["generation"]["wsi_writer"], "tile-streaming")
@@ -492,7 +494,15 @@ class GenerationRunnerTests(unittest.TestCase):
         )
         self.assertTrue(run_summary["pyramid_report"]["production_streaming"])
         self.assertFalse(run_summary["pyramid_report"]["resume_capable"])
-        self.assertEqual(run_summary["pyramid_report"]["level_count"], 1)
+        self.assertEqual(run_summary["pyramid_report"]["level_count"], 4)
+        self.assertEqual(
+            shapes,
+            [(512, 512, 3), (128, 128, 3), (32, 32, 3), (16, 16, 3)],
+        )
+        self.assertEqual(
+            [level["shape"] for level in run_summary["pyramid_report"]["streaming_write_report"]["levels"]],
+            [[512, 512, 3], [128, 128, 3], [32, 32, 3], [16, 16, 3]],
+        )
         self.assertEqual(
             run_summary["pyramid_report"]["streaming_write_report"]["levels"][0]["tile_grid"],
             [1, 1],

@@ -97,7 +97,15 @@ def run_smoke_generation(
     plan["stages"] = _complete_generation_stages(plan["stages"])
     plan["tile_traversal_plan"] = complete_tile_traversal_plan(plan["tile_traversal_plan"])
     plan["tile_manifest_path"] = str(tile_output["tile_manifest_path"])
-    plan["tile_source_manifest_path"] = str(tile_output["tile_source_manifest_path"])
+    tile_source_manifest_path = tile_output["tile_source_manifest_path"]
+    if wsi_writer == TILE_STREAMING_WSI_WRITER:
+        tile_source_manifest_path = _write_smoke_multilevel_tile_source_manifest(
+            numpy,
+            pyramid_levels,
+            output_root=root,
+            chunk_shape=tuple(generation_config["tile_size_40x"][::-1]),
+        )
+    plan["tile_source_manifest_path"] = str(tile_source_manifest_path)
     plan["wsi_writer"] = wsi_writer
 
     wsi_path = root / "generated.ome.tiff"
@@ -110,7 +118,7 @@ def run_smoke_generation(
         }
         if wsi_writer == TILE_STREAMING_WSI_WRITER:
             pyramid_report = write_pyramid_ome_tiff_streaming_from_tile_sources(
-                tile_output["tile_source_manifest_path"],
+                tile_source_manifest_path,
                 wsi_path,
                 metadata=metadata_tags,
                 chunk_shape=tuple(generation_config["tile_size_40x"][::-1]),
@@ -120,7 +128,7 @@ def run_smoke_generation(
                 pyramid_levels,
                 wsi_path,
                 metadata=metadata_tags,
-                tile_source_manifest=tile_output["tile_source_manifest_path"],
+                tile_source_manifest=tile_source_manifest_path,
             )
         mask_report = write_mask_array(
             _conditioned_or_smoke_mask(
@@ -1066,6 +1074,85 @@ def _build_tile_source_manifest(
         ],
         "tiles": records,
     }
+
+
+def _write_smoke_multilevel_tile_source_manifest(
+    numpy,
+    pyramid_levels: list[Any],
+    *,
+    output_root: Path,
+    chunk_shape: tuple[int, int],
+) -> Path:
+    """Materialize smoke pyramid levels as complete disk tile sources.
+
+    This helper is only used by the explicit `tile-streaming` smoke writer. It
+    keeps the default array writer and level0 execution/resume manifest intact,
+    while giving the OME-TIFF tiled iterator writer a full high-to-low pyramid
+    manifest. The smoke cascade arrays are still produced in memory before this
+    point, so this is not a production backend streaming implementation.
+    """
+    chunk_height, chunk_width = [int(value) for value in chunk_shape]
+    if chunk_height <= 0 or chunk_width <= 0:
+        raise GenerationExecutionError("tile-streaming chunk shape must contain positive values")
+
+    tile_root = output_root / "streaming_tiles"
+    tile_root.mkdir(parents=True, exist_ok=True)
+    levels = []
+    records = []
+    for level_index, level in enumerate(pyramid_levels):
+        array = numpy.asarray(level)
+        if array.ndim != 3 or array.shape[2] != 3 or array.dtype != numpy.uint8:
+            raise GenerationExecutionError("smoke streaming pyramid levels must be uint8 RGB arrays")
+        height, width = [int(value) for value in array.shape[:2]]
+        grid_y = (height + chunk_height - 1) // chunk_height
+        grid_x = (width + chunk_width - 1) // chunk_width
+        expected_count = int(grid_y * grid_x)
+        levels.append(
+            {
+                "level_index": level_index,
+                "shape": [height, width, 3],
+                "expected_tile_count": expected_count,
+            }
+        )
+        for row in range(grid_y):
+            for col in range(grid_x):
+                x_origin = col * chunk_width
+                y_origin = row * chunk_height
+                tile_width = min(chunk_width, width - x_origin)
+                tile_height = min(chunk_height, height - y_origin)
+                tile = array[y_origin : y_origin + tile_height, x_origin : x_origin + tile_width, :]
+                tile_path = tile_root / f"level-{level_index}-tile-{row:04d}-{col:04d}.npy"
+                numpy.save(tile_path, tile)
+                records.append(
+                    {
+                        "level_index": level_index,
+                        "tile_index": int(row * grid_x + col),
+                        "path": tile_path.relative_to(output_root).as_posix(),
+                        "shape": [tile_height, tile_width, 3],
+                        "dtype": "uint8",
+                        "status": "completed",
+                        "tile_origin": [x_origin, y_origin],
+                        "write_region": [x_origin, y_origin, tile_width, tile_height],
+                    }
+                )
+
+    manifest_path = output_root / "tile_source_manifest.streaming.json"
+    _write_json(
+        manifest_path,
+        {
+            "schema_version": PROJECT_VERSION,
+            "manifest_type": "disk_npy_tile_source_manifest",
+            "source": "smoke_multilevel_pyramid_tile_streaming_manifest",
+            "expected_tile_count": len(records),
+            "levels": levels,
+            "tiles": records,
+            "limitations": [
+                "smoke_cascade_arrays_materialized_before_tile_source_write",
+                "ome_tiff_file_resume_not_supported",
+            ],
+        },
+    )
+    return manifest_path
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
