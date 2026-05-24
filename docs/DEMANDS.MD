@@ -1,5 +1,32 @@
 # DEMANDS
 
+## v0.69.0 - 2026-05-24 P4 多层 tile source streaming 与 writer 契约加固需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-06` / P4，在 v0.68.0 受限 tiled iterator writer 与 smoke-cascade 显式 writer 选择基础上，补齐 smoke `tile-streaming` 当前只写 level0 的缺口，并加固 streaming writer 对 pyramid level 顺序和报告契约的校验。
+
+### 结构化需求
+
+- 使用 worker 隔离开发：
+  - `p4-smoke-multilevel-tile-source-20260524` 负责让 `run-generation --backend smoke-cascade --wsi-writer tile-streaming` 写出完整四层 OME-TIFF pyramid：在 smoke cascade 已生成的四层数组基础上，为每层按 TIFF tile grid 写出 `.npy` tile source manifest，再交给 tiled iterator writer；默认 `array` writer 行为保持不变。
+  - `p4-streaming-writer-pyramid-contract-20260524` 负责在输出层加固 tiled iterator writer 契约：校验 manifest levels 按 high-to-low pyramid 顺序排列，报告写入明确的 pyramid order / resume limitation 字段，并覆盖非法 level 顺序的显式失败测试。
+- Orchestrator 在 worker 回收后统一处理共享文档、版本号、README、`docs/audit/`、`docs/CHANGELOG.md` 和全局版本断言。
+- 版本号规划升级到 `v0.69.0`，属于向后兼容的 P4 功能增量。
+- 增加定向单元测试覆盖：
+  - smoke-cascade 显式 `--wsi-writer tile-streaming` 输出四层 OME-TIFF，并在 generation run summary 中记录四层 streaming write report；
+  - default `--wsi-writer array` 行为、tile manifest 和现有 in-memory pyramid 写出保持不变；
+  - writer 拒绝 level shape 顺序从低到高或后续 level 大于前序 level 的 tile source manifest；
+  - writer 报告继续明确 `resume_capable=false`，不能描述为可中断续写同一个 OME-TIFF 文件。
+
+### 边界说明
+
+- 本批次仍不实现 production latent diffusion / ControlNet / DiT。
+- 本批次仍不实现生产级 layout/style/texture prior 和 style sampling policy。
+- 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
+- 本批次可让 smoke `tile-streaming` 输出完整四层 pyramid，但 smoke 生成过程仍会在内存中构建 preview 级 cascade arrays；不得将其表述为 production backend streaming 或可恢复 OME-TIFF 文件写入。
+
 ## v0.68.0 - 2026-05-24 P4 tile iterator streaming 写出需求
 
 ### 用户需求
