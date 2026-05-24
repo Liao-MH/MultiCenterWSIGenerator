@@ -9,7 +9,11 @@ from ..models.torch_training import TorchTrainingError, sample_torch_diffusion_s
 from ..models.training import ModelRunError, load_checkpoint_manifest
 from ..models.training_batch import TrainingBatchError, load_training_batch
 from ..outputs.masks import write_mask_array
-from ..outputs.ome_tiff import OutputWriteError, write_pyramid_ome_tiff
+from ..outputs.ome_tiff import (
+    OutputWriteError,
+    write_pyramid_ome_tiff,
+    write_pyramid_ome_tiff_streaming_from_tile_sources,
+)
 from ..priors.artifacts import PriorArtifactError, load_prior_manifest
 from ..qc.engine import QCReferenceError, build_qc_report
 from ..schemas import ValidationError, validate_generation_config
@@ -31,6 +35,8 @@ class GenerationExecutionError(RuntimeError):
 
 SMOKE_BACKEND = "smoke-cascade"
 TORCH_DIFFUSION_SMOKE_BACKEND = "torch-diffusion-smoke"
+ARRAY_WSI_WRITER = "array"
+TILE_STREAMING_WSI_WRITER = "tile-streaming"
 
 
 def run_smoke_generation(
@@ -41,9 +47,12 @@ def run_smoke_generation(
     generated_id: str,
     condition_packet_path: str | Path | None = None,
     resume_tile_manifest_path: str | Path | None = None,
+    wsi_writer: str = ARRAY_WSI_WRITER,
 ) -> dict[str, Any]:
     if not isinstance(generated_id, str) or generated_id == "":
         raise GenerationExecutionError("generated_id must be a non-empty string")
+    if wsi_writer not in {ARRAY_WSI_WRITER, TILE_STREAMING_WSI_WRITER}:
+        raise GenerationExecutionError("wsi_writer must be 'array' or 'tile-streaming'")
 
     root = Path(output_root)
     resume_manifest_path = Path(resume_tile_manifest_path) if resume_tile_manifest_path else None
@@ -89,20 +98,30 @@ def run_smoke_generation(
     plan["tile_traversal_plan"] = complete_tile_traversal_plan(plan["tile_traversal_plan"])
     plan["tile_manifest_path"] = str(tile_output["tile_manifest_path"])
     plan["tile_source_manifest_path"] = str(tile_output["tile_source_manifest_path"])
+    plan["wsi_writer"] = wsi_writer
 
     wsi_path = root / "generated.ome.tiff"
     mask_dir = root / "generated_mask"
     try:
-        pyramid_report = write_pyramid_ome_tiff(
-            pyramid_levels,
-            wsi_path,
-            metadata={
-                "GeneratedID": generated_id,
-                "GeneratorBackend": SMOKE_BACKEND,
-                "ProjectVersion": PROJECT_VERSION,
-            },
-            tile_source_manifest=tile_output["tile_source_manifest_path"],
-        )
+        metadata_tags = {
+            "GeneratedID": generated_id,
+            "GeneratorBackend": SMOKE_BACKEND,
+            "ProjectVersion": PROJECT_VERSION,
+        }
+        if wsi_writer == TILE_STREAMING_WSI_WRITER:
+            pyramid_report = write_pyramid_ome_tiff_streaming_from_tile_sources(
+                tile_output["tile_source_manifest_path"],
+                wsi_path,
+                metadata=metadata_tags,
+                chunk_shape=tuple(generation_config["tile_size_40x"][::-1]),
+            )
+        else:
+            pyramid_report = write_pyramid_ome_tiff(
+                pyramid_levels,
+                wsi_path,
+                metadata=metadata_tags,
+                tile_source_manifest=tile_output["tile_source_manifest_path"],
+            )
         mask_report = write_mask_array(
             _conditioned_or_smoke_mask(
                 numpy,
@@ -357,6 +376,8 @@ def _metadata_payload(
         generation_payload["tile_manifest_path"] = plan["tile_manifest_path"]
     if "tile_source_manifest_path" in plan:
         generation_payload["tile_source_manifest_path"] = plan["tile_source_manifest_path"]
+    if "wsi_writer" in plan:
+        generation_payload["wsi_writer"] = plan["wsi_writer"]
 
     return {
         "schema_version": PROJECT_VERSION,
@@ -1036,7 +1057,13 @@ def _build_tile_source_manifest(
         "schema_version": PROJECT_VERSION,
         "manifest_type": "disk_npy_tile_source_manifest",
         "expected_tile_count": tile_manifest["tile_count"],
-        "levels": [{"level_index": 0, "expected_tile_count": tile_manifest["tile_count"]}],
+        "levels": [
+            {
+                "level_index": 0,
+                "shape": list(tile_traversal_plan["canvas_size_40x"][::-1]) + [3],
+                "expected_tile_count": tile_manifest["tile_count"],
+            }
+        ],
         "tiles": records,
     }
 
