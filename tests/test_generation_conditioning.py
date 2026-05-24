@@ -188,6 +188,69 @@ class GenerationConditioningTests(unittest.TestCase):
         )
         return manifest_path
 
+    def write_sampled_style_policy(self, root: Path, style_prior_path: str | Path | None = None) -> Path:
+        policy_path = root / "sampled_style_policy.json"
+        policy_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v0.70.0",
+                    "artifact_type": "sampled_style_policy",
+                    "created_at": "2026-05-24T12:00:00Z",
+                    "sample_id": "style-policy-001",
+                    "random_seed": 17,
+                    "selection_policy": "deterministic_random_seed_mod_tile_count",
+                    "source": {
+                        "source_type": "statistical_style_prior_policy",
+                        "style_prior_path": str(style_prior_path or root / "style_prior.json"),
+                        "tile_style_record_count": 2,
+                    },
+                    "selected_style": {
+                        "tile_index": 1,
+                        "sample_id": "slide-002:1/1:0:0",
+                        "wsi_id": "slide-002",
+                        "tile": {"cascade_level": "1/1", "origin_40x": [0, 0]},
+                        "mean_rgb": [42.0, 128.0, 210.0],
+                    },
+                    "rgb_statistics_reference": {"mean_rgb": [180.0, 120.0, 160.0]},
+                    "limitations": ["deterministic_statistical_style_policy_only"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return policy_path
+
+    def write_sampled_texture_policy(self, root: Path, texture_prior_path: str | Path | None = None) -> Path:
+        policy_path = root / "sampled_texture_policy.json"
+        policy_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v0.70.0",
+                    "artifact_type": "sampled_texture_policy",
+                    "created_at": "2026-05-24T12:00:00Z",
+                    "sample_id": "texture-policy-001",
+                    "random_seed": 17,
+                    "selection_policy": "deterministic_random_seed_mod_cluster_count",
+                    "cluster_count": 2,
+                    "source": {
+                        "source_type": "statistical_texture_prior_policy",
+                        "texture_prior_path": str(texture_prior_path or root / "texture_prior.json"),
+                        "texture_prototype_count": 2,
+                    },
+                    "selected_texture_token": {
+                        "prototype_index": 1,
+                        "cluster_id": 1,
+                        "representative_embedding_index": 2,
+                        "sample_count": 2,
+                        "fraction": 0.5,
+                        "mean_embedding": [10.1, 10.1],
+                    },
+                    "limitations": ["deterministic_statistical_texture_policy_only"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return policy_path
+
     def create_prior_manifest(self, root: Path) -> Path:
         paths = self.write_prior_artifacts(root / "artifacts")
         build_prior_manifest_from_artifacts(
@@ -331,6 +394,120 @@ class GenerationConditioningTests(unittest.TestCase):
         self.assertEqual(mask_condition["mask_shape"], [8, 8])
         self.assertEqual(mask_condition["class_pixel_counts_by_id"], [48, 0, 16, 0, 0, 0])
         self.assertEqual(packet["artifact_inputs"]["sampled_layout_mask"]["path"], str(sampled_layout_mask_path))
+
+    def test_build_generation_condition_packet_records_sampled_style_and_texture_policy_conditions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            prior_manifest = json.loads(prior_manifest_path.read_text(encoding="utf-8"))
+            style_policy_path = self.write_sampled_style_policy(
+                root,
+                style_prior_path=prior_manifest["artifacts"]["style_prior"]["path"],
+            )
+            texture_policy_path = self.write_sampled_texture_policy(
+                root,
+                texture_prior_path=prior_manifest["artifacts"]["texture_prior"]["path"],
+            )
+
+            packet = build_generation_condition_packet(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                output_path=root / "condition_packet.json",
+                cascade_level="1/1",
+                tile_origin_40x=(0, 0),
+                sampled_style_policy_path=style_policy_path,
+                sampled_texture_policy_path=texture_policy_path,
+            )
+
+        self.assertEqual(packet["artifact_inputs"]["sampled_style_policy"]["path"], str(style_policy_path))
+        self.assertEqual(packet["artifact_inputs"]["sampled_style_policy"]["metadata"]["sample_id"], "style-policy-001")
+        self.assertEqual(packet["artifact_inputs"]["sampled_texture_policy"]["path"], str(texture_policy_path))
+        self.assertEqual(
+            packet["artifact_inputs"]["sampled_texture_policy"]["metadata"]["sample_id"],
+            "texture-policy-001",
+        )
+        style_condition = packet["conditions"]["style_seed"]
+        self.assertEqual(style_condition["source"], "sampled_style_policy")
+        self.assertEqual(style_condition["artifact_path"], str(style_policy_path))
+        self.assertEqual(style_condition["sample_id"], "style-policy-001")
+        self.assertEqual(style_condition["random_seed"], 17)
+        self.assertEqual(style_condition["selected_style"]["mean_rgb"], [42.0, 128.0, 210.0])
+        self.assertEqual(style_condition["rgb_statistics_reference"]["mean_rgb"], [180.0, 120.0, 160.0])
+        texture_condition = packet["conditions"]["texture_token"]
+        self.assertEqual(texture_condition["source"], "sampled_texture_policy")
+        self.assertEqual(texture_condition["artifact_path"], str(texture_policy_path))
+        self.assertEqual(texture_condition["sample_id"], "texture-policy-001")
+        self.assertEqual(texture_condition["random_seed"], 17)
+        self.assertEqual(texture_condition["cluster_id"], 1)
+        self.assertEqual(texture_condition["representative_embedding_index"], 2)
+        self.assertEqual(texture_condition["mean_embedding"], [10.1, 10.1])
+
+    def test_build_generation_condition_packet_rejects_invalid_sampled_policy_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            prior_manifest = json.loads(prior_manifest_path.read_text(encoding="utf-8"))
+            style_policy_path = self.write_sampled_style_policy(
+                root,
+                style_prior_path=prior_manifest["artifacts"]["style_prior"]["path"],
+            )
+            texture_policy_path = self.write_sampled_texture_policy(
+                root,
+                texture_prior_path=prior_manifest["artifacts"]["texture_prior"]["path"],
+            )
+
+            bad_style = json.loads(style_policy_path.read_text(encoding="utf-8"))
+            bad_style["artifact_type"] = "style_prior"
+            style_policy_path.write_text(json.dumps(bad_style), encoding="utf-8")
+            with self.assertRaisesRegex(GenerationConditionError, "sampled_style_policy.artifact_type"):
+                build_generation_condition_packet(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    output_path=root / "bad-style-packet.json",
+                    cascade_level="1/1",
+                    tile_origin_40x=(0, 0),
+                    sampled_style_policy_path=style_policy_path,
+                )
+
+            bad_style = json.loads(style_policy_path.read_text(encoding="utf-8"))
+            bad_style["artifact_type"] = "sampled_style_policy"
+            bad_style["source"]["style_prior_path"] = str(root / "other_style_prior.json")
+            style_policy_path.write_text(json.dumps(bad_style), encoding="utf-8")
+            with self.assertRaisesRegex(GenerationConditionError, "sampled_style_policy.source.style_prior_path"):
+                build_generation_condition_packet(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    output_path=root / "bad-style-source-packet.json",
+                    cascade_level="1/1",
+                    tile_origin_40x=(0, 0),
+                    sampled_style_policy_path=style_policy_path,
+                )
+
+            bad_texture = json.loads(texture_policy_path.read_text(encoding="utf-8"))
+            bad_texture["schema_version"] = "v0.69.0"
+            texture_policy_path.write_text(json.dumps(bad_texture), encoding="utf-8")
+            with self.assertRaisesRegex(GenerationConditionError, "sampled_texture_policy.schema_version"):
+                build_generation_condition_packet(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    output_path=root / "bad-texture-version-packet.json",
+                    cascade_level="1/1",
+                    tile_origin_40x=(0, 0),
+                    sampled_texture_policy_path=texture_policy_path,
+                )
+
+            bad_texture["schema_version"] = "v0.70.0"
+            del bad_texture["selected_texture_token"]["representative_embedding_index"]
+            texture_policy_path.write_text(json.dumps(bad_texture), encoding="utf-8")
+            with self.assertRaisesRegex(GenerationConditionError, "representative_embedding_index"):
+                build_generation_condition_packet(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    output_path=root / "bad-texture-packet.json",
+                    cascade_level="1/1",
+                    tile_origin_40x=(0, 0),
+                    sampled_texture_policy_path=texture_policy_path,
+                )
 
     def test_build_generation_condition_packet_preserves_integer_style_seed_and_source(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -478,6 +655,60 @@ class GenerationConditioningTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("condition packet written", result.stdout)
         self.assertEqual(packet["conditions"]["coord"]["tile_origin_40x"], [128, 256])
+
+    def test_cli_builds_generation_condition_packet_with_sampled_policies(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            prior_manifest = json.loads(prior_manifest_path.read_text(encoding="utf-8"))
+            style_policy_path = self.write_sampled_style_policy(
+                root,
+                style_prior_path=prior_manifest["artifacts"]["style_prior"]["path"],
+            )
+            texture_policy_path = self.write_sampled_texture_policy(
+                root,
+                texture_prior_path=prior_manifest["artifacts"]["texture_prior"]["path"],
+            )
+            config_path = root / "generation-config.json"
+            output_path = root / "condition_packet.json"
+            config_path.write_text(json.dumps(self.generation_config()), encoding="utf-8")
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(REPO_ROOT / "src")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "he_wsi_generator.cli",
+                    "build-condition-packet",
+                    str(config_path),
+                    "--prior-manifest",
+                    str(prior_manifest_path),
+                    "--output",
+                    str(output_path),
+                    "--cascade-level",
+                    "1/1",
+                    "--tile-origin-x",
+                    "128",
+                    "--tile-origin-y",
+                    "256",
+                    "--sampled-style-policy",
+                    str(style_policy_path),
+                    "--sampled-texture-policy",
+                    str(texture_policy_path),
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            packet = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(packet["conditions"]["style_seed"]["source"], "sampled_style_policy")
+        self.assertEqual(packet["conditions"]["texture_token"]["source"], "sampled_texture_policy")
 
 
 if __name__ == "__main__":

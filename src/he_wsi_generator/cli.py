@@ -504,6 +504,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--sampled-layout-mask",
         help="Optional sampled_layout_mask JSON used as the mask condition.",
     )
+    condition_parser.add_argument(
+        "--sampled-style-policy",
+        help="Optional sampled_style_policy JSON used as the style condition.",
+    )
+    condition_parser.add_argument(
+        "--sampled-texture-policy",
+        help="Optional sampled_texture_policy JSON used as the texture condition.",
+    )
 
     run_parser = subparsers.add_parser(
         "run-generation",
