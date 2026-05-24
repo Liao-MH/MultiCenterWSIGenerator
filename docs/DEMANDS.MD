@@ -31,6 +31,14 @@
 - 本批次只补齐 condition packet 摘要在 generation 输出中的可审计保留，不改变 condition feature vector 编码、不自动调用 policy sampler、不改变 smoke/torch generation backend 的生成行为。
 - 本批次不复跑真实 SVS 全链路，不清理历史 worker worktree，不打 tag 或发布包。
 
+### 已落地
+
+- 已创建并合并单 worker 分支 `worker/p5-generation-sampled-policy-summary-20260524`，保留 `.agent/tasks/p5-generation-sampled-policy-summary-20260524.md` 与 `.agent/reports/p5-generation-sampled-policy-summary-20260524.md` 作为审计证据。
+- `run_smoke_generation()` 的 metadata 与 `generation_run.json` 已保留 `sampled_style_policy` / `sampled_texture_policy` 条件摘要。
+- `sample_torch_diffusion_smoke_model()` 的 sample manifest，以及 `run_torch_diffusion_smoke_generation()` 的 metadata、generation run summary 和 cascade sample manifest 已保留相同 sampled policy 摘要。
+- 缺失 sampled style `selected_style` 或 sampled texture `representative_embedding_index` 等关键摘要字段时已显式失败。
+- 当前落地范围仍是可审计输出摘要贯通，不是 production style encoder、texture codebook、VQ-VAE、morphology token sampler 或 runtime generation backend 自动采样。
+
 ## v0.71.0 - 2026-05-24 P5 sampled policy 条件包接入需求
 
 ### 用户需求

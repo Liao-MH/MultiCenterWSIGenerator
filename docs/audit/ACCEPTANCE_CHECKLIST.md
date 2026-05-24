@@ -1,11 +1,11 @@
-# 审计验收清单（v0.71.0 复审计，原始 v0.62.0 基线）
+# 审计验收清单（v0.72.0 复审计，原始 v0.62.0 基线）
 
 ## 进度结论
 
-- 当前项目处于“可测试 core/CLI 骨架 + smoke/proxy 生成验证链 + P1 契约闭环 + 独立 conda 环境验证 + P2 可交互 PySide6 配置页 + GUI 内同步执行/刷新/输出摘要查看 + P6 维护性收敛 + P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source contract/assembly、受限 tiled iterator streaming writer、streaming writer pyramid contract、smoke 四层 tile source streaming 写出 + P5 deterministic sampled style/texture policy artifact + sampled policy condition packet 条件摘要接入”阶段。
-- 相比研究设计中的完整项目成果，已完成数据契约、基础 I/O、统计 prior、deterministic sampled style/texture policy artifact、condition packet 对 sampled style/texture policy 的可审计消费、smoke 级生成、基础 OME-TIFF/QC/归档、UI 控制层、可交互 PySide6 配置页、GUI 内同步执行 queued job/刷新状态/查看输出摘要、CLI 命令分发拆分、PyTorch smoke training 纯 helper 拆分、可恢复 tile manifest contract、smoke tile resume execution、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、受限 tile iterator streaming writer、smoke 四层 tile source streaming 写出和当前机器的 PyTorch/PySide6 依赖验证；尚未完成 production 级 latent diffusion/ControlNet 训练与推理、生产级 layout/style/texture prior、production backend OME-TIFF streaming、可恢复 OME-TIFF 逐 tile 写入和真实 SVS 全链路复跑。
+- 当前项目处于“可测试 core/CLI 骨架 + smoke/proxy 生成验证链 + P1 契约闭环 + 独立 conda 环境验证 + P2 可交互 PySide6 配置页 + GUI 内同步执行/刷新/输出摘要查看 + P6 维护性收敛 + P4 可恢复 tile 状态、smoke resume execution、磁盘 tile source contract/assembly、受限 tiled iterator streaming writer、streaming writer pyramid contract、smoke 四层 tile source streaming 写出 + P5 deterministic sampled style/texture policy artifact + sampled policy condition packet 条件摘要接入 + generation 输出摘要保留”阶段。
+- 相比研究设计中的完整项目成果，已完成数据契约、基础 I/O、统计 prior、deterministic sampled style/texture policy artifact、condition packet 对 sampled style/texture policy 的可审计消费、smoke/torch 输出对 sampled style/texture policy 摘要的可审计保留、smoke 级生成、基础 OME-TIFF/QC/归档、UI 控制层、可交互 PySide6 配置页、GUI 内同步执行 queued job/刷新状态/查看输出摘要、CLI 命令分发拆分、PyTorch smoke training 纯 helper 拆分、可恢复 tile manifest contract、smoke tile resume execution、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、受限 tile iterator streaming writer、smoke 四层 tile source streaming 写出和当前机器的 PyTorch/PySide6 依赖验证；尚未完成 production 级 latent diffusion/ControlNet 训练与推理、生产级 layout/style/texture prior、production backend OME-TIFF streaming、可恢复 OME-TIFF 逐 tile 写入和真实 SVS 全链路复跑。
 - 按设计目标拆解，M1 基本完成；M2-M4/M6 为基础能力完成但仍偏 smoke/proxy，其中 M6 新增可恢复 tile 状态、smoke resume execution、磁盘 tile source 发布前校验、内存组装写出、受限 tile iterator streaming 和 smoke 四层 tile source streaming 接入；M5 仍为 smoke/proxy；M7 的本地同步 GUI flow 已补齐，后台 daemon、并发队列和运行中进程终止仍不属于当前实现；P6 的首轮行为保持维护性收敛已完成。
-- 当前 v0.71.0 作为本轮补救基线提交，尚未打 tag 或形成发布包。
+- 当前 v0.72.0 作为本轮补救基线提交，尚未打 tag 或形成发布包。
 
 ## 已完成
 
@@ -13,13 +13,13 @@
 |---|---|---|---|---|
 | AC-DOC-01 | 审计文件已迁移到 `docs/audit/` | `docs/audit/ACCEPTANCE_CHECKLIST.md`、`docs/audit/IMPLEMENTATION_PLAN.md`、`docs/audit/DECISIONS.md` | 已完成 | 原 `docs/` 根目录审计文件已移动 |
 | AC-DOC-02 | 研究设计、开发附录、需求和变更日志存在 | `docs/plans/2026-05-18-he-wsi-generator-study-design.md`、`docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`、`docs/DEMANDS.MD`、`docs/CHANGELOG.md` | 已完成 | 设计文档明确完整成果边界 |
-| AC-CORE-01 | 版本号同步为 `v0.71.0` | `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json`、`tests/test_version.py` | 已完成 | `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version` 返回 `v0.71.0`；importlib metadata / 常量返回 `0.71.0`、`v0.71.0`、`0.71.0` |
+| AC-CORE-01 | 版本号同步为 `v0.72.0` | `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json`、`tests/test_version.py` | 已完成 | 本轮最终验证 `he-wsi-gen --version` 返回 `v0.72.0`，包元数据/常量为 `0.72.0`、`v0.72.0`、`0.72.0` |
 | AC-CORE-02 | 包结构覆盖开发附录建议的核心模块 | `src/he_wsi_generator/{io,annotations,embeddings,priors,models,generation,qc,metadata,outputs,ui}` | 已完成 | core/CLI/UI 控制层边界已建立 |
 | AC-CORE-03 | 基础 schema、manifest、label mapping、generation config、metadata、QC 校验可用 | `src/he_wsi_generator/schemas.py`、`tests/test_schemas.py`、`tests/test_cli.py` | 已完成 | 默认 generation config 本轮验证通过 |
 | AC-CORE-04 | 统计 prior、condition packet、sampled layout mask 和 smoke generation 链路存在 | `src/he_wsi_generator/priors/`、`src/he_wsi_generator/generation/`、`tests/test_priors.py`、`tests/test_generation_conditioning.py`、`tests/test_generation_runner.py` | 已完成 | 当前为统计/smoke/proxy 能力，不是最终生成模型 |
 | AC-CORE-05 | OME-TIFF 小型写出、mask 输出、QC、batch index、`qc_review` 文件级审阅工作流存在 | `src/he_wsi_generator/outputs/`、`src/he_wsi_generator/qc/`、`src/he_wsi_generator/metadata/archive.py`、`tests/test_outputs_qc_archive.py`、`tests/test_qc_review.py` | 已完成 | `qc_review` 已有独立构建和决策更新命令 |
 | AC-CORE-06 | 历史真实 SVS 验证工件存在 | `build/validation/v0.62.0-291288/...` | 已完成 | 只能证明历史工件存在；不等于本轮重新跑完整链路 |
-| AC-TEST-01 | 常规单元测试覆盖面较广 | `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v` | 已完成 | 独立 conda 环境中通过 `245` 个测试，覆盖 PyTorch、PySide6、P2/P4/P5 路径 |
+| AC-TEST-01 | 常规单元测试覆盖面较广 | `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v` | 已完成 | 本轮最终验证通过，`Ran 249 tests in 15.117s OK`；覆盖 PyTorch、PySide6、P2/P4/P5 路径 |
 | AC-ENV-01 | 独立 conda 环境已创建并安装完整可选依赖 | `mamba create -y -n MultiCenterWSIGenerator -c conda-forge python=3.11 pip openslide`、`mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'` | 已完成 | Python `3.11.15`；依赖包含 torch、PySide6、OpenSlide、YAML、tifffile、Pillow、numpy |
 | AC-ENV-02 | 当前环境可运行 PyTorch smoke 训练/采样/生成测试 | `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training -v`、`mamba run -n MultiCenterWSIGenerator python -c 'import torch'` | 已完成 | PyTorch `2.12.0+cu130`，CUDA 可用，GPU 为 `NVIDIA GeForce RTX 5060 Ti` |
 | AC-ENV-03 | 当前环境可导入 PySide6 并创建现有 UI 窗口 | `QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python - <<'PY' ... create_main_window() ... PY` | 已完成 | offscreen smoke 返回窗口标题 `MultiCenterWSIGenerator`、widget count `86`、button count `5`，并确认执行/刷新/摘要按钮存在 |
@@ -42,15 +42,16 @@
 | AC-P5-01 | deterministic sampled style policy artifact | `src/he_wsi_generator/priors/style.py`、`src/he_wsi_generator/cli.py`、`src/he_wsi_generator/cli_commands.py`、`tests/test_style_prior.py`、`.agent/reports/p5-style-sampling-policy-20260524.md` | 已完成 | `sample_style_policy_from_prior()` 与 `sample-style-policy` 可从统计型 style prior 按 seed 选择 tile-level style record；仍不是 trainable style encoder |
 | AC-P5-02 | deterministic sampled texture policy artifact | `src/he_wsi_generator/priors/texture.py`、`src/he_wsi_generator/cli.py`、`src/he_wsi_generator/cli_commands.py`、`tests/test_texture_prior.py`、`.agent/reports/p5-texture-sampling-policy-20260524.md` | 已完成 | `sample_texture_policy_from_prior()` 与 `sample-texture-policy` 可从统计型 texture prior 按 seed 选择 prototype；仍不是 trainable texture codebook |
 | AC-P5-03 | sampled style/texture policy condition packet 条件摘要接入 | `src/he_wsi_generator/generation/conditioning.py`、`src/he_wsi_generator/cli.py`、`src/he_wsi_generator/cli_commands.py`、`tests/test_generation_conditioning.py`、`.agent/reports/p5-condition-sampled-policy-20260524.md` | 已完成 | `build-condition-packet` 可选读取 `--sampled-style-policy` / `--sampled-texture-policy`，校验 source prior path 与关键字段，并写入 `artifact_inputs` 与 `conditions.style_seed` / `conditions.texture_token`；仍不自动调用 sampler 或改变 generation backend |
-| AC-AUDIT-01 | 本轮复审计已捕获当前工作区状态 | `git status --short`、`git log -1 --oneline`、`docs/CHANGELOG.md` | 已完成 | v0.71.0 作为本轮主分支补救基线；尚未 tag 或打包发布 |
+| AC-P5-04 | sampled style/texture policy generation 输出摘要保留 | `src/he_wsi_generator/generation/executor.py`、`src/he_wsi_generator/models/torch_training.py`、`tests/test_generation_runner.py`、`tests/test_torch_training.py`、`.agent/reports/p5-generation-sampled-policy-summary-20260524.md` | 已完成 | smoke metadata/run summary 与 torch sample manifest/generation summary 会保留 selected style/token 摘要；缺关键字段显式失败；仍不改变 condition feature vector 或生成 backend |
+| AC-AUDIT-01 | 本轮复审计已捕获当前工作区状态 | `git status --short`、`git log -1 --oneline`、`docs/CHANGELOG.md` | 已完成 | v0.72.0 作为本轮主分支补救基线；尚未 tag 或打包发布 |
 
 ## 缺失
 
 | ID | 验收项 | 文件或测试证据 | 当前状态 | 备注 |
 |---|---|---|---|---|
 | AC-MISS-04 | Production 级结构锚定多分辨率 latent diffusion / ControlNet / DiT 训练和推理 | `src/he_wsi_generator/models/torch_training.py`、`README.md` 当前边界说明 | 缺失 | 当前仅 smoke/VAE/proxy latent 路线 |
-| AC-MISS-05 | 生产级 layout/style/texture prior 和 style sampling policy | `src/he_wsi_generator/priors/`、`src/he_wsi_generator/generation/conditioning.py` | 部分完成 / 仍缺失 production prior | v0.71.0 已有 deterministic sampled style/texture policy artifact 与 condition packet 审计消费；当前仍主要是统计 prior 与可审计 artifact，未实现 production trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler |
-| AC-MISS-06 | 生产级 gigapixel OME-TIFF 流式写出、恢复和磁盘级 tile streaming | `src/he_wsi_generator/outputs/ome_tiff.py`、`src/he_wsi_generator/generation/tiling.py`、`src/he_wsi_generator/generation/executor.py`、`README.md` 当前边界说明 | 部分完成 / 仍缺失 production writer | v0.71.0 继承可恢复 tile manifest contract、smoke resume execution、磁盘 `.npy` tile source contract gate、内存组装写出、受限 tiled iterator streaming writer 和 smoke 四层 tile source streaming 接入；仍没有 production backend 磁盘级逐 tile 生成、写入中断恢复执行或可恢复 OME-TIFF 逐 tile 写入 |
+| AC-MISS-05 | 生产级 layout/style/texture prior 和 style sampling policy | `src/he_wsi_generator/priors/`、`src/he_wsi_generator/generation/conditioning.py`、`src/he_wsi_generator/generation/executor.py`、`src/he_wsi_generator/models/torch_training.py` | 部分完成 / 仍缺失 production prior | v0.72.0 已有 deterministic sampled style/texture policy artifact、condition packet 审计消费和 generation 输出摘要保留；当前仍主要是统计 prior 与可审计 artifact，未实现 production trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler |
+| AC-MISS-06 | 生产级 gigapixel OME-TIFF 流式写出、恢复和磁盘级 tile streaming | `src/he_wsi_generator/outputs/ome_tiff.py`、`src/he_wsi_generator/generation/tiling.py`、`src/he_wsi_generator/generation/executor.py`、`README.md` 当前边界说明 | 部分完成 / 仍缺失 production writer | v0.72.0 继承可恢复 tile manifest contract、smoke resume execution、磁盘 `.npy` tile source contract gate、内存组装写出、受限 tiled iterator streaming writer 和 smoke 四层 tile source streaming 接入；仍没有 production backend 磁盘级逐 tile 生成、写入中断恢复执行或可恢复 OME-TIFF 逐 tile 写入 |
 
 ## 偏离
 
@@ -65,5 +66,5 @@
 |---|---|---|---|---|
 | AC-VER-03 | 本轮重新执行真实 SVS v0.62.0 全链路生成 | `build/validation/v0.62.0-291288/...` | 未验证 | 只看到了历史工件，未在本轮重新生成 |
 | AC-VER-04 | 完整 production 项目成果可验收 | 研究设计 Phase 4/5/6、README 当前边界 | 未验证 | 关键 production 模型和完整 GUI 尚不存在，不能验收 |
-| AC-VER-05 | v0.71.0 tag/发布包状态 | `git tag --list` 未在本轮执行发布流程 | 未验证 | v0.71.0 尚未 tag 或打包发布 |
+| AC-VER-05 | v0.72.0 tag/发布包状态 | `git tag --list` 未在本轮执行发布流程 | 未验证 | v0.72.0 尚未 tag 或打包发布 |
 | AC-VER-06 | worker 隔离区清理状态 | `git worktree list --porcelain` | 未验证 | 历史 worker worktree 与本轮 worker worktree 仍存在；当前作为审计证据保留，未清理 |

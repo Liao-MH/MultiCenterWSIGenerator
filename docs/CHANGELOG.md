@@ -1,5 +1,67 @@
 # CHANGELOG
 
+## v0.72.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-05` 的保守可交付子集：在 v0.71.0 已能把 sampled style/texture policy 写入 condition packet 的基础上，让 smoke generation 和 torch diffusion smoke 输出继续保留 selected style/token 的可审计摘要，同时保持非 production 边界。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建并合并 P5 worker 任务：
+  - `.agent/tasks/p5-generation-sampled-policy-summary-20260524.md`
+  - `.agent/reports/p5-generation-sampled-policy-summary-20260524.md`
+- `src/he_wsi_generator/generation/executor.py` 的 condition packet summary 现在会在 `style_seed.source=sampled_style_policy` / `texture_token.source=sampled_texture_policy` 时保留 sampled policy 摘要。
+- `src/he_wsi_generator/models/torch_training.py` 同步保留 sampled policy 摘要，使 torch condition packet loader、sample manifest、generation metadata 和 run summary 字段一致。
+- 新增测试覆盖 smoke generation metadata/run summary、torch sample manifest、torch smoke generation metadata/run summary 的 sampled policy 摘要贯通，以及缺少 `selected_style` / `representative_embedding_index` 时的显式失败。
+- 当前不改变 condition feature vector 编码，不自动调用 policy sampler，不改变 smoke/torch generation backend 生成行为。
+
+### 影响文件
+
+- `.agent/tasks/p5-generation-sampled-policy-summary-20260524.md`
+- `.agent/reports/p5-generation-sampled-policy-summary-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/models/torch_training.py`
+- `tests/test_generation_runner.py`
+- `tests/test_torch_training.py`
+- `tests/test_version.py`
+- `tests/*.py`（版本字符串同步到 `v0.72.0`）
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- Worker / orchestrator 定向验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_torch_training -v`
+    - 结果：红灯符合预期，写生产代码前失败原因为 `KeyError: 'sampled_style_policy'`，且缺失 sampled style `selected_style` 未触发 `GenerationExecutionError`；实现后通过，`Ran 47 tests in 11.914s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+- Orchestrator 文档/版本同步后最终验证：
+  - `mamba run -n MultiCenterWSIGenerator python -m pip install -e '.[embeddings,outputs,training,torch,ui,yaml,wsi]'`
+    - 结果：通过，卸载 `multi-center-wsi-generator 0.71.0` 并安装 editable `multi-center-wsi-generator 0.72.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.72.0`
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`
+  - `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... importlib.metadata / PROJECT_VERSION / PACKAGE_VERSION ... PY`
+    - 结果：`0.72.0`、`v0.72.0`、`0.72.0`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_torch_training tests.test_generation_conditioning tests.test_style_prior tests.test_texture_prior tests.test_priors -v`
+    - 结果：通过，`Ran 78 tests in 11.879s OK`
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 249 tests in 15.117s OK`
+  - `git diff --check`
+    - 结果：通过，无 whitespace error
+
 ## v0.71.0 - 2026-05-24
 
 ### 用户需求
