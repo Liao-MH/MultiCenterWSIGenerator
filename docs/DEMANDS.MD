@@ -1,5 +1,29 @@
 # DEMANDS
 
+## v0.65.0 - 2026-05-24 P2 GUI 执行、刷新与输出摘要开发需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 P2 剩余 GUI flow，补齐 `AC-MISS-03` 和 `AC-DEV-01` 中指出的 GUI 内执行、状态刷新和输出摘要查看缺口。
+
+### 结构化需求
+
+- 使用 `.agent/tasks/` 创建 worker 任务文件，并尝试用 `.worktrees/` 隔离 worker 实现。
+- 新增非 Qt workflow helper，使 PySide 页面可用同一份 form state：
+  - 读取 `<output-root>/ui_jobs/<generated-id>/job.json` 状态；
+  - 同步执行 queued local job；
+  - 在 job completed 后读取 `<output-root>/metadata.json`、`<output-root>/qc.json` 和可选 `<output-root>/qc_review.json` 输出摘要。
+- PySide6 单页控制台新增执行 queued job、刷新 job 状态、加载输出摘要的按钮和展示区域。
+- helper 对未知 job、非 completed job、缺失 metadata/QC、非法 artifact 和 schema/ID 不一致必须显式失败，不允许静默回退。
+- 版本号升级到 `v0.65.0`，并同步 README、`docs/audit/`、`docs/CHANGELOG.md`、版本文件和测试断言。
+
+### 边界说明
+
+- 本批次仍保持 CLI-first，不让 `run-generation` 默认弹 GUI。
+- 本批次只支持同步本地 queued job 执行，不新增后台 daemon、并发队列、运行中进程终止、跨机器调度或线程化 Qt 执行。
+- 本批次不实现 production latent diffusion / ControlNet / DiT，不实现生产级 WSI streaming writer，不复跑真实 SVS 全链路。
+
 ## v0.64.0 - 2026-05-24 P2 可交互 PySide6 配置页开发需求
 
 ### 用户需求

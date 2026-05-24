@@ -1,14 +1,25 @@
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from he_wsi_generator.constants import DEFAULT_GENERATION_CONFIG, PROJECT_VERSION
+from he_wsi_generator.constants import (
+    DEFAULT_GENERATION_CONFIG,
+    MASK_CLASSES,
+    MAX_MAGNIFICATION,
+    PROJECT_VERSION,
+    TILE_SIZE_40X,
+)
+from he_wsi_generator.ui.jobs import JobRunner
 from he_wsi_generator.ui.workflow import (
     UIWorkflowError,
     build_generation_config_from_form,
     build_run_generation_command,
+    collect_generation_job_output_summary,
     create_run_generation_job,
+    load_generation_job_status,
+    run_queued_generation_job,
 )
 
 
@@ -35,6 +46,95 @@ def _form_state(**overrides: object) -> dict:
     }
     state.update(overrides)
     return state
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _qc_report(generated_id: str = "gen-001") -> dict:
+    return {
+        "schema_version": PROJECT_VERSION,
+        "generated_id": generated_id,
+        "overall_status": "warning",
+        "levels": {
+            "wsi": {"status": "pass", "metrics": []},
+            "tile": {"status": "warning", "metrics": []},
+            "mask_region": {"status": "pass", "metrics": []},
+        },
+        "non_copy_report": {
+            "enabled": True,
+            "patch_nearest_neighbor_search": False,
+            "items": [],
+        },
+    }
+
+
+def _metadata(qc_path: str | Path, generated_id: str = "gen-001") -> dict:
+    return {
+        "schema_version": PROJECT_VERSION,
+        "generated_id": generated_id,
+        "version": PROJECT_VERSION,
+        "created_at": "2026-05-24T08:00:00+00:00",
+        "output": {
+            "wsi_path": "generated.ome.tiff",
+            "mask_path": "generated_mask/mask.npy",
+            "qc_json_path": str(qc_path),
+        },
+        "source": {"source_wsi_id": None},
+        "generation": {
+            "structure_anchor": 0.0,
+            "style_seed": "auto",
+            "random_seed": 17,
+            "model_checkpoint": "checkpoint.pt",
+            "model_version": PROJECT_VERSION,
+            "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
+            "max_magnification": MAX_MAGNIFICATION,
+            "tile_size_40x": list(TILE_SIZE_40X),
+        },
+        "mask_schema": {
+            "classes": list(MASK_CLASSES),
+            "mapping_source": "manual",
+            "input_label_mapping": {},
+            "confidence": {},
+        },
+        "qc": {
+            "overall_status": "warning",
+            "summary": {},
+            "non_copy_report": {
+                "enabled": True,
+                "patch_nearest_neighbor_search": False,
+                "items": [],
+            },
+        },
+    }
+
+
+def _qc_review(metadata_path: str | Path, qc_path: str | Path) -> dict:
+    return {
+        "schema_version": PROJECT_VERSION,
+        "artifact_type": "qc_review",
+        "generated_id": "gen-001",
+        "created_at": "2026-05-24T08:00:00+00:00",
+        "inputs": {
+            "metadata_path": str(metadata_path),
+            "metadata_sha256": "0" * 64,
+            "qc_path": str(qc_path),
+            "qc_sha256": "1" * 64,
+        },
+        "qc_status": {
+            "overall_status": "warning",
+            "levels": {"wsi": "pass", "tile": "warning", "mask_region": "pass"},
+        },
+        "review_required": True,
+        "decision": "accepted",
+        "reviewer": "Dr. Chen",
+        "note": "Reviewed.",
+        "reviewed_at": "2026-05-24T08:05:00+00:00",
+        "review_items": [
+            {"level": "tile", "name": "sharpness_laplacian_proxy", "status": "warning"}
+        ],
+    }
 
 
 class UIWorkflowTests(unittest.TestCase):
@@ -163,6 +263,79 @@ class UIWorkflowTests(unittest.TestCase):
                 )
 
             self.assertFalse((root / "jobs" / "gen-001" / "job.json").exists())
+
+    def test_run_queued_generation_job_executes_existing_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_root = root / "outputs"
+            create_run_generation_job(
+                _form_state(
+                    output_root=str(output_root),
+                    condition_packet_path=None,
+                ),
+                output_root / "ui_jobs",
+                root / "generation.json",
+            )
+            record = JobRunner(output_root / "ui_jobs").load_job("gen-001")
+            record["command"] = [sys.executable, "-c", "print('gui job done')"]
+            Path(record["record_path"]).write_text(
+                json.dumps(record, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            completed = run_queued_generation_job(
+                _form_state(output_root=str(output_root), condition_packet_path=None)
+            )
+            refreshed = load_generation_job_status(
+                _form_state(output_root=str(output_root), condition_packet_path=None)
+            )
+            stdout = Path(completed["stdout_path"]).read_text(encoding="utf-8")
+
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(refreshed["status"], "completed")
+        self.assertIn("gui job done", stdout)
+
+    def test_collect_generation_job_output_summary_reads_completed_job_outputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_root = root / "outputs"
+            output_root.mkdir()
+            metadata_path = output_root / "metadata.json"
+            qc_path = output_root / "qc.json"
+            review_path = output_root / "qc_review.json"
+            _write_json(qc_path, _qc_report())
+            _write_json(metadata_path, _metadata(qc_path=qc_path))
+            _write_json(review_path, _qc_review(metadata_path, qc_path))
+            runner = JobRunner(output_root / "ui_jobs")
+            runner.create_job("gen-001", [sys.executable, "-c", "print('done')"])
+            runner.run_job("gen-001")
+
+            summary = collect_generation_job_output_summary(
+                _form_state(output_root=str(output_root), condition_packet_path=None)
+            )
+
+        self.assertEqual(summary["generated_id"], "gen-001")
+        self.assertEqual(summary["qc_status"], "warning")
+        self.assertEqual(summary["outputs"]["metadata_path"], str(metadata_path))
+        self.assertEqual(summary["review"]["decision"], "accepted")
+
+    def test_collect_generation_job_output_summary_rejects_unfinished_or_missing_outputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_root = root / "outputs"
+            runner = JobRunner(output_root / "ui_jobs")
+            runner.create_job("gen-001", [sys.executable, "-c", "print('not run')"])
+
+            with self.assertRaisesRegex(UIWorkflowError, "must be completed"):
+                collect_generation_job_output_summary(
+                    _form_state(output_root=str(output_root), condition_packet_path=None)
+                )
+
+            runner.run_job("gen-001")
+            with self.assertRaisesRegex(UIWorkflowError, "metadata.json"):
+                collect_generation_job_output_summary(
+                    _form_state(output_root=str(output_root), condition_packet_path=None)
+                )
 
 
 if __name__ == "__main__":

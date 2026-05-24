@@ -64,7 +64,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(prior, saved)
-        self.assertEqual(prior["schema_version"], "v0.64.0")
+        self.assertEqual(prior["schema_version"], "v0.65.0")
         self.assertEqual(prior["prior_type"], "texture_prior")
         self.assertEqual(prior["source"]["cache_dir"], str(cache_dir))
         self.assertEqual(prior["source"]["cache_key"], cache_key)

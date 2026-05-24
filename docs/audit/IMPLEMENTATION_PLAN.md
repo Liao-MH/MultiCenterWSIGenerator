@@ -1,8 +1,8 @@
-# v0.64.0 审计补救实施计划
+# v0.65.0 审计补救实施计划
 
 ## 当前定位
 
-当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路和可交互 PySide6 配置页。后续补救顺序应继续完善 GUI 内执行/监控/输出查看，再进入生产模型和大规模 WSI 写出能力。
+当前仓库不是完整 production H&E WSI 生成器，而是一个可测试、可追踪的 core/CLI 工程骨架，并具备 smoke/proxy 级生成、QC、归档链路、可交互 PySide6 配置页和 GUI 内同步 queued job 执行/状态刷新/输出摘要查看。后续补救顺序应进入 production 模型、生产级 prior/WSI 输出能力，或先做维护性收敛降低大文件风险。
 
 ## P0. 审计材料归位与证据闭环
 
@@ -33,19 +33,19 @@
 - 影响范围：`README.md`、`AGENTS.md`、`src/he_wsi_generator/schemas.py`、`src/he_wsi_generator/cli.py`、`src/he_wsi_generator/ui/controller.py`、`tests/test_ui.py`、`tests/test_qc_review.py`。
 - 完成标准：相关测试已覆盖坏 metadata、坏 qc_review、id 不一致和 validate CLI 路径。
 
-## P2. 可交互 PySide6 自定义配置页
+## P2. 可交互 PySide6 自定义配置页与本地 GUI flow
 
 - 目标：实现设计文档要求的本地单页控制台，让用户不手工编辑中间 JSON 也能完成配置。
-- 当前状态：v0.64.0 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存和 queued local job record 创建；GUI 内执行/监控和输出查看仍未完成。
+- 当前状态：v0.65.0 已完成可交互配置页、非 Qt UI workflow helper、generation config 保存、queued local job record 创建、GUI 内同步执行 queued job、刷新 job 状态和 metadata/QC/可选 qc_review 输出摘要查看。
 - 建议任务包：
   - 已完成：建立独立 conda UI 环境并验证 PySide6 offscreen。
   - 已完成：把 `pyside_app.py` 从只读字段展示升级为真实表单：路径选择、anchor preset、seed、sample steps、prior/checkpoint、输出目录、QC 设置。
   - 已完成：实现最小 label mapping 面板，非法 raw label、重复编号和空映射会阻塞。
   - 已完成：将 UI 表单保存为 JSON generation config，并通过 `JobRunner` 创建 queued local job record。
   - 已完成：给 PySide6 交互层补最小 GUI 单元/集成测试；无 GUI 环境下保留明确 skip。
-  - 待完成：GUI 内执行 queued job、刷新 job 状态、展示 metadata/QC/qc_review 输出摘要。
+  - 已完成：GUI 内执行 queued job、刷新 job 状态、展示 metadata/QC/qc_review 输出摘要。
 - 决策点：是否让 `run-generation` 默认先弹配置页需要用户确认；默认建议保留 CLI 自动化，把 GUI 放在 `launch-ui`。
-- 完成标准：安装 PySide6 后，用户能通过 UI 配置、保存 generation config、创建 smoke generation queued job；后续完整 GUI flow 还需要执行/监控/输出查看。
+- 完成标准：安装 PySide6 后，用户能通过 UI 配置、保存 generation config、创建 smoke generation queued job、同步执行 queued job、刷新状态并查看输出摘要；后台 daemon、并发队列、运行中进程终止和线程化 Qt 执行不属于本阶段。
 
 ## P3. Production 级生成模型补齐
 
@@ -71,7 +71,7 @@
 ## P5. 环境化复跑验证
 
 - 目标：区分“历史上有工件”和“当前环境可复现”。
-- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI 定向测试、PySide6 offscreen 表单 smoke 和 `206` 个全量单元测试；真实 SVS 全链路仍未在本轮复跑。
+- 当前状态：已创建 conda 环境 `MultiCenterWSIGenerator`，安装完整可选依赖并通过 PyTorch/UI 定向测试、PySide6 offscreen 表单 smoke 和 `213` 个全量单元测试；真实 SVS 全链路仍未在本轮复跑。
 - 建议任务包：
   - 已完成：准备独立 conda/pip 环境说明，覆盖 `torch`、`ui`、`wsi`、`outputs`、`yaml`。
   - 已完成：复跑完整单元测试、PyTorch smoke 路径和 PySide6 当前窗口创建 smoke。

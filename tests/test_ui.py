@@ -157,7 +157,7 @@ class UITests(unittest.TestCase):
     def test_default_ui_config_contains_single_page_sections(self):
         config = create_default_ui_config()
 
-        self.assertEqual(config["schema_version"], "v0.64.0")
+        self.assertEqual(config["schema_version"], PROJECT_VERSION)
         self.assertEqual(
             list(config["sections"]),
             [
@@ -199,7 +199,7 @@ class UITests(unittest.TestCase):
                 save_ui_config(config, path)
                 loaded = load_ui_config(path)
 
-        self.assertEqual(loaded["schema_version"], "v0.64.0")
+        self.assertEqual(loaded["schema_version"], PROJECT_VERSION)
         self.assertEqual(loaded["sections"]["qc_output"]["status_levels"], ["pass", "warning", "fail"])
 
     def test_ui_config_yaml_requires_optional_dependency(self):
@@ -348,7 +348,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ui config written", result.stdout)
-        self.assertEqual(config["schema_version"], "v0.64.0")
+        self.assertEqual(config["schema_version"], PROJECT_VERSION)
 
     def test_cli_writes_yaml_ui_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -362,7 +362,7 @@ class UITests(unittest.TestCase):
                 config = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(result, 0)
-        self.assertEqual(config["schema_version"], "v0.64.0")
+        self.assertEqual(config["schema_version"], PROJECT_VERSION)
 
     def test_cli_launches_ui_with_yaml_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -378,7 +378,7 @@ class UITests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertTrue(launch_mock.called)
-        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], "v0.64.0")
+        self.assertEqual(launch_mock.call_args.args[0]["schema_version"], PROJECT_VERSION)
 
     def test_cli_inspects_output_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -512,7 +512,7 @@ class PySideFormTests(unittest.TestCase):
         self.app.processEvents()
 
     def test_main_window_exposes_enabled_form_controls(self):
-        from PySide6.QtWidgets import QComboBox, QLineEdit, QPushButton
+        from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QPushButton
 
         window = create_main_window()
 
@@ -527,6 +527,11 @@ class PySideFormTests(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QLineEdit, f"label_mapping_{class_name}_input"))
         self.assertTrue(window.findChild(QPushButton, "save_config_button").isEnabled())
         self.assertTrue(window.findChild(QPushButton, "create_job_button").isEnabled())
+        self.assertTrue(window.findChild(QPushButton, "run_job_button").isEnabled())
+        self.assertTrue(window.findChild(QPushButton, "refresh_job_button").isEnabled())
+        self.assertTrue(window.findChild(QPushButton, "load_output_summary_button").isEnabled())
+        self.assertIsNotNone(window.findChild(QLabel, "job_status_label"))
+        self.assertIsNotNone(window.findChild(QLabel, "output_summary_label"))
 
     def test_save_config_writes_valid_generation_json(self):
         from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
@@ -612,6 +617,117 @@ class PySideFormTests(unittest.TestCase):
         self.assertEqual(record["status"], "queued")
         self.assertEqual(record["command"][2:4], ["he_wsi_generator.cli", "run-generation"])
         self.assertIn(str(root / "generation-config.json"), record["command"])
+
+    def test_run_job_button_uses_workflow_helper_and_displays_status(self):
+        from PySide6.QtWidgets import QLabel, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            record_path = root / "outputs" / "ui_jobs" / "gen-001" / "job.json"
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+
+            with patch(
+                "he_wsi_generator.ui.pyside_app.run_queued_generation_job",
+                return_value={
+                    "job_id": "gen-001",
+                    "status": "completed",
+                    "message": "command completed",
+                    "record_path": str(record_path),
+                },
+            ) as run_helper:
+                window.findChild(QPushButton, "run_job_button").click()
+                self.app.processEvents()
+
+        run_helper.assert_called_once()
+        form_state = run_helper.call_args.args[0]
+        self.assertEqual(form_state["generated_id"], "gen-001")
+        status_text = window.findChild(QLabel, "job_status_label").text()
+        self.assertIn("completed", status_text)
+        self.assertIn(str(record_path), status_text)
+
+    def test_refresh_job_button_uses_workflow_helper_and_displays_status(self):
+        from PySide6.QtWidgets import QLabel, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            record_path = root / "outputs" / "ui_jobs" / "gen-001" / "job.json"
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+
+            with patch(
+                "he_wsi_generator.ui.pyside_app.load_generation_job_status",
+                return_value={
+                    "job_id": "gen-001",
+                    "status": "running",
+                    "message": "still running",
+                    "record_path": str(record_path),
+                },
+            ) as refresh_helper:
+                window.findChild(QPushButton, "refresh_job_button").click()
+                self.app.processEvents()
+
+        refresh_helper.assert_called_once()
+        status_text = window.findChild(QLabel, "job_status_label").text()
+        self.assertIn("running", status_text)
+        self.assertIn("still running", status_text)
+        self.assertIn(str(record_path), status_text)
+
+    def test_output_summary_button_uses_workflow_helper_and_displays_review(self):
+        from PySide6.QtWidgets import QLabel, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            metadata_path = root / "outputs" / "metadata.json"
+            qc_path = root / "outputs" / "qc.json"
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+
+            with patch(
+                "he_wsi_generator.ui.pyside_app.collect_generation_job_output_summary",
+                return_value={
+                    "generated_id": "gen-001",
+                    "qc_status": "warning",
+                    "outputs": {
+                        "wsi_path": "generated.ome.tiff",
+                        "mask_path": "generated_mask/mask.npy",
+                        "metadata_path": str(metadata_path),
+                        "qc_json_path": str(qc_path),
+                    },
+                    "review": {"decision": "accepted"},
+                },
+            ) as summary_helper:
+                window.findChild(QPushButton, "load_output_summary_button").click()
+                self.app.processEvents()
+
+        summary_helper.assert_called_once()
+        summary_text = window.findChild(QLabel, "output_summary_label").text()
+        self.assertIn("gen-001", summary_text)
+        self.assertIn("warning", summary_text)
+        self.assertIn("generated.ome.tiff", summary_text)
+        self.assertIn("generated_mask/mask.npy", summary_text)
+        self.assertIn(str(metadata_path), summary_text)
+        self.assertIn(str(qc_path), summary_text)
+        self.assertIn("accepted", summary_text)
+
+    def test_job_flow_helper_error_is_shown_with_error_prefix(self):
+        from PySide6.QtWidgets import QLabel, QPushButton
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            window = create_main_window()
+            self._populate_valid_form(window, root)
+
+            with patch(
+                "he_wsi_generator.ui.pyside_app.run_queued_generation_job",
+                side_effect=ValueError("job helper failed"),
+            ):
+                window.findChild(QPushButton, "run_job_button").click()
+                self.app.processEvents()
+
+        self.assertTrue(
+            window.findChild(QLabel, "job_status_label").text().startswith("Error: job helper failed")
+        )
 
     def _populate_valid_form(self, window, root: Path) -> None:
         from PySide6.QtWidgets import QLineEdit

@@ -1,5 +1,73 @@
 # CHANGELOG
 
+## v0.65.0 - 2026-05-24
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 P2 剩余 GUI flow，补齐 GUI 内执行 queued job、刷新 job 状态和查看 metadata/QC/qc_review 输出摘要。
+
+### 已做改动
+
+- 版本号升级到 `v0.65.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建并派发两个 P2 worker 任务：
+  - `.agent/tasks/p2-ui-job-flow-helper-20260524.md`
+  - `.agent/tasks/p2-ui-pyside-job-flow-20260524.md`
+- 两个 worker 未独立完成；orchestrator 停止 worker 后接手实现，并写入报告：
+  - `.agent/reports/p2-ui-job-flow-helper-20260524.md`
+  - `.agent/reports/p2-ui-pyside-job-flow-20260524.md`
+- `src/he_wsi_generator/ui/workflow.py` 新增 GUI flow helper：
+  - `load_generation_job_status()`
+  - `run_queued_generation_job()`
+  - `collect_generation_job_output_summary()`
+- `src/he_wsi_generator/ui/pyside_app.py` 新增执行 queued job、刷新 job 状态、加载输出摘要按钮，以及 job/output 摘要展示 label。
+- 新增/更新测试，覆盖 helper 执行 queued job、读取 completed job 输出摘要、未完成 job/缺失输出显式失败，以及 PySide6 offscreen 的按钮、状态展示、输出摘要展示和错误显示。
+- 更新 README 和 `docs/audit/`，将 GUI 内同步执行/刷新/输出查看从缺失项调整为已完成，同时保留后台 daemon、运行中取消、production 模型、生产级 WSI streaming 和真实 SVS 复跑边界。
+
+### 影响文件
+
+- `.agent/tasks/p2-ui-job-flow-helper-20260524.md`
+- `.agent/tasks/p2-ui-pyside-job-flow-20260524.md`
+- `.agent/reports/p2-ui-job-flow-helper-20260524.md`
+- `.agent/reports/p2-ui-pyside-job-flow-20260524.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/ui/pyside_app.py`
+- `src/he_wsi_generator/ui/workflow.py`
+- `tests/test_ui.py`
+- `tests/test_ui_workflow.py`
+- `tests/test_version.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- RED：`mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui_workflow -v`
+  - 结果：初次失败于 `ImportError: cannot import name 'collect_generation_job_output_summary'`，证明 helper 缺口存在。
+- GREEN：`mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui_workflow -v`
+  - 结果：通过，`Ran 13 tests ... OK`。
+- RED：`QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui.PySideFormTests -v`
+  - 结果：初次失败于缺少 `run_job_button`、`run_queued_generation_job`、`load_generation_job_status` 和 `collect_generation_job_output_summary`，证明 PySide GUI flow 缺口存在。
+- GREEN：`QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui.PySideFormTests -v`
+  - 结果：通过，`Ran 9 tests ... OK`。
+- Orchestrator 合并后复核：
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+    - 结果：`v0.65.0`。
+  - `mamba run -n MultiCenterWSIGenerator he-wsi-gen validate generation-config configs/generation.default.json`
+    - 结果：`generation-config valid: configs/generation.default.json`。
+  - `QT_QPA_PLATFORM=offscreen mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_ui tests.test_ui_workflow tests.test_version -v`
+    - 结果：通过，`Ran 41 tests in 0.250s OK`。
+  - `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+    - 结果：通过，`Ran 213 tests in 17.486s OK`。
+  - `git diff --check`
+    - 结果：通过，无 whitespace error。
+
 ## v0.64.0 - 2026-05-24
 
 ### 用户需求

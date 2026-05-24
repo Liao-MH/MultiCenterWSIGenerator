@@ -26,9 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class OutputQCArchiveTests(unittest.TestCase):
     def metadata_payload(self, root: Path, qc_path: Path) -> dict:
         return {
-            "schema_version": "v0.64.0",
+            "schema_version": "v0.65.0",
             "generated_id": "gen-001",
-            "version": "v0.64.0",
+            "version": "v0.65.0",
             "created_at": "2026-05-23T12:00:00",
             "output": {
                 "wsi_path": str(root / "generated.ome.tiff"),

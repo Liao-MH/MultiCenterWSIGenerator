@@ -7,7 +7,10 @@ from ..constants import ANCHOR_PRESETS, DEFAULT_GENERATION_CONFIG, MASK_CLASSES
 from .workflow import (
     UIWorkflowError,
     build_generation_config_from_form,
+    collect_generation_job_output_summary,
     create_run_generation_job,
+    load_generation_job_status,
+    run_queued_generation_job,
 )
 
 
@@ -136,12 +139,32 @@ def create_main_window(config: dict | None = None):
             self.create_job_button = QPushButton("创建运行命令/任务")
             self.create_job_button.setObjectName("create_job_button")
             self.create_job_button.clicked.connect(self._on_create_job)
+            self.run_job_button = QPushButton("执行 queued job")
+            self.run_job_button.setObjectName("run_job_button")
+            self.run_job_button.clicked.connect(self._on_run_job)
+            self.refresh_job_button = QPushButton("刷新 job 状态")
+            self.refresh_job_button.setObjectName("refresh_job_button")
+            self.refresh_job_button.clicked.connect(self._on_refresh_job)
+            self.load_output_summary_button = QPushButton("加载输出摘要")
+            self.load_output_summary_button.setObjectName("load_output_summary_button")
+            self.load_output_summary_button.clicked.connect(self._on_load_output_summary)
             self.ui_status_label = QLabel("Ready")
             self.ui_status_label.setObjectName("ui_status_label")
             self.ui_status_label.setWordWrap(True)
+            self.job_status_label = QLabel("No job loaded")
+            self.job_status_label.setObjectName("job_status_label")
+            self.job_status_label.setWordWrap(True)
+            self.output_summary_label = QLabel("No output summary loaded")
+            self.output_summary_label.setObjectName("output_summary_label")
+            self.output_summary_label.setWordWrap(True)
             layout.addWidget(self.save_config_button)
             layout.addWidget(self.create_job_button)
+            layout.addWidget(self.run_job_button)
+            layout.addWidget(self.refresh_job_button)
+            layout.addWidget(self.load_output_summary_button)
             layout.addWidget(self.ui_status_label)
+            layout.addWidget(self.job_status_label)
+            layout.addWidget(self.output_summary_label)
 
             self._apply_initial_values()
             scroll.setWidget(central)
@@ -183,7 +206,32 @@ def create_main_window(config: dict | None = None):
             except ValueError as exc:
                 self._set_error(str(exc))
                 return
+            self._set_job_status(_format_job_record(record))
             self._set_status(f"Queued job {record['job_id']}: {record['record_path']}")
+
+        def _on_run_job(self) -> None:
+            try:
+                record = run_queued_generation_job(self._form_state())
+            except (ValueError, OSError) as exc:
+                self._set_job_error(str(exc))
+                return
+            self._set_job_status(_format_job_record(record))
+
+        def _on_refresh_job(self) -> None:
+            try:
+                record = load_generation_job_status(self._form_state())
+            except (ValueError, OSError) as exc:
+                self._set_job_error(str(exc))
+                return
+            self._set_job_status(_format_job_record(record))
+
+        def _on_load_output_summary(self) -> None:
+            try:
+                summary = collect_generation_job_output_summary(self._form_state())
+            except (ValueError, OSError) as exc:
+                self._set_summary_error(str(exc))
+                return
+            self.output_summary_label.setText(_format_output_summary(summary))
 
         def _save_generation_config(self) -> Path:
             target = _required_path(self.generation_config_path_input, "generation config save path")
@@ -254,6 +302,18 @@ def create_main_window(config: dict | None = None):
         def _set_error(self, message: str) -> None:
             self.ui_status_label.setText(f"Error: {message}")
 
+        def _set_job_status(self, message: str) -> None:
+            self.job_status_label.setText(message)
+            self._set_status(message)
+
+        def _set_job_error(self, message: str) -> None:
+            self.job_status_label.setText(f"Error: {message}")
+            self._set_error(message)
+
+        def _set_summary_error(self, message: str) -> None:
+            self.output_summary_label.setText(f"Error: {message}")
+            self._set_error(message)
+
     window = GenerationConfigWindow(config)
     return window
 
@@ -293,6 +353,32 @@ def _parse_raw_label_tokens(text: str, class_name: str) -> list[str]:
             )
         labels.append(str(int(token)))
     return labels
+
+
+def _format_job_record(record: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"Job {record.get('job_id')}: {record.get('status')}",
+            f"Message: {record.get('message') or '-'}",
+            f"Record: {record.get('record_path')}",
+        ]
+    )
+
+
+def _format_output_summary(summary: dict[str, Any]) -> str:
+    outputs = summary.get("outputs", {})
+    lines = [
+        f"Generated ID: {summary.get('generated_id')}",
+        f"QC status: {summary.get('qc_status')}",
+        f"WSI: {outputs.get('wsi_path')}",
+        f"Mask: {outputs.get('mask_path')}",
+        f"Metadata: {outputs.get('metadata_path')}",
+        f"QC: {outputs.get('qc_json_path')}",
+    ]
+    review = summary.get("review")
+    if isinstance(review, dict):
+        lines.append(f"Review decision: {review.get('decision')}")
+    return "\n".join(lines)
 
 
 def launch_ui(config: dict | None = None) -> int:

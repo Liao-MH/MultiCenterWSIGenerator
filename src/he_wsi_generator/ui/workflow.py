@@ -6,6 +6,7 @@ from typing import Any
 
 from ..constants import DEFAULT_GENERATION_CONFIG, MASK_CLASSES
 from ..schemas import ValidationError, validate_generation_config
+from .controller import collect_output_summary
 from .jobs import JobRunner, JobRunnerError
 
 
@@ -122,6 +123,45 @@ def create_run_generation_job(
     try:
         return JobRunner(job_root).create_job(job_id=job_id, command=command, cwd=cwd)
     except JobRunnerError as exc:
+        raise UIWorkflowError(str(exc)) from exc
+
+
+def load_generation_job_status(form_state: dict) -> dict:
+    runner, job_id = _generation_job_runner_and_id(form_state)
+    try:
+        return runner.load_job(job_id)
+    except JobRunnerError as exc:
+        raise UIWorkflowError(str(exc)) from exc
+
+
+def run_queued_generation_job(form_state: dict) -> dict:
+    runner, job_id = _generation_job_runner_and_id(form_state)
+    try:
+        return runner.run_job(job_id)
+    except JobRunnerError as exc:
+        raise UIWorkflowError(str(exc)) from exc
+
+
+def collect_generation_job_output_summary(
+    form_state: dict,
+    include_qc_review: bool = True,
+) -> dict:
+    output_root = _generation_output_root(form_state)
+    job = load_generation_job_status(form_state)
+    if job["status"] != "completed":
+        raise UIWorkflowError(f"job {job['job_id']} must be completed before loading outputs")
+
+    metadata_path = output_root / "metadata.json"
+    qc_path = output_root / "qc.json"
+    _require_existing_artifact(metadata_path, "metadata.json")
+    _require_existing_artifact(qc_path, "qc.json")
+    qc_review_path = output_root / "qc_review.json"
+    if not include_qc_review or not qc_review_path.exists():
+        qc_review_path = None
+
+    try:
+        return collect_output_summary(metadata_path, qc_path, qc_review_path=qc_review_path)
+    except (ValidationError, ValueError, OSError) as exc:
         raise UIWorkflowError(str(exc)) from exc
 
 
@@ -324,3 +364,21 @@ def _get_field(form_state: dict, key: str, aliases: tuple[str, ...] = ()) -> Any
 
 def _field_label(key: str) -> str:
     return _FIELD_LABELS.get(key, key)
+
+
+def _generation_job_runner_and_id(form_state: dict) -> tuple[JobRunner, str]:
+    output_root = _generation_output_root(form_state)
+    job_id = _required_text_field(form_state, "generated_id")
+    return JobRunner(output_root / "ui_jobs"), job_id
+
+
+def _generation_output_root(form_state: dict) -> Path:
+    _require_form_state(form_state)
+    return Path(_required_path_field(form_state, "output_root", aliases=("output_dir",)))
+
+
+def _require_existing_artifact(path: Path, label: str) -> None:
+    if not path.exists():
+        raise UIWorkflowError(f"{label} does not exist: {path}")
+    if not path.is_file():
+        raise UIWorkflowError(f"{label} must be a file: {path}")
