@@ -25,25 +25,25 @@ class PriorArtifactTests(unittest.TestCase):
         paths = {}
         for name, payload in {
             "layout_mask_prior": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "layout_mask_prior",
                 "sample_count": 2,
                 "non_background_fraction": 0.75,
             },
             "style_prior": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "style_prior",
                 "sample_count": 2,
                 "rgb_statistics": {"mean_rgb": [180.0, 120.0, 160.0]},
             },
             "texture_prior": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "texture_prior",
                 "embedding_count": 4,
                 "cluster_count": 2,
             },
             "qc_reference_distribution": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "source": "qc_report_metric_distribution",
                 "sample_count": 3,
                 "stratification": {
@@ -60,7 +60,7 @@ class PriorArtifactTests(unittest.TestCase):
                 },
             },
             "wsi_tissue_overview": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "artifact_type": "wsi_tissue_overview",
                 "record_count": 2,
                 "source": {
@@ -78,7 +78,7 @@ class PriorArtifactTests(unittest.TestCase):
     def build_manifest(self, root: Path) -> dict:
         artifact_paths = self.write_artifacts(root)
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "prior_id": "prior-demo",
             "created_at": "2026-05-23T10:00:00Z",
             "random_seed": 7,
@@ -103,7 +103,7 @@ class PriorArtifactTests(unittest.TestCase):
 
             loaded = load_prior_manifest(manifest_path, verify_files=True)
 
-        self.assertEqual(loaded["schema_version"], "v0.72.5")
+        self.assertEqual(loaded["schema_version"], "v0.72.32")
         self.assertEqual(loaded["prior_id"], "prior-demo")
         self.assertEqual(loaded["random_seed"], 7)
         self.assertEqual(
@@ -195,7 +195,7 @@ class PriorArtifactTests(unittest.TestCase):
             manifest_path = output_dir / "prior_manifest.json"
             loaded = load_prior_manifest(manifest_path, verify_files=True)
 
-        self.assertEqual(manifest["schema_version"], "v0.72.5")
+        self.assertEqual(manifest["schema_version"], "v0.72.32")
         self.assertEqual(loaded["created_at"], "2026-05-23T12:00:00Z")
         self.assertEqual(loaded["input_data"]["dataset_id"], "demo")
         self.assertEqual(loaded["input_data"]["manifest_path"], "inputs/manifest.json")
@@ -206,7 +206,7 @@ class PriorArtifactTests(unittest.TestCase):
         )
         self.assertEqual(
             loaded["artifacts"]["style_prior"]["metadata"]["artifact_schema_version"],
-            "v0.72.5",
+            "v0.72.32",
         )
         self.assertEqual(
             loaded["artifacts"]["texture_prior"]["metadata"]["cluster_count"],
@@ -224,6 +224,107 @@ class PriorArtifactTests(unittest.TestCase):
             loaded["artifacts"]["qc_reference_distribution"]["metadata"]["stratum_count"],
             2,
         )
+        self.assertEqual(loaded["production_readiness"]["production_ready"], False)
+        self.assertIn(
+            "statistical_proxy_prior_only",
+            loaded["production_readiness"]["limitations"],
+        )
+        self.assertEqual(
+            loaded["production_readiness"]["component_contracts"]["style_prior"]["backend"],
+            "statistical_rgb_style_prior",
+        )
+        self.assertEqual(
+            loaded["production_readiness"]["component_contracts"]["texture_prior"]["backend"],
+            "statistical_embedding_texture_prior",
+        )
+
+    def test_prior_manifest_rejects_production_ready_without_component_contracts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = self.build_manifest(Path(tmpdir))
+            manifest["production_readiness"] = {
+                "production_ready": True,
+                "declared_by": "fixture-test",
+                "component_contracts": {},
+                "limitations": [],
+            }
+
+            with self.assertRaisesRegex(PriorArtifactError, "component_contracts"):
+                validate_prior_manifest(manifest, verify_files=True)
+
+    def test_prior_manifest_rejects_production_ready_missing_component_condition_outputs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = self.build_manifest(Path(tmpdir))
+            manifest["production_readiness"] = self.production_ready_contract(manifest)
+            del manifest["production_readiness"]["component_contracts"]["style_prior"][
+                "condition_outputs"
+            ]
+
+            with self.assertRaisesRegex(PriorArtifactError, "condition_outputs"):
+                validate_prior_manifest(manifest, verify_files=True)
+
+    def test_prior_manifest_accepts_production_component_contract_artifact_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = self.build_manifest(Path(tmpdir))
+            manifest["production_readiness"] = self.production_ready_contract(manifest)
+
+            validated = validate_prior_manifest(manifest, verify_files=True)
+
+        self.assertTrue(validated["production_readiness"]["production_ready"])
+        self.assertEqual(
+            validated["production_readiness"]["component_contracts"]["style_prior"][
+                "condition_outputs"
+            ],
+            ["style_seed", "style_latent"],
+        )
+        self.assertEqual(
+            validated["production_readiness"]["component_contracts"]["texture_prior"][
+                "training_evidence"
+            ]["artifact_sha256"],
+            validated["artifacts"]["texture_prior"]["sha256"],
+        )
+
+    def production_ready_contract(self, manifest: dict) -> dict:
+        def component(name: str, backend: str, required: str, outputs: list[str]) -> dict:
+            artifact = manifest["artifacts"][name]
+            return {
+                "production_ready": True,
+                "backend": backend,
+                "required_for_production": required,
+                "contract_version": "production_prior_component_v1",
+                "condition_outputs": outputs,
+                "training_evidence": {
+                    "training_run_id": f"{name}-training-run",
+                    "artifact_path": artifact["path"],
+                    "artifact_sha256": artifact["sha256"],
+                },
+                "limitations": ["production_component_contract_fixture"],
+            }
+
+        return {
+            "production_ready": True,
+            "declared_by": "unit-test",
+            "component_contracts": {
+                "layout_mask_prior": component(
+                    "layout_mask_prior",
+                    "trainable_layout_mask_diffusion",
+                    "trainable_layout_or_mask_generator",
+                    ["layout", "mask"],
+                ),
+                "style_prior": component(
+                    "style_prior",
+                    "trainable_style_encoder",
+                    "trainable_style_encoder_or_style_latent_model",
+                    ["style_seed", "style_latent"],
+                ),
+                "texture_prior": component(
+                    "texture_prior",
+                    "trainable_texture_codebook",
+                    "trainable_texture_codebook_or_morphology_token_sampler",
+                    ["texture_token", "morphology_latent"],
+                ),
+            },
+            "limitations": ["production_component_contract_fixture"],
+        }
 
     def test_build_prior_manifest_from_artifacts_records_optional_wsi_tissue_overview(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -250,7 +351,7 @@ class PriorArtifactTests(unittest.TestCase):
         artifact = manifest["artifacts"]["wsi_tissue_overview"]
         self.assertEqual(artifact["kind"], "json")
         self.assertEqual(artifact["metadata"]["artifact_type"], "wsi_tissue_overview")
-        self.assertEqual(artifact["metadata"]["artifact_schema_version"], "v0.72.5")
+        self.assertEqual(artifact["metadata"]["artifact_schema_version"], "v0.72.32")
         self.assertEqual(artifact["metadata"]["record_count"], 2)
         self.assertEqual(artifact["metadata"]["source_backend"], "openslide")
         self.assertEqual(artifact["metadata"]["thumbnail_max_size"], [512, 512])
@@ -262,7 +363,7 @@ class PriorArtifactTests(unittest.TestCase):
             artifact_paths["style_prior"].write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.5",
+                        "schema_version": "v0.72.32",
                         "prior_type": "layout_mask_prior",
                     }
                 ),

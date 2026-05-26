@@ -127,6 +127,7 @@ def _records_for_slide(
                         "conditioning": {
                             "structure_anchor_policy": "source_condition_required_when_anchor_gt_0",
                             "style_seed_source": "training_or_generation_config",
+                            "texture_token_source": "training_or_generation_config",
                             "label_semantics": "six_class_project_mask",
                         },
                     }

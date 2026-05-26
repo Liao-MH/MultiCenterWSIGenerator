@@ -37,14 +37,15 @@ from he_wsi_generator.schemas import validate_metadata, validate_qc_report
 class OutputQCArchiveTests(unittest.TestCase):
     def metadata_payload(self, root: Path, qc_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "generated_id": "gen-001",
-            "version": "v0.72.5",
+            "version": "v0.72.32",
             "created_at": "2026-05-23T12:00:00",
             "output": {
                 "wsi_path": str(root / "generated.ome.tiff"),
                 "mask_path": str(root / "generated_mask" / "mask.npy"),
                 "qc_json_path": str(qc_path),
+                "diagnostics_manifest_path": str(root / "generation_output_diagnostics.json"),
             },
             "source": {
                 "source_wsi_id": None,
@@ -513,6 +514,8 @@ class OutputQCArchiveTests(unittest.TestCase):
             transaction_path = Path(report["transaction_manifest_path"])
             transaction = json.loads(transaction_path.read_text(encoding="utf-8"))
             temporary_path_exists = Path(transaction["temporary_path"]).exists()
+            progress_path = Path(transaction["progress_manifest_path"])
+            progress = json.loads(progress_path.read_text(encoding="utf-8"))
 
         self.assertEqual(report["status"], "written")
         self.assertTrue(report["atomic_publish"])
@@ -533,6 +536,248 @@ class OutputQCArchiveTests(unittest.TestCase):
         self.assertFalse(transaction["resume_capable"])
         self.assertIsInstance(transaction["started_at"], str)
         self.assertIsInstance(transaction["ended_at"], str)
+        self.assertEqual(progress["status"], "completed")
+        self.assertEqual(progress["planned_tile_count"], 1)
+        self.assertEqual(progress["yielded_tile_count"], 1)
+        self.assertEqual(progress["completed_tile_count"], 1)
+        self.assertIsNone(progress["failure_reason"])
+        self.assertEqual(progress["last_tile"]["level_index"], 0)
+        self.assertEqual(progress["last_tile"]["tile_index"], 0)
+        self.assertEqual(transaction["progress_summary"]["status"], "completed")
+        self.assertEqual(transaction["progress_summary"]["yielded_tile_count"], 1)
+        self.assertEqual(
+            report["streaming_write_report"]["progress_manifest_path"],
+            str(progress_path),
+        )
+        self.assertEqual(
+            report["streaming_write_report"]["progress_summary"]["status"],
+            "completed",
+        )
+
+    def test_write_pyramid_ome_tiff_streaming_from_tile_sources_publishes_recovered_temporary_ome(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            record = self.write_positioned_tile_record(
+                tile_root,
+                "level0_full.npy",
+                np.ones((16, 16, 3), dtype=np.uint8) * 10,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 16, 16],
+            )
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "expected_tile_count": 1,
+                        "levels": [
+                            {"level_index": 0, "shape": [16, 16, 3], "expected_tile_count": 1}
+                        ],
+                        "tiles": [
+                            {**record, "path": Path(record["path"]).relative_to(root).as_posix()}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_path = root / "generated.ome.tiff"
+            temporary_path = root / ".generated.recovered.tmp.ome.tiff"
+            write_pyramid_ome_tiff(
+                [np.ones((16, 16, 3), dtype=np.uint8) * 77],
+                temporary_path,
+                chunk_shape=(16, 16),
+            )
+            transaction_path = output_path.with_name(f"{output_path.name}.transaction.json")
+            transaction_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": PROJECT_VERSION,
+                        "manifest_type": "ome_tiff_streaming_write_transaction",
+                        "writer_type": "tile_iterator_streaming_write",
+                        "writer_backend": "tifffile",
+                        "target_path": str(output_path),
+                        "temporary_path": str(temporary_path),
+                        "tile_source_manifest": {
+                            "manifest_path": str(manifest_path),
+                            "manifest_type": None,
+                            "expected_tile_count": 1,
+                            "level_count": 1,
+                        },
+                        "status": "started",
+                        "started_at": "2026-05-25T10:00:00Z",
+                        "ended_at": None,
+                        "failure_reason": None,
+                        "atomic_publish": True,
+                        "resume_capable": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                ome_tiff_module,
+                "_iter_streaming_level_tiles",
+                side_effect=AssertionError("should publish recovered temporary OME-TIFF"),
+            ):
+                report = write_pyramid_ome_tiff_streaming_from_tile_sources(
+                    manifest_path,
+                    output_path,
+                    chunk_shape=(16, 16),
+                )
+            transaction = json.loads(transaction_path.read_text(encoding="utf-8"))
+            with tifffile.TiffFile(output_path) as tiff:
+                recovered = tiff.series[0].levels[0].asarray()
+
+        self.assertEqual(report["status"], "written")
+        self.assertFalse(temporary_path.exists())
+        self.assertEqual(recovered[0, 0, 0], 77)
+        self.assertEqual(transaction["status"], "completed")
+        self.assertEqual(transaction["recovery_action"], "published_existing_temporary_ome_tiff")
+        self.assertTrue(report["streaming_write_report"]["recovered_from_temporary"])
+
+    def test_write_pyramid_ome_tiff_streaming_from_tile_sources_reuses_completed_target_ome(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            record = self.write_positioned_tile_record(
+                tile_root,
+                "level0_full.npy",
+                np.ones((16, 16, 3), dtype=np.uint8) * 10,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 16, 16],
+            )
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "expected_tile_count": 1,
+                        "levels": [
+                            {"level_index": 0, "shape": [16, 16, 3], "expected_tile_count": 1}
+                        ],
+                        "tiles": [
+                            {**record, "path": Path(record["path"]).relative_to(root).as_posix()}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_path = root / "generated.ome.tiff"
+            write_pyramid_ome_tiff(
+                [np.ones((16, 16, 3), dtype=np.uint8) * 88],
+                output_path,
+                chunk_shape=(16, 16),
+            )
+            transaction_path = output_path.with_name(f"{output_path.name}.transaction.json")
+            transaction_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": PROJECT_VERSION,
+                        "manifest_type": "ome_tiff_streaming_write_transaction",
+                        "writer_type": "tile_iterator_streaming_write",
+                        "writer_backend": "tifffile",
+                        "target_path": str(output_path),
+                        "temporary_path": str(root / ".old.tmp.ome.tiff"),
+                        "tile_source_manifest": {
+                            "manifest_path": str(manifest_path),
+                            "manifest_type": None,
+                            "expected_tile_count": 1,
+                            "level_count": 1,
+                        },
+                        "status": "completed",
+                        "started_at": "2026-05-25T10:00:00Z",
+                        "ended_at": "2026-05-25T10:00:01Z",
+                        "failure_reason": None,
+                        "atomic_publish": True,
+                        "resume_capable": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                ome_tiff_module,
+                "_iter_streaming_level_tiles",
+                side_effect=AssertionError("should reuse completed target OME-TIFF"),
+            ):
+                report = write_pyramid_ome_tiff_streaming_from_tile_sources(
+                    manifest_path,
+                    output_path,
+                    chunk_shape=(16, 16),
+                )
+            transaction = json.loads(transaction_path.read_text(encoding="utf-8"))
+            with tifffile.TiffFile(output_path) as tiff:
+                reused = tiff.series[0].levels[0].asarray()
+
+        self.assertEqual(report["status"], "written")
+        self.assertEqual(reused[0, 0, 0], 88)
+        self.assertEqual(transaction["status"], "completed")
+        self.assertEqual(transaction["recovery_action"], "validated_existing_target_ome_tiff")
+        self.assertTrue(report["streaming_write_report"]["reused_existing_target"])
+        self.assertFalse(report["streaming_write_report"]["recovered_from_temporary"])
+
+    def test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tile_root = root / "tiles"
+            record = self.write_positioned_tile_record(
+                tile_root,
+                "level0_full.npy",
+                np.ones((16, 16, 3), dtype=np.uint8) * 10,
+                level_index=0,
+                tile_index=0,
+                tile_origin=[0, 0],
+                write_region=[0, 0, 16, 16],
+            )
+            manifest_path = root / "tile_source_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "expected_tile_count": 1,
+                        "levels": [
+                            {"level_index": 0, "shape": [16, 16, 3], "expected_tile_count": 1}
+                        ],
+                        "tiles": [
+                            {**record, "path": Path(record["path"]).relative_to(root).as_posix()}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output_path = root / "generated.ome.tiff"
+            transaction_path = output_path.with_name(f"{output_path.name}.transaction.json")
+
+            with mock.patch.object(
+                ome_tiff_module,
+                "_streaming_disk_space_report",
+                return_value={
+                    "preflight_status": "insufficient_space",
+                    "target_directory": str(root),
+                    "estimated_total_bytes": 16 * 16 * 3,
+                    "minimum_required_bytes": 4096,
+                    "free_bytes": 128,
+                    "safety_margin_bytes": 3328,
+                },
+            ), mock.patch.object(
+                ome_tiff_module,
+                "_iter_streaming_level_tiles",
+                side_effect=AssertionError("preflight should stop before tile iteration"),
+            ):
+                with self.assertRaisesRegex(OutputWriteError, "insufficient disk space"):
+                    write_pyramid_ome_tiff_streaming_from_tile_sources(
+                        manifest_path,
+                        output_path,
+                        chunk_shape=(16, 16),
+                    )
+
+            transaction = json.loads(transaction_path.read_text(encoding="utf-8"))
+
+        self.assertFalse(output_path.exists())
+        self.assertEqual(transaction["status"], "failed")
+        self.assertIn("insufficient disk space", transaction["failure_reason"])
 
     def test_write_pyramid_ome_tiff_streaming_from_tile_sources_failed_transaction_preserves_target(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -584,6 +829,8 @@ class OutputQCArchiveTests(unittest.TestCase):
 
             transaction = json.loads(transaction_path.read_text(encoding="utf-8"))
             preserved_bytes = output_path.read_bytes()
+            progress_path = Path(transaction["progress_manifest_path"])
+            progress = json.loads(progress_path.read_text(encoding="utf-8"))
 
         self.assertEqual(preserved_bytes, original_bytes)
         self.assertEqual(transaction["status"], "failed")
@@ -591,6 +838,13 @@ class OutputQCArchiveTests(unittest.TestCase):
         self.assertEqual(transaction["target_path"], str(output_path))
         self.assertTrue(transaction["atomic_publish"])
         self.assertFalse(transaction["resume_capable"])
+        self.assertEqual(progress["status"], "failed")
+        self.assertEqual(progress["planned_tile_count"], 1)
+        self.assertEqual(progress["yielded_tile_count"], 0)
+        self.assertEqual(progress["completed_tile_count"], 0)
+        self.assertIn("forced streaming failure", progress["failure_reason"])
+        self.assertEqual(transaction["progress_summary"]["status"], "failed")
+        self.assertEqual(transaction["progress_summary"]["yielded_tile_count"], 0)
 
     def test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_low_to_high_level_order(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1111,10 +1365,70 @@ class OutputQCArchiveTests(unittest.TestCase):
         self.assertEqual(wsi_metrics["pyramid_level_count"]["value"], 4)
         self.assertIn("mean_red", wsi_metrics)
         self.assertIn("style_consistency_proxy", wsi_metrics)
+        self.assertIn("stain_color_separation_proxy", wsi_metrics)
         self.assertIn("sharpness_laplacian_proxy", tile_metrics)
+        self.assertIn("focus_edge_density_proxy", tile_metrics)
         self.assertIn("seam_score_proxy", tile_metrics)
         self.assertEqual(mask_metrics["mask_classes_present"]["value"], 6)
         self.assertEqual(mask_metrics["mask_shape_matches_wsi"]["status"], "pass")
+        self.assertIn("mask_image_tissue_alignment_proxy", mask_metrics)
+
+    def test_build_qc_report_flags_low_stain_and_focus_proxy(self):
+        image = np.ones((8, 8, 3), dtype=np.uint8) * 128
+        mask = np.ones((8, 8), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wsi_path = root / "generated.ome.tiff"
+            mask_path = root / "generated_mask" / "mask.npy"
+            pyramid_report = write_pyramid_ome_tiff([image], wsi_path)
+            mask_path.parent.mkdir(parents=True)
+            np.save(mask_path, mask)
+
+            qc = build_qc_report(
+                generated_id="gen-001",
+                wsi_path=wsi_path,
+                mask_path=mask_path,
+                pyramid_report=pyramid_report,
+                non_copy_items=[],
+            )
+
+        wsi_metrics = {metric["name"]: metric for metric in qc["levels"]["wsi"]["metrics"]}
+        tile_metrics = {metric["name"]: metric for metric in qc["levels"]["tile"]["metrics"]}
+        self.assertEqual(qc["overall_status"], "fail")
+        self.assertEqual(wsi_metrics["stain_color_separation_proxy"]["status"], "fail")
+        self.assertEqual(tile_metrics["focus_edge_density_proxy"]["status"], "fail")
+
+    def test_build_qc_report_uses_writer_tile_grid_for_seam_proxy(self):
+        image = np.zeros((8, 12, 3), dtype=np.uint8)
+        image[:, :4, :] = 20
+        image[:, 4:8, :] = 240
+        image[:, 8:, :] = 20
+        mask = np.ones((8, 12), dtype=np.uint8)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wsi_path = root / "generated.ome.tiff"
+            mask_path = root / "generated_mask" / "mask.npy"
+            pyramid_report = write_pyramid_ome_tiff(
+                [image],
+                wsi_path,
+                chunk_shape=(4, 4),
+            )
+            mask_path.parent.mkdir(parents=True)
+            np.save(mask_path, mask)
+
+            qc = build_qc_report(
+                generated_id="gen-001",
+                wsi_path=wsi_path,
+                mask_path=mask_path,
+                pyramid_report=pyramid_report,
+                non_copy_items=[],
+            )
+
+        tile_metrics = {metric["name"]: metric for metric in qc["levels"]["tile"]["metrics"]}
+        self.assertEqual(tile_metrics["seam_score_proxy"]["status"], "fail")
+        self.assertLess(tile_metrics["seam_score_proxy"]["value"], 0.75)
 
     def test_build_qc_report_fails_when_mask_shape_does_not_align_to_wsi(self):
         levels = [
@@ -1142,6 +1456,63 @@ class OutputQCArchiveTests(unittest.TestCase):
         mask_metrics = {metric["name"]: metric for metric in qc["levels"]["mask_region"]["metrics"]}
         self.assertEqual(qc["overall_status"], "fail")
         self.assertEqual(mask_metrics["mask_shape_matches_wsi"]["status"], "fail")
+
+    def test_build_qc_report_flags_mask_image_tissue_alignment_mismatch(self):
+        image = np.ones((8, 8, 3), dtype=np.uint8) * 245
+        image[:, :4] = np.array([90, 55, 120], dtype=np.uint8)
+        matching_mask = np.zeros((8, 8), dtype=np.uint8)
+        matching_mask[:, :4] = 1
+        mismatched_mask = np.zeros((8, 8), dtype=np.uint8)
+        mismatched_mask[:, 4:] = 1
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            wsi_path = root / "generated.ome.tiff"
+            matching_mask_path = root / "matching-mask.npy"
+            mismatched_mask_path = root / "mismatched-mask.npy"
+            pyramid_report = write_pyramid_ome_tiff([image], wsi_path)
+            np.save(matching_mask_path, matching_mask)
+            np.save(mismatched_mask_path, mismatched_mask)
+
+            matching_qc = build_qc_report(
+                generated_id="gen-001",
+                wsi_path=wsi_path,
+                mask_path=matching_mask_path,
+                pyramid_report=pyramid_report,
+                non_copy_items=[],
+            )
+            mismatched_qc = build_qc_report(
+                generated_id="gen-002",
+                wsi_path=wsi_path,
+                mask_path=mismatched_mask_path,
+                pyramid_report=pyramid_report,
+                non_copy_items=[],
+            )
+
+        matching_metrics = {
+            metric["name"]: metric for metric in matching_qc["levels"]["mask_region"]["metrics"]
+        }
+        mismatched_metrics = {
+            metric["name"]: metric for metric in mismatched_qc["levels"]["mask_region"]["metrics"]
+        }
+        self.assertEqual(
+            matching_metrics["mask_image_tissue_alignment_proxy"]["status"],
+            "pass",
+        )
+        self.assertEqual(
+            matching_metrics["mask_image_tissue_alignment_proxy"]["value"],
+            1.0,
+        )
+        self.assertEqual(
+            mismatched_metrics["mask_image_tissue_alignment_proxy"]["status"],
+            "fail",
+        )
+        self.assertEqual(
+            mismatched_metrics["mask_image_tissue_alignment_proxy"]["value"],
+            0.0,
+        )
+        self.assertEqual(mismatched_qc["levels"]["mask_region"]["status"], "fail")
+        self.assertEqual(mismatched_qc["overall_status"], "fail")
 
     def test_build_qc_report_applies_reference_distribution_thresholds(self):
         levels = [

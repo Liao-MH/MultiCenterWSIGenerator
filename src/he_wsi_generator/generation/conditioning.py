@@ -1,6 +1,7 @@
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -405,6 +406,18 @@ def _load_sampled_texture_policy(path: str | Path, expected_texture_prior_path: 
         "fraction": token.get("fraction"),
         "mean_embedding": deepcopy(token.get("mean_embedding", [])),
         "std_embedding": deepcopy(token.get("std_embedding", [])),
+        "texture_token": deepcopy(
+            _require_dict(
+                token,
+                "texture_token",
+                "sampled_texture_policy.selected_texture_token.texture_token",
+            )
+        ),
+        "morphology_latent": _require_numeric_vector(
+            token,
+            "morphology_latent",
+            "sampled_texture_policy.selected_texture_token.morphology_latent",
+        ),
     }
     return {
         "artifact_path": str(policy_path),
@@ -418,6 +431,13 @@ def _load_sampled_texture_policy(path: str | Path, expected_texture_prior_path: 
         "texture_prior_path": texture_prior_path,
         "cluster_count": policy.get("cluster_count"),
         "selected_texture_token": token_summary,
+        "texture_codebook_reference": deepcopy(
+            _require_dict(
+                policy,
+                "texture_codebook_reference",
+                "sampled_texture_policy.texture_codebook_reference",
+            )
+        ),
         "limitations": deepcopy(policy.get("limitations", [])),
     }
 
@@ -519,6 +539,11 @@ def _texture_token_condition(
             "fraction": token.get("fraction"),
             "mean_embedding": deepcopy(token.get("mean_embedding", [])),
             "std_embedding": deepcopy(token.get("std_embedding", [])),
+            "texture_token": deepcopy(token.get("texture_token", {})),
+            "morphology_latent": deepcopy(token["morphology_latent"]),
+            "texture_codebook_reference": deepcopy(
+                sampled_texture_policy["texture_codebook_reference"]
+            ),
             "limitations": deepcopy(sampled_texture_policy["limitations"]),
         }
     prototypes = texture_prior.get("texture_prototypes")
@@ -533,6 +558,7 @@ def _texture_token_condition(
         "representative_embedding_index",
         "texture_prior.texture_prototypes.representative_embedding_index",
     )
+    codebook_reference = _texture_codebook_reference(texture_prior)
     return {
         "source": "texture_prior",
         "artifact_path": prior["artifacts"]["texture_prior"]["path"],
@@ -541,7 +567,32 @@ def _texture_token_condition(
         "representative_embedding_index": representative,
         "fraction": selected.get("fraction"),
         "mean_embedding": deepcopy(selected.get("mean_embedding", [])),
+        "texture_token": deepcopy(selected.get("texture_token", {})),
+        "morphology_latent": _require_numeric_vector(
+            selected,
+            "morphology_latent",
+            "texture_prior.texture_prototypes.morphology_latent",
+        ),
+        "texture_codebook_reference": codebook_reference,
     }
+
+
+def _texture_codebook_reference(texture_prior: dict[str, Any]) -> dict[str, Any]:
+    codebook = _require_dict(
+        texture_prior,
+        "texture_codebook",
+        "texture_prior.texture_codebook",
+    )
+    condition_outputs = _require_list(
+        codebook,
+        "condition_outputs",
+        "texture_prior.texture_codebook.condition_outputs",
+    )
+    if "texture_token" not in condition_outputs or "morphology_latent" not in condition_outputs:
+        raise GenerationConditionError(
+            "texture_prior.texture_codebook.condition_outputs must include texture_token and morphology_latent"
+        )
+    return deepcopy(codebook)
 
 
 def _coord_condition(cascade_level: str, tile_origin_40x: tuple[int, int] | list[int]) -> dict[str, Any]:
@@ -681,6 +732,22 @@ def _require_list(data: dict[str, Any], key: str, path: str) -> list[Any]:
     if not isinstance(value, list):
         raise GenerationConditionError(f"{path} must be a list")
     return value
+
+
+def _require_numeric_vector(data: dict[str, Any], key: str, path: str) -> list[float]:
+    value = _require_list(data, key, path)
+    if not value:
+        raise GenerationConditionError(f"{path} must be a non-empty numeric list")
+    result = []
+    for index, item in enumerate(value):
+        if (
+            not isinstance(item, (int, float))
+            or isinstance(item, bool)
+            or not isfinite(float(item))
+        ):
+            raise GenerationConditionError(f"{path}[{index}] must be a finite number")
+        result.append(float(item))
+    return result
 
 
 def _require_dict(data: dict[str, Any], key: str, path: str) -> dict[str, Any]:

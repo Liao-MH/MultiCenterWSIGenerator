@@ -10,6 +10,7 @@ from .generation.conditioning import (
 )
 from .generation.executor import (
     GenerationExecutionError,
+    run_production_tile_stream_generation,
     run_smoke_generation,
     run_torch_diffusion_smoke_generation,
 )
@@ -421,6 +422,10 @@ def run_command(args: argparse.Namespace) -> int:
         try:
             config = load_document(args.generation_config)
             if args.backend == "smoke-cascade":
+                if args.retry_failed_tiles:
+                    raise GenerationExecutionError(
+                        "--retry-failed-tiles is only supported for production-tile-stream"
+                    )
                 run = run_smoke_generation(
                     config,
                     prior_manifest_path=args.prior_manifest,
@@ -432,13 +437,13 @@ def run_command(args: argparse.Namespace) -> int:
                     wsi_writer=args.wsi_writer,
                 )
             elif args.backend == "torch-diffusion-smoke":
+                if args.retry_failed_tiles:
+                    raise GenerationExecutionError(
+                        "--retry-failed-tiles is only supported for production-tile-stream"
+                    )
                 if args.resume_tile_manifest:
                     raise GenerationExecutionError(
-                        "--resume-tile-manifest is only supported for smoke-cascade"
-                    )
-                if args.wsi_writer != "array":
-                    raise GenerationExecutionError(
-                        "--wsi-writer tile-streaming is only supported for smoke-cascade"
+                        "--resume-tile-manifest is not supported for torch-diffusion-smoke"
                     )
                 if not args.training_index:
                     raise GenerationExecutionError(
@@ -453,6 +458,22 @@ def run_command(args: argparse.Namespace) -> int:
                     generated_id=args.generated_id,
                     batch_size=args.batch_size,
                     condition_packet_path=args.condition_packet,
+                    wsi_writer=args.wsi_writer,
+                )
+            elif args.backend == "production-tile-stream":
+                if args.wsi_writer != "tile-streaming":
+                    raise GenerationExecutionError(
+                        "production-tile-stream requires --wsi-writer tile-streaming"
+                    )
+                run = run_production_tile_stream_generation(
+                    config,
+                    prior_manifest_path=args.prior_manifest,
+                    checkpoint_manifest_path=args.checkpoint_manifest,
+                    output_root=args.output_root,
+                    generated_id=args.generated_id,
+                    condition_packet_path=args.condition_packet,
+                    resume_tile_manifest_path=args.resume_tile_manifest,
+                    retry_failed_tiles=args.retry_failed_tiles,
                 )
             else:
                 raise GenerationExecutionError(f"unsupported generation backend: {args.backend}")

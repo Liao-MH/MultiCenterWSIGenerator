@@ -25,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class GenerationConditioningTests(unittest.TestCase):
     def generation_config(self, style_seed="auto", structure_anchor=0.0, source_wsi_id=None) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "random_seed": 7,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -46,7 +46,7 @@ class GenerationConditioningTests(unittest.TestCase):
         root.mkdir(parents=True, exist_ok=True)
         artifacts = {
             "layout_mask_prior": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "layout_mask_prior",
                 "sample_count": 2,
                 "class_names": [
@@ -62,7 +62,7 @@ class GenerationConditioningTests(unittest.TestCase):
                 "adjacency_counts": {"horizontal": {"1:2": 3}, "vertical": {"2:3": 2}},
             },
             "style_prior": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "style_prior",
                 "sample_count": 2,
                 "rgb_statistics": {
@@ -72,30 +72,55 @@ class GenerationConditioningTests(unittest.TestCase):
                 },
             },
             "texture_prior": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "texture_prior",
                 "embedding_count": 4,
                 "embedding_dim": 2,
                 "cluster_count": 2,
+                "texture_codebook": {
+                    "codebook_type": "fitted_embedding_cluster_codebook_v1",
+                    "token_type": "embedding_cluster_texture_token_v1",
+                    "embedding_dim": 2,
+                    "token_count": 2,
+                    "condition_outputs": ["texture_token", "morphology_latent"],
+                },
                 "texture_prototypes": [
                     {
                         "cluster_id": 0,
                         "sample_count": 2,
                         "fraction": 0.5,
                         "mean_embedding": [0.1, 0.1],
+                        "std_embedding": [0.1, 0.1],
                         "representative_embedding_index": 0,
+                        "texture_token": {
+                            "token_type": "embedding_cluster_texture_token_v1",
+                            "token_id": "texture-cluster-0",
+                            "prototype_index": 0,
+                            "cluster_id": 0,
+                            "representative_embedding_index": 0,
+                        },
+                        "morphology_latent": [-0.9998001, -0.9998001],
                     },
                     {
                         "cluster_id": 1,
                         "sample_count": 2,
                         "fraction": 0.5,
                         "mean_embedding": [10.1, 10.1],
+                        "std_embedding": [0.1, 0.1],
                         "representative_embedding_index": 2,
+                        "texture_token": {
+                            "token_type": "embedding_cluster_texture_token_v1",
+                            "token_id": "texture-cluster-1",
+                            "prototype_index": 1,
+                            "cluster_id": 1,
+                            "representative_embedding_index": 2,
+                        },
+                        "morphology_latent": [0.9998001, 0.9998001],
                     },
                 ],
             },
             "qc_reference_distribution": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "source": "qc_report_metric_distribution",
                 "sample_count": 3,
                 "metrics": {
@@ -109,7 +134,7 @@ class GenerationConditioningTests(unittest.TestCase):
                 },
             },
             "wsi_tissue_overview": {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "artifact_type": "wsi_tissue_overview",
                 "record_count": 2,
                 "source": {
@@ -158,7 +183,7 @@ class GenerationConditioningTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "artifact_type": "sampled_layout_mask",
                     "created_at": "2026-05-23T16:00:00Z",
                     "sample_id": "layout-sampled-001",
@@ -193,7 +218,7 @@ class GenerationConditioningTests(unittest.TestCase):
         policy_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "artifact_type": "sampled_style_policy",
                     "created_at": "2026-05-24T12:00:00Z",
                     "sample_id": "style-policy-001",
@@ -224,7 +249,7 @@ class GenerationConditioningTests(unittest.TestCase):
         policy_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "artifact_type": "sampled_texture_policy",
                     "created_at": "2026-05-24T12:00:00Z",
                     "sample_id": "texture-policy-001",
@@ -243,6 +268,22 @@ class GenerationConditioningTests(unittest.TestCase):
                         "sample_count": 2,
                         "fraction": 0.5,
                         "mean_embedding": [10.1, 10.1],
+                        "std_embedding": [0.1, 0.1],
+                        "texture_token": {
+                            "token_type": "embedding_cluster_texture_token_v1",
+                            "token_id": "texture-cluster-1",
+                            "prototype_index": 1,
+                            "cluster_id": 1,
+                            "representative_embedding_index": 2,
+                        },
+                        "morphology_latent": [0.9998001, 0.9998001],
+                    },
+                    "texture_codebook_reference": {
+                        "codebook_type": "fitted_embedding_cluster_codebook_v1",
+                        "token_type": "embedding_cluster_texture_token_v1",
+                        "embedding_dim": 2,
+                        "token_count": 2,
+                        "condition_outputs": ["texture_token", "morphology_latent"],
                     },
                     "limitations": ["deterministic_statistical_texture_policy_only"],
                 }
@@ -303,7 +344,7 @@ class GenerationConditioningTests(unittest.TestCase):
             )
             written = json.loads(output_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(packet["schema_version"], "v0.72.5")
+        self.assertEqual(packet["schema_version"], "v0.72.32")
         self.assertEqual(packet["condition_packet_type"], "generation_condition_packet")
         self.assertEqual(packet["prior_id"], "prior-demo")
         self.assertEqual(written["conditions"]["coord"]["tile_origin_40x"], [128, 256])
@@ -323,6 +364,7 @@ class GenerationConditioningTests(unittest.TestCase):
             written["conditions"]["texture_token"]["representative_embedding_index"],
             2,
         )
+        self.assertEqual(written["conditions"]["texture_token"]["morphology_latent"], [0.9998001, 0.9998001])
         self.assertFalse(written["conditions"]["source_condition"]["enabled"])
         self.assertEqual(written["conditions"]["structure_anchor"]["value"], 0.0)
 
@@ -441,6 +483,8 @@ class GenerationConditioningTests(unittest.TestCase):
         self.assertEqual(texture_condition["cluster_id"], 1)
         self.assertEqual(texture_condition["representative_embedding_index"], 2)
         self.assertEqual(texture_condition["mean_embedding"], [10.1, 10.1])
+        self.assertEqual(texture_condition["morphology_latent"], [0.9998001, 0.9998001])
+        self.assertEqual(texture_condition["texture_token"]["token_id"], "texture-cluster-1")
 
     def test_build_generation_condition_packet_rejects_invalid_sampled_policy_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -496,7 +540,7 @@ class GenerationConditioningTests(unittest.TestCase):
                     sampled_texture_policy_path=texture_policy_path,
                 )
 
-            bad_texture["schema_version"] = "v0.72.5"
+            bad_texture["schema_version"] = "v0.72.32"
             del bad_texture["selected_texture_token"]["representative_embedding_index"]
             texture_policy_path.write_text(json.dumps(bad_texture), encoding="utf-8")
             with self.assertRaisesRegex(GenerationConditionError, "representative_embedding_index"):
@@ -539,7 +583,7 @@ class GenerationConditioningTests(unittest.TestCase):
             paths["texture_prior"].write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.5",
+                        "schema_version": "v0.72.32",
                         "prior_type": "texture_prior",
                         "cluster_count": 2,
                     }
@@ -577,7 +621,7 @@ class GenerationConditioningTests(unittest.TestCase):
             paths["wsi_tissue_overview"].write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.5",
+                        "schema_version": "v0.72.32",
                         "artifact_type": "not_wsi_tissue_overview",
                         "record_count": 0,
                         "source": {"backend": "openslide", "thumbnail_max_size": [512, 512]},
@@ -589,7 +633,7 @@ class GenerationConditioningTests(unittest.TestCase):
             save_prior_manifest(
                 root / "prior",
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "prior_id": "prior-demo",
                     "created_at": "2026-05-23T12:00:00Z",
                     "random_seed": 7,

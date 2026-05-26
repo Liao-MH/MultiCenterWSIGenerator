@@ -31,7 +31,7 @@ class StylePriorTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -66,7 +66,7 @@ class StylePriorTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -92,7 +92,7 @@ class StylePriorTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -145,7 +145,7 @@ class StylePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(style_prior, saved)
-        self.assertEqual(style_prior["schema_version"], "v0.72.5")
+        self.assertEqual(style_prior["schema_version"], "v0.72.32")
         self.assertEqual(style_prior["prior_type"], "style_prior")
         self.assertEqual(style_prior["source"]["training_index_path"], str(index_path))
         self.assertEqual(style_prior["source"]["batch_size"], 2)
@@ -156,6 +156,15 @@ class StylePriorTests(unittest.TestCase):
         self.assertNotIn("image_batch", style_prior)
         self.assertEqual(style_prior["wsi_ids"], ["slide-001"])
         self.assertEqual(style_prior["sample_count"], 2)
+        self.assertEqual(
+            style_prior["style_latent_encoder"]["encoder_type"],
+            "fitted_rgb_stats_pca_v1",
+        )
+        self.assertEqual(style_prior["style_latent_encoder"]["latent_dim"], 3)
+        self.assertEqual(
+            style_prior["style_latent_encoder"]["condition_outputs"],
+            ["style_seed", "style_latent"],
+        )
         self.assertEqual(style_prior["rgb_statistics"]["mean_rgb"], [130.0, 110.0, 100.0])
         self.assertEqual(style_prior["rgb_statistics"]["std_rgb"], [90.0, 70.0, 20.0])
         self.assertEqual(style_prior["rgb_statistics"]["min_rgb"], [40, 40, 80])
@@ -171,6 +180,13 @@ class StylePriorTests(unittest.TestCase):
         self.assertEqual(
             [record["mean_rgb"] for record in style_prior["tile_style_records"]],
             [[220.0, 40.0, 80.0], [40.0, 180.0, 120.0]],
+        )
+        self.assertTrue(
+            all(len(record["style_latent"]) == 3 for record in style_prior["tile_style_records"])
+        )
+        self.assertNotEqual(
+            style_prior["tile_style_records"][0]["style_latent"],
+            style_prior["tile_style_records"][1]["style_latent"],
         )
         self.assertEqual(
             [record["wsi_id"] for record in style_prior["tile_style_records"]],
@@ -252,22 +268,31 @@ class StylePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(policy, saved)
-        self.assertEqual(policy["schema_version"], "v0.72.5")
+        self.assertEqual(policy["schema_version"], "v0.72.32")
         self.assertEqual(policy["artifact_type"], "sampled_style_policy")
         self.assertEqual(policy["sample_id"], "style-sample-001")
         self.assertEqual(policy["random_seed"], 3)
         self.assertEqual(policy["selection_policy"], "deterministic_random_seed_mod_tile_count")
         self.assertEqual(policy["selected_style"]["tile_index"], 1)
         self.assertEqual(policy["selected_style"]["mean_rgb"], [40.0, 180.0, 120.0])
+        self.assertEqual(
+            policy["selected_style"]["style_latent"],
+            saved["selected_style"]["style_latent"],
+        )
+        self.assertEqual(len(policy["selected_style"]["style_latent"]), 3)
+        self.assertEqual(
+            policy["style_latent_encoder_reference"]["encoder_type"],
+            "fitted_rgb_stats_pca_v1",
+        )
         self.assertEqual(policy["rgb_statistics_reference"]["mean_rgb"], [130.0, 110.0, 100.0])
-        self.assertIn("not_a_trainable_style_encoder", policy["limitations"])
+        self.assertIn("not_deep_trainable_style_encoder", policy["limitations"])
 
     def test_sample_style_policy_from_prior_rejects_invalid_inputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             prior_path = root / "style_prior.json"
             prior = {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "style_prior",
                 "rgb_statistics": {"mean_rgb": [1.0, 2.0, 3.0]},
                 "tile_style_records": [

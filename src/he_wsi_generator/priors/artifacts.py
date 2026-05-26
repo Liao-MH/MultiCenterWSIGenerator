@@ -16,6 +16,12 @@ PRIOR_ARTIFACT_TYPES = (
 )
 OPTIONAL_PRIOR_ARTIFACT_TYPES = ("wsi_tissue_overview",)
 ALL_PRIOR_ARTIFACT_TYPES = PRIOR_ARTIFACT_TYPES + OPTIONAL_PRIOR_ARTIFACT_TYPES
+PRODUCTION_PRIOR_COMPONENT_CONTRACT_VERSION = "production_prior_component_v1"
+REQUIRED_PRODUCTION_CONDITION_OUTPUTS = {
+    "layout_mask_prior": ("layout", "mask"),
+    "style_prior": ("style_seed", "style_latent"),
+    "texture_prior": ("texture_token", "morphology_latent"),
+}
 
 
 class PriorArtifactError(ValueError):
@@ -70,6 +76,7 @@ def build_prior_manifest_from_artifacts(
             "wsi_ids": list(wsi_ids),
         },
         "artifacts": artifacts,
+        "production_readiness": _default_production_readiness_contract(),
     }
     manifest_path = save_prior_manifest(output_dir, manifest)
     return load_prior_manifest(manifest_path, verify_files=True)
@@ -186,6 +193,8 @@ def validate_prior_manifest(
             if actual_size != size_bytes:
                 raise PriorArtifactError(f"size_bytes mismatch for artifact {artifact_type}")
 
+    _validate_production_readiness(manifest)
+
     return deepcopy(manifest)
 
 
@@ -292,6 +301,197 @@ def _validate_kind(kind: str) -> str:
     if kind not in {"json", "npy", "npz", "pt", "pth", "directory"}:
         raise PriorArtifactError("artifact kind must be json, npy, npz, pt, pth, or directory")
     return kind
+
+
+def _default_production_readiness_contract() -> dict[str, Any]:
+    return {
+        "production_ready": False,
+        "declared_by": "he_wsi_generator.priors.artifacts.build_prior_manifest_from_artifacts",
+        "component_contracts": {
+            "layout_mask_prior": {
+                "production_ready": False,
+                "backend": "statistical_layout_mask_prior",
+                "required_for_production": "trainable_layout_or_mask_generator",
+                "limitations": [
+                    "statistical_layout_mask_prior_only",
+                    "not_a_trainable_layout_generator",
+                    "not_a_mask_diffusion_model",
+                ],
+            },
+            "style_prior": {
+                "production_ready": False,
+                "backend": "statistical_rgb_style_prior",
+                "required_for_production": "trainable_style_encoder_or_style_latent_model",
+                "limitations": [
+                    "statistical_rgb_style_prior_only",
+                    "not_a_trainable_style_encoder",
+                    "not_a_vae_style_latent",
+                ],
+            },
+            "texture_prior": {
+                "production_ready": False,
+                "backend": "statistical_embedding_texture_prior",
+                "required_for_production": "trainable_texture_codebook_or_morphology_token_sampler",
+                "limitations": [
+                    "statistical_embedding_texture_prior_only",
+                    "not_a_trainable_texture_codebook",
+                    "not_a_vq_vae_or_morphology_token_sampler",
+                ],
+            },
+        },
+        "limitations": [
+            "statistical_proxy_prior_only",
+            "not_production_trainable_prior",
+            "safe_for_auditable_conditioning_only",
+        ],
+    }
+
+
+def _validate_production_readiness(manifest: dict[str, Any]) -> None:
+    readiness = manifest.get("production_readiness")
+    if readiness is None:
+        return
+    if not isinstance(readiness, dict):
+        raise PriorArtifactError("production_readiness must be an object")
+    production_ready = readiness.get("production_ready")
+    if not isinstance(production_ready, bool):
+        raise PriorArtifactError("production_readiness.production_ready must be a boolean")
+    _require_non_empty_str(
+        readiness,
+        "declared_by",
+        "production_readiness.declared_by",
+    )
+    component_contracts = _require_dict(
+        readiness,
+        "component_contracts",
+        "production_readiness.component_contracts",
+    )
+    limitations = readiness.get("limitations")
+    if not isinstance(limitations, list) or not all(isinstance(item, str) and item for item in limitations):
+        raise PriorArtifactError("production_readiness.limitations must be a list of non-empty strings")
+
+    for component_name, component in component_contracts.items():
+        if component_name not in PRIOR_ARTIFACT_TYPES:
+            raise PriorArtifactError(
+                f"production_readiness.component_contracts unknown component: {component_name}"
+            )
+        if not isinstance(component, dict):
+            raise PriorArtifactError(
+                f"production_readiness.component_contracts.{component_name} must be an object"
+            )
+        component_ready = component.get("production_ready")
+        if not isinstance(component_ready, bool):
+            raise PriorArtifactError(
+                f"production_readiness.component_contracts.{component_name}.production_ready must be a boolean"
+            )
+        backend = _require_non_empty_str(
+            component,
+            "backend",
+            f"production_readiness.component_contracts.{component_name}.backend",
+        )
+        _require_non_empty_str(
+            component,
+            "required_for_production",
+            f"production_readiness.component_contracts.{component_name}.required_for_production",
+        )
+        component_limitations = component.get("limitations")
+        if not isinstance(component_limitations, list) or not all(
+            isinstance(item, str) and item for item in component_limitations
+        ):
+            raise PriorArtifactError(
+                f"production_readiness.component_contracts.{component_name}.limitations "
+                "must be a list of non-empty strings"
+            )
+        if production_ready and (
+            backend.startswith("statistical_")
+            or any("not_a_" in item or "statistical" in item for item in component_limitations)
+        ):
+            raise PriorArtifactError(
+                f"production_ready prior manifest cannot use proxy component: {component_name}"
+            )
+
+    if production_ready:
+        for component_name in ("layout_mask_prior", "style_prior", "texture_prior"):
+            if component_name not in component_contracts:
+                raise PriorArtifactError(
+                    f"production_readiness.component_contracts missing {component_name}"
+                )
+            if component_contracts[component_name].get("production_ready") is not True:
+                raise PriorArtifactError(
+                    f"production_ready prior manifest requires {component_name} production_ready=true"
+                )
+            _validate_production_component_contract(
+                component_name,
+                component_contracts[component_name],
+                manifest["artifacts"][component_name],
+            )
+
+
+def _validate_production_component_contract(
+    component_name: str,
+    component: dict[str, Any],
+    artifact: dict[str, Any],
+) -> None:
+    contract_version = _require_non_empty_str(
+        component,
+        "contract_version",
+        f"production_readiness.component_contracts.{component_name}.contract_version",
+    )
+    if contract_version != PRODUCTION_PRIOR_COMPONENT_CONTRACT_VERSION:
+        raise PriorArtifactError(
+            f"production_readiness.component_contracts.{component_name}.contract_version "
+            f"must be {PRODUCTION_PRIOR_COMPONENT_CONTRACT_VERSION}"
+        )
+    condition_outputs = component.get("condition_outputs")
+    if not isinstance(condition_outputs, list) or not all(
+        isinstance(item, str) and item for item in condition_outputs
+    ):
+        raise PriorArtifactError(
+            f"production_readiness.component_contracts.{component_name}.condition_outputs "
+            "must be a list of non-empty strings"
+        )
+    missing_outputs = [
+        output
+        for output in REQUIRED_PRODUCTION_CONDITION_OUTPUTS[component_name]
+        if output not in condition_outputs
+    ]
+    if missing_outputs:
+        joined = ", ".join(missing_outputs)
+        raise PriorArtifactError(
+            f"production_readiness.component_contracts.{component_name}.condition_outputs "
+            f"missing: {joined}"
+        )
+
+    evidence = _require_dict(
+        component,
+        "training_evidence",
+        f"production_readiness.component_contracts.{component_name}.training_evidence",
+    )
+    _require_non_empty_str(
+        evidence,
+        "training_run_id",
+        f"production_readiness.component_contracts.{component_name}.training_evidence.training_run_id",
+    )
+    evidence_path = _require_non_empty_str(
+        evidence,
+        "artifact_path",
+        f"production_readiness.component_contracts.{component_name}.training_evidence.artifact_path",
+    )
+    evidence_sha256 = _require_non_empty_str(
+        evidence,
+        "artifact_sha256",
+        f"production_readiness.component_contracts.{component_name}.training_evidence.artifact_sha256",
+    )
+    if evidence_path != artifact["path"]:
+        raise PriorArtifactError(
+            f"production_readiness.component_contracts.{component_name}.training_evidence.artifact_path "
+            "must match manifest artifact path"
+        )
+    if evidence_sha256 != artifact["sha256"]:
+        raise PriorArtifactError(
+            f"production_readiness.component_contracts.{component_name}.training_evidence.artifact_sha256 "
+            "must match manifest artifact sha256"
+        )
 
 
 def _require_equal(data: dict[str, Any], key: str, expected: Any) -> None:

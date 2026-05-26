@@ -39,7 +39,10 @@ def build_qc_report(
             "value": int(pyramid_report.get("level_count", 0)),
         },
     ]
-    image_metrics, tile_metrics, image_shape = _image_quality_metrics(wsi_path)
+    image_metrics, tile_metrics, image_shape, image_tissue_proxy = _image_quality_metrics(
+        wsi_path,
+        pyramid_report,
+    )
     file_metrics.extend(image_metrics)
     _apply_reference_thresholds(file_metrics, reference)
     _apply_reference_thresholds(tile_metrics, reference)
@@ -50,7 +53,7 @@ def build_qc_report(
             "value": bool(mask_path.exists()),
         }
     ]
-    mask_metrics.extend(_mask_quality_metrics(mask_path, image_shape))
+    mask_metrics.extend(_mask_quality_metrics(mask_path, image_shape, image_tissue_proxy))
     _apply_reference_thresholds(mask_metrics, reference)
     non_copy_metrics = _non_copy_similarity_metrics(wsi_path, mask_path)
     if wsi_tissue_overview_summary is not None:
@@ -248,19 +251,22 @@ def _apply_reference_thresholds(
                 metric["reference"][key] = threshold[key]
 
 
-def _image_quality_metrics(wsi_path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[int, int] | None]:
+def _image_quality_metrics(
+    wsi_path: Path,
+    pyramid_report: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[int, int] | None, dict[str, Any] | None]:
     if not wsi_path.exists():
-        return [], [], None
+        return [], [], None, None
     try:
         numpy = _import_numpy()
         tifffile = _import_tifffile()
         with tifffile.TiffFile(wsi_path) as tiff:
             if not tiff.series:
-                return [_metric("wsi_readable", "fail", False)], [], None
+                return [_metric("wsi_readable", "fail", False)], [], None, None
             array = tiff.series[0].levels[0].asarray()
             level_count = len(tiff.series[0].levels)
     except Exception as exc:
-        return [_metric("wsi_readable", "fail", False, str(exc))], [], None
+        return [_metric("wsi_readable", "fail", False, str(exc))], [], None, None
 
     image = numpy.asarray(array)
     if image.ndim == 2:
@@ -268,13 +274,17 @@ def _image_quality_metrics(wsi_path: Path) -> tuple[list[dict[str, Any]], list[d
     elif image.ndim == 3 and image.shape[2] >= 3:
         rgb = image[..., :3]
     else:
-        return [_metric("wsi_readable", "fail", False, "unsupported image shape")], [], None
+        return [_metric("wsi_readable", "fail", False, "unsupported image shape")], [], None, None
 
     rgb_float = rgb.astype("float32")
+    image_tissue_proxy = _image_tissue_proxy(numpy, rgb_float)
     red_mean = float(rgb_float[..., 0].mean())
     green_mean = float(rgb_float[..., 1].mean())
     blue_mean = float(rgb_float[..., 2].mean())
     dynamic_range = float(rgb_float.max() - rgb_float.min())
+    sharpness = _sharpness_proxy(numpy, rgb_float)
+    focus_edge_density = _focus_edge_density_proxy(numpy, rgb_float)
+    stain_color_separation = _stain_color_separation_proxy(numpy, rgb_float)
     wsi_metrics = [
         _metric("wsi_readable", "pass", True),
         _metric("ome_tiff_level_count_observed", "pass" if level_count >= 1 else "fail", int(level_count)),
@@ -282,21 +292,30 @@ def _image_quality_metrics(wsi_path: Path) -> tuple[list[dict[str, Any]], list[d
         _metric("mean_green", _range_status(green_mean, 1.0, 254.0), round(green_mean, 4)),
         _metric("mean_blue", _range_status(blue_mean, 1.0, 254.0), round(blue_mean, 4)),
         _metric("rgb_dynamic_range", "pass" if dynamic_range >= 5.0 else "warning", round(dynamic_range, 4)),
+        _stain_color_separation_metric(stain_color_separation),
         _similarity_metric("style_consistency_proxy", _style_consistency_proxy(numpy, rgb_float)),
     ]
     tile_metrics = [
         _metric(
             "sharpness_laplacian_proxy",
-            "pass" if _sharpness_proxy(numpy, rgb_float) > 0 else "warning",
-            round(_sharpness_proxy(numpy, rgb_float), 4),
+            "pass" if sharpness > 0 else "warning",
+            round(sharpness, 4),
         ),
+        _focus_edge_density_metric(focus_edge_density),
         _metric("tile_proxy_sample_count", "pass", 1),
-        _similarity_metric("seam_score_proxy", _seam_score_proxy(numpy, rgb_float)),
+        _similarity_metric(
+            "seam_score_proxy",
+            _seam_score_proxy(numpy, rgb_float, pyramid_report),
+        ),
     ]
-    return wsi_metrics, tile_metrics, tuple(int(value) for value in rgb.shape[:2])
+    return wsi_metrics, tile_metrics, tuple(int(value) for value in rgb.shape[:2]), image_tissue_proxy
 
 
-def _mask_quality_metrics(mask_path: Path, image_shape: tuple[int, int] | None) -> list[dict[str, Any]]:
+def _mask_quality_metrics(
+    mask_path: Path,
+    image_shape: tuple[int, int] | None,
+    image_tissue_proxy: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     if not mask_path.exists():
         return []
     try:
@@ -335,7 +354,80 @@ def _mask_quality_metrics(mask_path: Path, image_shape: tuple[int, int] | None) 
             round(tissue_fraction, 6),
         )
     )
+    metrics.append(_mask_image_tissue_alignment_metric(numpy, mask, image_tissue_proxy))
     return metrics
+
+
+def _image_tissue_proxy(numpy, rgb_float) -> dict[str, Any]:
+    brightness = rgb_float.mean(axis=2)
+    min_brightness = float(brightness.min())
+    max_brightness = float(brightness.max())
+    dynamic_range = max_brightness - min_brightness
+    message = None
+    # This is a coarse QC proxy, not a pathology segmentation model. Bright
+    # high-intensity background is separated when present; otherwise the metric
+    # records which global assumption was used so a pass is not over-interpreted.
+    if dynamic_range >= 30.0 and max_brightness >= 220.0:
+        threshold = min(230.0, min_brightness + dynamic_range * 0.65)
+        tissue_mask = brightness < threshold
+    elif float(brightness.mean()) < 220.0:
+        threshold = None
+        tissue_mask = numpy.ones(brightness.shape, dtype=bool)
+        message = "image tissue proxy has no bright background candidate; using global tissue assumption"
+    else:
+        threshold = None
+        tissue_mask = numpy.zeros(brightness.shape, dtype=bool)
+        message = "image tissue proxy has no foreground candidate; using global background assumption"
+    return {
+        "mask": tissue_mask,
+        "threshold": threshold,
+        "message": message,
+    }
+
+
+def _mask_image_tissue_alignment_metric(
+    numpy,
+    mask,
+    image_tissue_proxy: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if image_tissue_proxy is None:
+        return _metric(
+            "mask_image_tissue_alignment_proxy",
+            "warning",
+            None,
+            "WSI tissue proxy unavailable; alignment not evaluated",
+        )
+    image_tissue = image_tissue_proxy["mask"]
+    if tuple(mask.shape) != tuple(image_tissue.shape):
+        return _metric(
+            "mask_image_tissue_alignment_proxy",
+            "warning",
+            None,
+            f"mask_shape={tuple(mask.shape)}, image_tissue_proxy_shape={tuple(image_tissue.shape)}",
+        )
+    mask_tissue = mask > 0
+    union = numpy.logical_or(mask_tissue, image_tissue)
+    if union.any():
+        score = float(numpy.logical_and(mask_tissue, image_tissue).sum() / union.sum())
+    else:
+        score = 1.0
+    if score >= 0.75:
+        status = "pass"
+    elif score >= 0.5:
+        status = "warning"
+    else:
+        status = "fail"
+    metric = _metric(
+        "mask_image_tissue_alignment_proxy",
+        status,
+        round(score, 6),
+        image_tissue_proxy.get("message"),
+    )
+    metric["mask_tissue_fraction"] = round(float(mask_tissue.mean()), 6)
+    metric["image_tissue_fraction"] = round(float(image_tissue.mean()), 6)
+    if image_tissue_proxy.get("threshold") is not None:
+        metric["image_tissue_brightness_threshold"] = round(float(image_tissue_proxy["threshold"]), 4)
+    return metric
 
 
 def _non_copy_similarity_metrics(wsi_path: Path, mask_path: Path) -> list[dict[str, Any]]:
@@ -547,6 +639,58 @@ def _sharpness_proxy(numpy, rgb_float) -> float:
     return float(numpy.abs(laplacian).mean())
 
 
+def _focus_edge_density_proxy(numpy, rgb_float) -> float:
+    gray = rgb_float.mean(axis=2)
+    if gray.shape[0] < 3 or gray.shape[1] < 3:
+        return 1.0
+    horizontal = numpy.abs(gray[:, 1:] - gray[:, :-1]).mean()
+    vertical = numpy.abs(gray[1:, :] - gray[:-1, :]).mean()
+    return float(((horizontal + vertical) / 2.0) / 255.0)
+
+
+def _focus_edge_density_metric(value: float) -> dict[str, Any]:
+    if value < 0.0005:
+        return _metric(
+            "focus_edge_density_proxy",
+            "fail",
+            round(value, 6),
+            "focus proxy found almost no local edge contrast",
+        )
+    if value < 0.001:
+        return _metric(
+            "focus_edge_density_proxy",
+            "warning",
+            round(value, 6),
+            "focus proxy found weak local edge contrast",
+        )
+    return _metric("focus_edge_density_proxy", "pass", round(value, 6))
+
+
+def _stain_color_separation_proxy(numpy, rgb_float) -> float:
+    if rgb_float.size == 0:
+        return 1.0
+    channel_spread = rgb_float.max(axis=2) - rgb_float.min(axis=2)
+    return float(channel_spread.mean() / 255.0)
+
+
+def _stain_color_separation_metric(value: float) -> dict[str, Any]:
+    if value < 0.02:
+        return _metric(
+            "stain_color_separation_proxy",
+            "fail",
+            round(value, 6),
+            "stain proxy found near-monochrome RGB channels",
+        )
+    if value < 0.05:
+        return _metric(
+            "stain_color_separation_proxy",
+            "warning",
+            round(value, 6),
+            "stain proxy found weak RGB channel separation",
+        )
+    return _metric("stain_color_separation_proxy", "pass", round(value, 6))
+
+
 def _style_consistency_proxy(numpy, rgb_float) -> float:
     height, width = rgb_float.shape[:2]
     if height < 4 or width < 4:
@@ -569,23 +713,83 @@ def _style_consistency_proxy(numpy, rgb_float) -> float:
     return float(max(0.0, min(1.0, similarity)))
 
 
-def _seam_score_proxy(numpy, rgb_float) -> float:
+def _seam_score_proxy(numpy, rgb_float, pyramid_report: dict[str, Any]) -> float:
     height, width = rgb_float.shape[:2]
     if height < 4 or width < 4:
         return 1.0
     differences = []
-    x_mid = width // 2
-    y_mid = height // 2
-    if 0 < x_mid < width:
-        vertical = numpy.abs(rgb_float[:, x_mid - 1] - rgb_float[:, x_mid]).mean() / 255.0
+    x_positions, y_positions = _seam_boundary_positions(pyramid_report, width, height)
+    for x_position in x_positions:
+        vertical = numpy.abs(
+            rgb_float[:, x_position - 1] - rgb_float[:, x_position]
+        ).mean() / 255.0
         differences.append(float(vertical))
-    if 0 < y_mid < height:
-        horizontal = numpy.abs(rgb_float[y_mid - 1] - rgb_float[y_mid]).mean() / 255.0
+    for y_position in y_positions:
+        horizontal = numpy.abs(
+            rgb_float[y_position - 1] - rgb_float[y_position]
+        ).mean() / 255.0
         differences.append(float(horizontal))
     if not differences:
         return 1.0
     similarity = 1.0 - float(numpy.mean(differences))
     return float(max(0.0, min(1.0, similarity)))
+
+
+def _seam_boundary_positions(
+    pyramid_report: dict[str, Any],
+    width: int,
+    height: int,
+) -> tuple[list[int], list[int]]:
+    chunk_shape = _seam_chunk_shape_from_report(pyramid_report)
+    if chunk_shape is None:
+        return _fallback_midline_positions(width, height)
+    chunk_height, chunk_width = chunk_shape
+    x_positions = [x for x in range(chunk_width, width, chunk_width) if 0 < x < width]
+    y_positions = [y for y in range(chunk_height, height, chunk_height) if 0 < y < height]
+    if not x_positions and not y_positions:
+        return _fallback_midline_positions(width, height)
+    return x_positions, y_positions
+
+
+def _seam_chunk_shape_from_report(pyramid_report: dict[str, Any]) -> tuple[int, int] | None:
+    chunked = pyramid_report.get("chunked_write_audit")
+    if isinstance(chunked, dict):
+        levels = chunked.get("levels")
+        if isinstance(levels, list) and levels and isinstance(levels[0], dict):
+            parsed = _parse_positive_pair(levels[0].get("chunk_shape"))
+            if parsed is not None:
+                return parsed
+        parsed = _parse_positive_pair(chunked.get("chunk_shape"))
+        if parsed is not None:
+            return parsed
+
+    streaming = pyramid_report.get("streaming_write_report")
+    if isinstance(streaming, dict):
+        parsed = _parse_positive_pair(streaming.get("tile_shape"))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_positive_pair(value: Any) -> tuple[int, int] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    first, second = value
+    if not all(
+        isinstance(item, int) and not isinstance(item, bool) and item > 0
+        for item in (first, second)
+    ):
+        return None
+    return int(first), int(second)
+
+
+def _fallback_midline_positions(width: int, height: int) -> tuple[list[int], list[int]]:
+    x_mid = width // 2
+    y_mid = height // 2
+    return (
+        [x_mid] if 0 < x_mid < width else [],
+        [y_mid] if 0 < y_mid < height else [],
+    )
 
 
 def _ensure_rgb(numpy, array):

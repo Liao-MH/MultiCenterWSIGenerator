@@ -137,11 +137,15 @@ def diffusion_checkpoint_manifest(
     denoiser_architecture: dict[str, Any],
     cross_scale_condition_schema: dict[str, Any],
 ) -> dict[str, Any]:
+    inference_contract = _diffusion_smoke_inference_contract(
+        denoiser_architecture=denoiser_architecture,
+        cross_scale_condition_schema=cross_scale_condition_schema,
+    )
     return {
         "schema_version": PROJECT_VERSION,
         "model_family": MODEL_FAMILY,
         "status": "trained",
-        "usable_for_inference": False,
+        "usable_for_inference": True,
         "model_version": f"{PROJECT_VERSION}+{TORCH_DIFFUSION_SMOKE_BACKEND}",
         "created_at": _now_iso(),
         "training_backend": TORCH_DIFFUSION_SMOKE_BACKEND,
@@ -156,6 +160,7 @@ def diffusion_checkpoint_manifest(
         "denoiser_architecture": dict(denoiser_architecture),
         "cross_scale_condition_schema": dict(cross_scale_condition_schema),
         "condition_feature_schema": condition_feature_schema(),
+        "inference_contract": inference_contract,
         "cascade_levels": list(CASCADE_LEVELS),
         "tile_size_40x": list(TILE_SIZE_40X),
         "diffusion": diffusion,
@@ -187,9 +192,56 @@ def diffusion_checkpoint_manifest(
         "batch_summary": batch_summary,
         "note": (
             "PyTorch diffusion smoke checkpoint validates DDPM-style noise prediction "
-            "on smoke latents with explicit condition feature channels; it is not a "
-            "production WSI latent diffusion generator and is not usable for inference."
+            "on smoke latents with explicit condition feature channels; it is usable "
+            "only by the torch-diffusion-smoke planning/sampling path and is not a "
+            "production WSI latent diffusion generator."
         ),
+    }
+
+
+def _diffusion_smoke_inference_contract(
+    *,
+    denoiser_architecture: dict[str, Any],
+    cross_scale_condition_schema: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "backend_type": "torch-diffusion-smoke",
+        "artifact_role": "mask_conditioned_latent_diffusion_smoke_checkpoint",
+        "production_ready": False,
+        "limitations": [
+            "smoke_backend_only",
+            "not_production_latent_diffusion_backend",
+            "not_controlnet_or_dit",
+            "not_gigapixel_production_inference",
+        ],
+        "compatible_generation_backends": ["torch-diffusion-smoke"],
+        "model_architecture_contract": {
+            "model_family": MODEL_FAMILY,
+            "architecture_name": denoiser_architecture["architecture"],
+            "input_space": (
+                "latent_or_rgb_proxy_with_previous_scale_mask_timestep_and_condition_features"
+            ),
+            "output_space": "predicted_diffusion_noise",
+            "denoiser_architecture": dict(denoiser_architecture),
+        },
+        "condition_input_contract": {
+            "required_condition_inputs": [
+                "mask",
+                "style_seed",
+                "texture_token",
+                "coord",
+                "structure_anchor",
+                "source_condition",
+                "previous_scale",
+            ],
+            "cascade_levels": list(CASCADE_LEVELS),
+            "condition_feature_policy": (
+                "condition_packet features are projected to fixed scalar channels; "
+                "previous_scale uses the prior cascade sample preview or zero root condition"
+            ),
+            "condition_feature_schema": condition_feature_schema(),
+            "cross_scale_condition_schema": dict(cross_scale_condition_schema),
+        },
     }
 
 

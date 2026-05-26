@@ -31,7 +31,7 @@ class CliValidationTests(unittest.TestCase):
 
     def test_cli_validates_generation_config_file(self):
         config = {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -60,7 +60,7 @@ class CliValidationTests(unittest.TestCase):
         from he_wsi_generator.cli_commands import run_command
 
         config = {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -91,7 +91,7 @@ class CliValidationTests(unittest.TestCase):
 
     def test_cli_reports_validation_error(self):
         config = {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -115,6 +115,48 @@ class CliValidationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("structure_anchor must be between 0 and 1", result.stderr)
 
+    def test_cli_validates_generation_output_diagnostics_file(self):
+        diagnostics = {
+            "schema_version": "v0.72.32",
+            "manifest_type": "generation_output_diagnostics",
+            "generated_id": "gen-001",
+            "backend": "smoke-cascade",
+            "status": "completed",
+            "created_at": "2026-05-25T08:00:00+00:00",
+            "artifacts": {
+                "wsi_path": "outputs/gen-001/generated.ome.tiff",
+                "mask_path": "outputs/gen-001/generated_mask/mask.npy",
+                "metadata_path": "outputs/gen-001/metadata.json",
+                "qc_json_path": "outputs/gen-001/qc.json",
+                "batch_index_path": "outputs/gen-001/batch.jsonl",
+                "diagnostics_manifest_path": "outputs/gen-001/generation_output_diagnostics.json",
+            },
+            "pyramid_summary": {"write_mode": "chunked_pyramid_write"},
+            "writer_summary": {
+                "write_mode": "chunked_pyramid_write",
+                "production_streaming": False,
+                "resume_capable": False,
+            },
+            "tile_execution": {
+                "applicable": False,
+                "reason": "torch_diffusion_smoke_uses_training_batch_sampling",
+            },
+            "tile_source": {
+                "applicable": False,
+                "reason": "torch_diffusion_smoke_writes_from_sampled_pyramid_arrays",
+            },
+            "qc_summary": {"overall_status": "pass"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "generation_output_diagnostics.json"
+            path.write_text(json.dumps(diagnostics), encoding="utf-8")
+
+            result = self.run_cli("validate", "generation-output-diagnostics", str(path))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("generation-output-diagnostics valid", result.stdout)
+
     def test_cli_audits_manifest_with_fixture_reader(self):
         try:
             from PIL import Image
@@ -136,7 +178,7 @@ class CliValidationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             manifest = {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "dataset_id": "demo",
                 "created_at": "2026-05-23T09:00:00",
                 "records": [

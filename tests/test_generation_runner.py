@@ -17,7 +17,11 @@ import numpy as np
 import tifffile
 
 from he_wsi_generator.generation import executor as generation_executor
-from he_wsi_generator.generation.executor import GenerationExecutionError, run_smoke_generation
+from he_wsi_generator.generation.executor import (
+    GenerationExecutionError,
+    run_production_tile_stream_generation,
+    run_smoke_generation,
+)
 from he_wsi_generator.generation.tiling import (
     build_resumable_tile_manifest,
     create_tile_traversal_plan,
@@ -25,6 +29,11 @@ from he_wsi_generator.generation.tiling import (
 )
 from he_wsi_generator.priors.artifacts import create_prior_artifact_entry, save_prior_manifest
 from he_wsi_generator.schemas import validate_metadata, validate_qc_report
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
 
 class GenerationRunnerTests(unittest.TestCase):
     def create_prior_manifest(self, root: Path) -> Path:
@@ -50,7 +59,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -105,7 +114,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -127,7 +136,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "model_family": "latent_diffusion_unet",
                     "status": "trained",
                     "usable_for_inference": True,
@@ -141,6 +150,26 @@ class GenerationRunnerTests(unittest.TestCase):
                         "artifact_role": "generation_runner_fixture",
                         "production_ready": False,
                         "limitations": ["smoke_fixture_not_production_backend"],
+                        "compatible_generation_backends": ["smoke-cascade"],
+                        "model_architecture_contract": {
+                            "model_family": "latent_diffusion_unet",
+                            "architecture_name": "smoke_cascade_contract_fixture",
+                            "input_space": "rgb_tile_proxy",
+                            "output_space": "rgb_pyramid_tile",
+                        },
+                        "condition_input_contract": {
+                            "required_condition_inputs": [
+                                "mask",
+                                "style_seed",
+                                "texture_token",
+                                "coord",
+                                "structure_anchor",
+                                "source_condition",
+                                "previous_scale",
+                            ],
+                            "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
+                            "condition_feature_policy": "smoke_fixture_contract_only",
+                        },
                     },
                     "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
                     "tile_size_40x": [512, 512],
@@ -150,9 +179,244 @@ class GenerationRunnerTests(unittest.TestCase):
         )
         return path
 
+    def production_tile_checkpoint_manifest(self, root: Path) -> Path:
+        backend_script = root / "external_tile_backend.py"
+        backend_script.write_text(
+            "\n".join(
+                [
+                    "import argparse",
+                    "import numpy as np",
+                    "",
+                    "parser = argparse.ArgumentParser()",
+                    "parser.add_argument('--tile-path', required=True)",
+                    "parser.add_argument('--mask-tile-path', default='')",
+                    "parser.add_argument('--level-index', type=int, required=True)",
+                    "parser.add_argument('--tile-index', type=int, required=True)",
+                    "parser.add_argument('--tile-width', type=int, required=True)",
+                    "parser.add_argument('--tile-height', type=int, required=True)",
+                    "parser.add_argument('--random-seed', type=int, required=True)",
+                    "args = parser.parse_args()",
+                    "yy, xx = np.indices((args.tile_height, args.tile_width), dtype=np.uint16)",
+                    "base = (args.random_seed + args.level_index * 41 + args.tile_index * 17) % 127",
+                    "tile = np.empty((args.tile_height, args.tile_width, 3), dtype=np.uint8)",
+                    "tile[..., 0] = (120 + base + xx % 47).astype(np.uint8)",
+                    "tile[..., 1] = (80 + base + yy % 53).astype(np.uint8)",
+                    "tile[..., 2] = (150 + base + (xx + yy) % 37).astype(np.uint8)",
+                    "np.save(args.tile_path, tile)",
+                    "if args.mask_tile_path:",
+                    "    mask = np.ones((args.tile_height, args.tile_width), dtype=np.uint8)",
+                    "    mask[:, : max(1, args.tile_width // 4)] = 2",
+                    "    np.save(args.mask_tile_path, mask)",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        backend_artifact = root / "external_tile_backend.json"
+        backend_payload = {
+            "schema_version": "v0.72.32",
+            "artifact_type": "external_tile_generator_v1",
+            "backend_name": "unit-test-production-tile-backend",
+            "command": [
+                sys.executable,
+                str(backend_script),
+                "--tile-path",
+                "{tile_path}",
+                "--mask-tile-path",
+                "{mask_tile_path}",
+                "--level-index",
+                "{level_index}",
+                "--tile-index",
+                "{tile_index}",
+                "--tile-width",
+                "{tile_width}",
+                "--tile-height",
+                "{tile_height}",
+                "--random-seed",
+                "{random_seed}",
+            ],
+            "output_format": "npy_uint8_rgb_tile_v1",
+            "mask_output_format": "npy_uint8_mask_tile_v1",
+            "timeout_seconds": 30,
+        }
+        backend_artifact.write_text(json.dumps(backend_payload), encoding="utf-8")
+        checkpoint_hash = hashlib.sha256(backend_artifact.read_bytes()).hexdigest()
+        path = root / "production-tile-checkpoint.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v0.72.32",
+                    "model_family": "latent_diffusion_unet",
+                    "status": "trained",
+                    "usable_for_inference": True,
+                    "model_version": "production-tile-v1",
+                    "training_backend": "latent_diffusion_unet",
+                    "target_type": "production_tile_stream_generation",
+                    "checkpoint_path": str(backend_artifact),
+                    "checkpoint_sha256": checkpoint_hash,
+                    "inference_contract": {
+                        "backend_type": "external_tile_generator_v1",
+                        "artifact_role": "production_tile_generator",
+                        "production_ready": True,
+                        "limitations": [],
+                        "compatible_generation_backends": ["production-tile-stream"],
+                        "model_architecture_contract": {
+                            "model_family": "latent_diffusion_unet",
+                            "architecture_name": "external_tile_generator_contract_v1",
+                            "input_space": "conditioned_pyramid_tile_request",
+                            "output_space": "rgb_tile_and_level0_mask_tile",
+                        },
+                        "condition_input_contract": {
+                            "required_condition_inputs": [
+                                "mask",
+                                "style_seed",
+                                "texture_token",
+                                "coord",
+                                "structure_anchor",
+                                "source_condition",
+                                "previous_scale",
+                            ],
+                            "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
+                            "condition_feature_policy": "external_tile_generator_contract_v1",
+                        },
+                    },
+                    "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
+                    "tile_size_40x": [512, 512],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def production_tile_request_checkpoint_manifest(self, root: Path) -> Path:
+        backend_script = root / "external_tile_request_backend.py"
+        backend_script.write_text(
+            "\n".join(
+                [
+                    "import argparse",
+                    "import json",
+                    "import numpy as np",
+                    "",
+                    "parser = argparse.ArgumentParser()",
+                    "parser.add_argument('--tile-request-path', required=True)",
+                    "args = parser.parse_args()",
+                    "request = json.loads(open(args.tile_request_path, encoding='utf-8').read())",
+                    "height, width, channels = request['tile']['shape']",
+                    "yy, xx = np.indices((height, width), dtype=np.uint16)",
+                    "base = (request['random_seed'] + request['tile']['level_index'] * 41 + request['tile']['tile_index'] * 17) % 127",
+                    "tile = np.empty((height, width, channels), dtype=np.uint8)",
+                    "tile[..., 0] = (120 + base + xx % 47).astype(np.uint8)",
+                    "tile[..., 1] = (80 + base + yy % 53).astype(np.uint8)",
+                    "tile[..., 2] = (150 + base + (xx + yy) % 37).astype(np.uint8)",
+                    "np.save(request['outputs']['rgb_tile_path'], tile)",
+                    "mask_path = request['outputs'].get('mask_tile_path')",
+                    "if mask_path:",
+                    "    mask = np.ones((height, width), dtype=np.uint8)",
+                    "    mask[:, : max(1, width // 4)] = 2",
+                    "    np.save(mask_path, mask)",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        backend_artifact = root / "external_tile_request_backend.json"
+        backend_payload = {
+            "schema_version": "v0.72.32",
+            "artifact_type": "external_tile_generator_v1",
+            "backend_name": "unit-test-production-tile-request-backend",
+            "command": [
+                sys.executable,
+                str(backend_script),
+                "--tile-request-path",
+                "{tile_request_path}",
+            ],
+            "output_format": "npy_uint8_rgb_tile_v1",
+            "mask_output_format": "npy_uint8_mask_tile_v1",
+            "timeout_seconds": 30,
+        }
+        backend_artifact.write_text(json.dumps(backend_payload), encoding="utf-8")
+        checkpoint_hash = hashlib.sha256(backend_artifact.read_bytes()).hexdigest()
+        path = root / "production-tile-request-checkpoint.json"
+        checkpoint = json.loads(self.production_tile_checkpoint_manifest(root).read_text(encoding="utf-8"))
+        checkpoint["model_version"] = "production-tile-request-v1"
+        checkpoint["checkpoint_path"] = str(backend_artifact)
+        checkpoint["checkpoint_sha256"] = checkpoint_hash
+        checkpoint["inference_contract"]["condition_input_contract"][
+            "condition_feature_policy"
+        ] = "external_tile_request_manifest_v1"
+        path.write_text(json.dumps(checkpoint), encoding="utf-8")
+        return path
+
+    def production_tile_retry_checkpoint_manifest(self, root: Path, ready_marker: Path) -> Path:
+        backend_script = root / "external_tile_retry_backend.py"
+        backend_script.write_text(
+            "\n".join(
+                [
+                    "import argparse",
+                    "import json",
+                    "import sys",
+                    "from pathlib import Path",
+                    "import numpy as np",
+                    "",
+                    "parser = argparse.ArgumentParser()",
+                    "parser.add_argument('--tile-request-path', required=True)",
+                    "parser.add_argument('--ready-marker', required=True)",
+                    "args = parser.parse_args()",
+                    "request = json.loads(open(args.tile_request_path, encoding='utf-8').read())",
+                    "if request['tile']['record_index'] == 0 and not Path(args.ready_marker).exists():",
+                    "    print('retry marker missing', file=sys.stderr)",
+                    "    sys.exit(9)",
+                    "height, width, channels = request['tile']['shape']",
+                    "yy, xx = np.indices((height, width), dtype=np.uint16)",
+                    "base = (request['random_seed'] + request['tile']['level_index'] * 41 + request['tile']['tile_index'] * 17) % 127",
+                    "tile = np.empty((height, width, channels), dtype=np.uint8)",
+                    "tile[..., 0] = (120 + base + xx % 47).astype(np.uint8)",
+                    "tile[..., 1] = (80 + base + yy % 53).astype(np.uint8)",
+                    "tile[..., 2] = (150 + base + (xx + yy) % 37).astype(np.uint8)",
+                    "np.save(request['outputs']['rgb_tile_path'], tile)",
+                    "mask_path = request['outputs'].get('mask_tile_path')",
+                    "if mask_path:",
+                    "    mask = np.ones((height, width), dtype=np.uint8)",
+                    "    mask[:, : max(1, width // 4)] = 2",
+                    "    np.save(mask_path, mask)",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        backend_artifact = root / "external_tile_retry_backend.json"
+        backend_payload = {
+            "schema_version": "v0.72.32",
+            "artifact_type": "external_tile_generator_v1",
+            "backend_name": "unit-test-production-tile-retry-backend",
+            "command": [
+                sys.executable,
+                str(backend_script),
+                "--tile-request-path",
+                "{tile_request_path}",
+                "--ready-marker",
+                str(ready_marker),
+            ],
+            "output_format": "npy_uint8_rgb_tile_v1",
+            "mask_output_format": "npy_uint8_mask_tile_v1",
+            "timeout_seconds": 30,
+        }
+        backend_artifact.write_text(json.dumps(backend_payload), encoding="utf-8")
+        checkpoint_hash = hashlib.sha256(backend_artifact.read_bytes()).hexdigest()
+        path = root / "production-tile-retry-checkpoint.json"
+        checkpoint = json.loads(self.production_tile_checkpoint_manifest(root).read_text(encoding="utf-8"))
+        checkpoint["model_version"] = "production-tile-retry-v1"
+        checkpoint["checkpoint_path"] = str(backend_artifact)
+        checkpoint["checkpoint_sha256"] = checkpoint_hash
+        checkpoint["inference_contract"]["condition_input_contract"][
+            "condition_feature_policy"
+        ] = "external_tile_retry_request_manifest_v1"
+        path.write_text(json.dumps(checkpoint), encoding="utf-8")
+        return path
+
     def generation_config(self, canvas_size_40x: list[int] | None = None) -> dict:
         config = {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -209,6 +473,74 @@ class GenerationRunnerTests(unittest.TestCase):
             )
         manifest_path = output_root / "tile_manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        return manifest_path
+
+    def write_partial_streaming_tile_source_manifest(
+        self,
+        output_root: Path,
+        *,
+        completed_record_indexes: tuple[int, ...] = (),
+    ) -> Path:
+        tile_root = output_root / "streaming_tiles"
+        tile_root.mkdir(parents=True, exist_ok=True)
+        level_shapes = [
+            [512, 512, 3],
+            [128, 128, 3],
+            [32, 32, 3],
+            [16, 16, 3],
+        ]
+        levels = [
+            {
+                "level_index": level_index,
+                "shape": shape,
+                "expected_tile_count": 1,
+            }
+            for level_index, shape in enumerate(level_shapes)
+        ]
+        records = []
+        for level_index, shape in enumerate(level_shapes):
+            tile_path = tile_root / f"level-{level_index}-tile-0000-0000.npy"
+            status = "pending"
+            if level_index in completed_record_indexes:
+                np.save(tile_path, np.full(shape, 231 - level_index, dtype=np.uint8))
+                status = "completed"
+            records.append(
+                {
+                    "level_index": level_index,
+                    "tile_index": 0,
+                    "path": tile_path.relative_to(output_root).as_posix(),
+                    "shape": shape,
+                    "dtype": "uint8",
+                    "status": status,
+                    "tile_origin": [0, 0],
+                    "write_region": [0, 0, shape[1], shape[0]],
+                }
+            )
+        manifest_path = output_root / "tile_source_manifest.streaming.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "v0.72.32",
+                    "manifest_type": "disk_npy_tile_source_manifest",
+                    "source": "smoke_direct_pyramid_tile_streaming_manifest",
+                    "expected_tile_count": len(records),
+                    "levels": levels,
+                    "tiles": records,
+                    "generation_status": "in_progress",
+                    "completed_tile_count": len(completed_record_indexes),
+                    "pending_tile_count": len(records) - len(completed_record_indexes),
+                    "failed_tile_count": 0,
+                    "limitations": [
+                        "smoke_generator_not_production_model",
+                        "requires_complete_tile_source_manifest_before_write",
+                        "ome_tiff_file_resume_not_supported",
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return manifest_path
 
     def write_condition_packet(
@@ -301,6 +633,21 @@ class GenerationRunnerTests(unittest.TestCase):
                 "fraction": 0.25,
                 "mean_embedding": [0.1, 0.2, 0.3],
                 "std_embedding": [0.01, 0.02, 0.03],
+                "texture_token": {
+                    "token_type": "embedding_cluster_texture_token_v1",
+                    "token_id": "texture-cluster-2",
+                    "prototype_index": 1,
+                    "cluster_id": 2,
+                    "representative_embedding_index": 9,
+                },
+                "morphology_latent": [0.6, 0.7, 0.8],
+                "texture_codebook_reference": {
+                    "codebook_type": "fitted_embedding_cluster_codebook_v1",
+                    "token_type": "embedding_cluster_texture_token_v1",
+                    "embedding_dim": 3,
+                    "token_count": 4,
+                    "condition_outputs": ["texture_token", "morphology_latent"],
+                },
                 "limitations": ["statistical_policy_not_trainable_texture_codebook"],
             }
             if drop_sampled_style_selected_style:
@@ -310,7 +657,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T15:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -354,7 +701,7 @@ class GenerationRunnerTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "artifact_type": "sampled_layout_mask",
                     "created_at": "2026-05-23T16:00:00Z",
                     "sample_id": "layout-smoke-001",
@@ -407,6 +754,8 @@ class GenerationRunnerTests(unittest.TestCase):
             )
             batch_line = json.loads(Path(result["batch_index_path"]).read_text(encoding="utf-8"))
             run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+            diagnostics_path = Path(run_summary["outputs"]["diagnostics_manifest_path"])
+            diagnostics = json.loads(diagnostics_path.read_text(encoding="utf-8"))
             mask = np.load(metadata["output"]["mask_path"])
             with tifffile.TiffFile(metadata["output"]["wsi_path"]) as tiff:
                 shapes = [page.shape for page in tiff.series[0].levels]
@@ -427,6 +776,25 @@ class GenerationRunnerTests(unittest.TestCase):
             metadata["generation"]["tile_traversal_plan"]["tiles"][0]["tile_origin_40x"],
             [0, 0],
         )
+        self.assertEqual(metadata["output"]["diagnostics_manifest_path"], str(diagnostics_path))
+        self.assertEqual(result["diagnostics_manifest_path"], str(diagnostics_path))
+        self.assertEqual(diagnostics["manifest_type"], "generation_output_diagnostics")
+        self.assertEqual(diagnostics["generated_id"], "gen-smoke")
+        self.assertEqual(diagnostics["backend"], "smoke-cascade")
+        self.assertEqual(diagnostics["status"], "completed")
+        self.assertEqual(diagnostics["artifacts"]["wsi_path"], metadata["output"]["wsi_path"])
+        self.assertEqual(diagnostics["artifacts"]["metadata_path"], result["metadata_path"])
+        self.assertEqual(diagnostics["qc_summary"]["overall_status"], qc["overall_status"])
+        self.assertEqual(diagnostics["pyramid_summary"]["write_mode"], "chunked_pyramid_write")
+        self.assertFalse(diagnostics["writer_summary"]["production_streaming"])
+        self.assertFalse(diagnostics["writer_summary"]["resume_capable"])
+        self.assertTrue(diagnostics["tile_execution"]["applicable"])
+        self.assertEqual(diagnostics["tile_execution"]["completed_tile_count"], 1)
+        self.assertEqual(diagnostics["tile_execution"]["pending_tile_count"], 0)
+        self.assertEqual(diagnostics["tile_execution"]["failed_tile_count"], 0)
+        self.assertTrue(diagnostics["tile_source"]["applicable"])
+        self.assertEqual(diagnostics["tile_source"]["expected_tile_count"], 1)
+        self.assertEqual(diagnostics["tile_source"]["completed_tile_count"], 1)
         self.assertEqual(run_summary["plan"]["stages"][0]["status"], "completed")
         self.assertEqual(run_summary["plan"]["tile_traversal_plan"]["completed_tile_count"], 1)
         self.assertEqual(run_summary["plan"]["tile_traversal_plan"]["pending_tile_count"], 0)
@@ -544,6 +912,11 @@ class GenerationRunnerTests(unittest.TestCase):
             )
             metadata = json.loads((output_root / "metadata.json").read_text(encoding="utf-8"))
             run_summary = json.loads((output_root / "generation_run.json").read_text(encoding="utf-8"))
+            diagnostics = json.loads(
+                Path(run_summary["outputs"]["diagnostics_manifest_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
             with tifffile.TiffFile(metadata["output"]["wsi_path"]) as tiff:
                 shapes = [page.shape for page in tiff.series[0].levels]
 
@@ -555,6 +928,31 @@ class GenerationRunnerTests(unittest.TestCase):
         )
         self.assertTrue(run_summary["pyramid_report"]["production_streaming"])
         self.assertFalse(run_summary["pyramid_report"]["resume_capable"])
+        self.assertEqual(
+            diagnostics["writer_summary"]["write_mode"],
+            "tile_iterator_streaming_write",
+        )
+        self.assertTrue(diagnostics["writer_summary"]["atomic_publish"])
+        self.assertFalse(diagnostics["writer_summary"]["resume_capable"])
+        self.assertFalse(diagnostics["writer_summary"]["recovered_from_temporary"])
+        self.assertFalse(diagnostics["writer_summary"]["reused_existing_target"])
+        self.assertEqual(
+            diagnostics["writer_summary"]["disk_space_preflight"]["preflight_status"],
+            "sufficient_space",
+        )
+        self.assertIsNotNone(diagnostics["writer_summary"]["progress_manifest_path"])
+        self.assertEqual(diagnostics["writer_summary"]["progress_summary"]["status"], "completed")
+        self.assertFalse(diagnostics["writer_summary"]["progress_summary"]["resume_capable"])
+        self.assertEqual(
+            diagnostics["writer_summary"]["progress_summary"]["planned_tile_count"],
+            diagnostics["writer_summary"]["progress_summary"]["yielded_tile_count"],
+        )
+        self.assertGreater(
+            diagnostics["writer_summary"]["disk_space_preflight"]["free_bytes"],
+            diagnostics["writer_summary"]["disk_space_preflight"]["estimated_total_bytes"],
+        )
+        self.assertIsNotNone(diagnostics["writer_summary"]["transaction_manifest_path"])
+        self.assertEqual(diagnostics["tile_source"]["level_count"], 4)
         self.assertEqual(run_summary["pyramid_report"]["level_count"], 4)
         self.assertEqual(
             shapes,
@@ -569,28 +967,13 @@ class GenerationRunnerTests(unittest.TestCase):
             [1, 1],
         )
 
-    def test_run_smoke_generation_streaming_materializes_pyramid_levels_sequentially(self):
-        original_writer = generation_executor._write_smoke_multilevel_tile_source_manifest
-        consumed_shapes = []
-        received_container_types = []
+    def test_run_smoke_generation_tile_streaming_does_not_blend_full_canvas(self):
+        original_blender = generation_executor.blend_rgb_tiles
 
-        def recording_writer(numpy, pyramid_levels, *, output_root, chunk_shape):
-            received_container_types.append(type(pyramid_levels).__name__)
-            self.assertNotIsInstance(pyramid_levels, (list, tuple))
+        def forbidden_blender(*args, **kwargs):
+            raise AssertionError("tile-streaming must not build a full blended canvas")
 
-            def recording_levels():
-                for level in pyramid_levels:
-                    consumed_shapes.append(list(level.shape))
-                    yield level
-
-            return original_writer(
-                numpy,
-                recording_levels(),
-                output_root=output_root,
-                chunk_shape=chunk_shape,
-            )
-
-        generation_executor._write_smoke_multilevel_tile_source_manifest = recording_writer
+        generation_executor.blend_rgb_tiles = forbidden_blender
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 root = Path(tmpdir)
@@ -605,14 +988,284 @@ class GenerationRunnerTests(unittest.TestCase):
                     generated_id="gen-streaming-sequential",
                     wsi_writer="tile-streaming",
                 )
+                run_summary = json.loads(
+                    (root / "generated" / "gen-streaming-sequential" / "generation_run.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                tile_source_manifest = json.loads(
+                    Path(run_summary["plan"]["tile_source_manifest_path"]).read_text(
+                        encoding="utf-8"
+                    )
+                )
         finally:
-            generation_executor._write_smoke_multilevel_tile_source_manifest = original_writer
+            generation_executor.blend_rgb_tiles = original_blender
 
-        self.assertEqual(len(received_container_types), 1)
         self.assertEqual(
-            consumed_shapes,
+            tile_source_manifest["source"],
+            "smoke_direct_pyramid_tile_streaming_manifest",
+        )
+        self.assertNotIn(
+            "smoke_cascade_arrays_materialized_before_tile_source_write",
+            tile_source_manifest["limitations"],
+        )
+        self.assertEqual(
+            [level["shape"] for level in tile_source_manifest["levels"]],
             [[512, 512, 3], [128, 128, 3], [32, 32, 3], [16, 16, 3]],
         )
+
+    def test_run_production_tile_stream_generation_writes_external_backend_tiles(self):
+        original_blender = generation_executor.blend_rgb_tiles
+
+        def forbidden_blender(*args, **kwargs):
+            raise AssertionError("production tile-stream generation must not build a full canvas")
+
+        generation_executor.blend_rgb_tiles = forbidden_blender
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                prior_manifest_path = self.create_prior_manifest(root)
+                checkpoint_manifest_path = self.production_tile_checkpoint_manifest(root)
+                output_root = root / "generated" / "gen-production-stream"
+
+                result = run_production_tile_stream_generation(
+                    self.generation_config(canvas_size_40x=[1024, 512]),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=output_root,
+                    generated_id="gen-production-stream",
+                )
+                metadata = validate_metadata(
+                    json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+                )
+                qc = validate_qc_report(
+                    json.loads(Path(result["qc_json_path"]).read_text(encoding="utf-8"))
+                )
+                run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+                diagnostics = json.loads(
+                    Path(result["diagnostics_manifest_path"]).read_text(encoding="utf-8")
+                )
+                tile_source_manifest = json.loads(
+                    Path(run_summary["plan"]["tile_source_manifest_path"]).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                first_record = tile_source_manifest["tiles"][0]
+                first_request_sha256 = _sha256_file(output_root / first_record["tile_request_path"])
+                first_rgb_tile_sha256 = _sha256_file(output_root / first_record["path"])
+                first_mask_tile_sha256 = _sha256_file(output_root / first_record["mask_path"])
+                mask = np.load(metadata["output"]["mask_path"], mmap_mode="r")
+                with tifffile.TiffFile(metadata["output"]["wsi_path"]) as tiff:
+                    shapes = [page.shape for page in tiff.series[0].levels]
+        finally:
+            generation_executor.blend_rgb_tiles = original_blender
+
+        self.assertEqual(result["backend"], "production-tile-stream")
+        self.assertEqual(metadata["generation"]["generation_backend"], "production-tile-stream")
+        self.assertEqual(metadata["generation"]["wsi_writer"], "tile-streaming")
+        self.assertEqual(run_summary["plan"]["production_tile_backend"]["backend_name"], "unit-test-production-tile-backend")
+        self.assertEqual(run_summary["pyramid_report"]["write_mode"], "tile_iterator_streaming_write")
+        self.assertTrue(run_summary["pyramid_report"]["production_streaming"])
+        self.assertTrue(run_summary["pyramid_report"]["atomic_publish"])
+        self.assertEqual(tile_source_manifest["source"], "production_external_tile_generator_manifest")
+        self.assertEqual(tile_source_manifest["generation_status"], "completed")
+        self.assertEqual(tile_source_manifest["completed_tile_count"], 5)
+        self.assertEqual(tile_source_manifest["pending_tile_count"], 0)
+        self.assertEqual(tile_source_manifest["failed_tile_count"], 0)
+        self.assertEqual(
+            tile_source_manifest["backend_execution_summary"]["completed_with_execution_evidence_count"],
+            5,
+        )
+        self.assertEqual(
+            tile_source_manifest["backend_execution_summary"]["completed_with_output_evidence_count"],
+            5,
+        )
+        self.assertTrue(tile_source_manifest["backend_execution_summary"]["all_completed_tiles_have_evidence"])
+        self.assertEqual(first_record["request_evidence"]["path"], first_record["tile_request_path"])
+        self.assertEqual(first_record["request_evidence"]["sha256"], first_request_sha256)
+        self.assertGreater(first_record["request_evidence"]["size_bytes"], 0)
+        self.assertEqual(first_record["backend_execution"]["return_code"], 0)
+        self.assertEqual(first_record["backend_execution"]["cwd"], str(output_root))
+        self.assertEqual(first_record["backend_execution"]["timeout_seconds"], 30)
+        self.assertGreaterEqual(first_record["backend_execution"]["duration_seconds"], 0.0)
+        self.assertIn("--tile-path", first_record["backend_execution"]["command"])
+        self.assertEqual(first_record["output_evidence"]["rgb_tile"]["path"], first_record["path"])
+        self.assertEqual(first_record["output_evidence"]["rgb_tile"]["sha256"], first_rgb_tile_sha256)
+        self.assertGreater(first_record["output_evidence"]["rgb_tile"]["size_bytes"], 0)
+        self.assertEqual(first_record["output_evidence"]["mask_tile"]["path"], first_record["mask_path"])
+        self.assertEqual(first_record["output_evidence"]["mask_tile"]["sha256"], first_mask_tile_sha256)
+        self.assertEqual(tile_source_manifest["resume_semantics"], "completed_disk_tiles_reused_before_atomic_ome_tiff_publish")
+        self.assertEqual(
+            [level["shape"] for level in tile_source_manifest["levels"]],
+            [[512, 1024, 3], [128, 256, 3], [32, 64, 3], [16, 32, 3]],
+        )
+        self.assertEqual(shapes, [(512, 1024, 3), (128, 256, 3), (32, 64, 3), (16, 32, 3)])
+        self.assertEqual(tuple(mask.shape), (512, 1024))
+        self.assertEqual(set(np.unique(mask).tolist()), {1, 2})
+        self.assertEqual(qc["levels"]["wsi"]["status"], "pass")
+        self.assertEqual(qc["levels"]["mask_region"]["status"], "pass")
+        self.assertEqual(diagnostics["backend"], "production-tile-stream")
+        self.assertTrue(diagnostics["writer_summary"]["production_streaming"])
+        self.assertEqual(diagnostics["tile_source"]["expected_tile_count"], 5)
+        self.assertEqual(
+            diagnostics["tile_source"]["backend_execution_summary"]["completed_with_execution_evidence_count"],
+            5,
+        )
+        self.assertTrue(
+            diagnostics["tile_source"]["backend_execution_summary"]["all_completed_tiles_have_evidence"]
+        )
+
+    def test_run_production_tile_stream_generation_writes_tile_request_manifests(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.production_tile_request_checkpoint_manifest(root)
+            condition_packet_path = self.write_condition_packet(root)
+            output_root = root / "generated" / "gen-production-request"
+
+            result = run_production_tile_stream_generation(
+                self.generation_config(canvas_size_40x=[512, 512]),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-production-request",
+                condition_packet_path=condition_packet_path,
+            )
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+            tile_source_manifest = json.loads(
+                Path(run_summary["plan"]["tile_source_manifest_path"]).read_text(encoding="utf-8")
+            )
+            level0_record = tile_source_manifest["tiles"][0]
+            request_path = output_root / level0_record["tile_request_path"]
+            tile_request = json.loads(request_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(tile_source_manifest["request_manifest_type"], "production_tile_request_v1")
+        self.assertEqual(level0_record["tile_request_path"], "production_tile_requests/level-0-tile-000000-000000.request.json")
+        self.assertEqual(tile_request["manifest_type"], "production_tile_request_v1")
+        self.assertEqual(tile_request["generated_id"], "gen-production-request")
+        self.assertEqual(tile_request["random_seed"], 3)
+        self.assertEqual(tile_request["condition_packet_path"], str(condition_packet_path))
+        self.assertEqual(tile_request["tile"]["level_index"], 0)
+        self.assertEqual(tile_request["tile"]["shape"], [512, 512, 3])
+        self.assertEqual(tile_request["outputs"]["rgb_tile_path"], str(output_root / level0_record["path"]))
+        self.assertEqual(tile_request["outputs"]["mask_tile_path"], str(output_root / level0_record["mask_path"]))
+        self.assertEqual(tile_request["prior"]["prior_id"], "prior-smoke")
+        self.assertEqual(tile_request["checkpoint"]["model_version"], "production-tile-request-v1")
+        self.assertEqual(tile_request["tile_backend"]["backend_name"], "unit-test-production-tile-request-backend")
+
+    def test_run_production_tile_stream_generation_retries_failed_tile_source_manifest_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            ready_marker = root / "backend-ready.marker"
+            checkpoint_manifest_path = self.production_tile_retry_checkpoint_manifest(root, ready_marker)
+            output_root = root / "generated" / "gen-production-retry"
+            config = self.generation_config(canvas_size_40x=[512, 512])
+            manifest_path = output_root / "production_tile_source_manifest.json"
+
+            with self.assertRaisesRegex(GenerationExecutionError, "retry marker missing"):
+                run_production_tile_stream_generation(
+                    config,
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=output_root,
+                    generated_id="gen-production-retry",
+                )
+            failed_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            ready_marker.write_text("ready\n", encoding="utf-8")
+            with self.assertRaisesRegex(GenerationExecutionError, "failed tiles"):
+                run_production_tile_stream_generation(
+                    config,
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=output_root,
+                    generated_id="gen-production-retry",
+                    resume_tile_manifest_path=manifest_path,
+                )
+
+            result = run_production_tile_stream_generation(
+                config,
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-production-retry",
+                resume_tile_manifest_path=manifest_path,
+                retry_failed_tiles=True,
+            )
+            completed_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            retried_record = completed_manifest["tiles"][0]
+
+        self.assertEqual(failed_manifest["generation_status"], "failed")
+        self.assertEqual(failed_manifest["failed_tile_count"], 1)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(completed_manifest["generation_status"], "completed")
+        self.assertEqual(completed_manifest["completed_tile_count"], completed_manifest["tile_count"])
+        self.assertEqual(completed_manifest["failed_tile_count"], 0)
+        self.assertEqual(retried_record["status"], "completed")
+        self.assertEqual(retried_record["attempt_count"], 2)
+        self.assertTrue(retried_record["retry_from_failed"])
+        self.assertEqual(retried_record["previous_status"], "failed")
+        self.assertIn("retry marker missing", retried_record["previous_error_message"])
+        self.assertEqual(retried_record["retry_count"], 1)
+
+    def test_run_production_tile_stream_generation_rejects_non_production_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+
+            with self.assertRaisesRegex(GenerationExecutionError, "not compatible"):
+                run_production_tile_stream_generation(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=checkpoint_manifest_path,
+                    output_root=root / "generated" / "gen-production-reject",
+                    generated_id="gen-production-reject",
+                )
+
+    def test_run_smoke_generation_tile_streaming_resumes_partial_tile_source_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            output_root = root / "generated" / "gen-streaming-resume"
+            config = self.generation_config()
+            tile_manifest_path = self.write_partial_tile_manifest(
+                output_root,
+                config,
+                completed_indexes=(0,),
+            )
+            self.write_partial_streaming_tile_source_manifest(
+                output_root,
+                completed_record_indexes=(0,),
+            )
+            completed_tile_path = output_root / "streaming_tiles" / "level-0-tile-0000-0000.npy"
+            completed_tile_before = np.load(completed_tile_path).copy()
+
+            result = run_smoke_generation(
+                config,
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-streaming-resume",
+                resume_tile_manifest_path=tile_manifest_path,
+                wsi_writer="tile-streaming",
+            )
+
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+            tile_source_manifest = json.loads(
+                Path(run_summary["plan"]["tile_source_manifest_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            completed_tile_after = np.load(completed_tile_path)
+
+        np.testing.assert_array_equal(completed_tile_after, completed_tile_before)
+        self.assertEqual(tile_source_manifest["generation_status"], "completed")
+        self.assertEqual(tile_source_manifest["completed_tile_count"], 4)
+        self.assertEqual(tile_source_manifest["pending_tile_count"], 0)
+        self.assertEqual([record["status"] for record in tile_source_manifest["tiles"]], ["completed"] * 4)
 
     def test_run_smoke_generation_resumes_partial_tile_manifest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -773,6 +1426,8 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertEqual(texture_summary["cluster_id"], 2)
         self.assertEqual(texture_summary["representative_embedding_index"], 9)
         self.assertEqual(texture_summary["mean_embedding"], [0.1, 0.2, 0.3])
+        self.assertEqual(texture_summary["morphology_latent"], [0.6, 0.7, 0.8])
+        self.assertEqual(texture_summary["texture_token"]["token_id"], "texture-cluster-2")
         self.assertEqual(
             run_summary["condition_packet"]["summary"]["sampled_style_policy"]["sample_id"],
             "style-smoke-001",
@@ -1033,7 +1688,7 @@ class GenerationRunnerTests(unittest.TestCase):
             checkpoint_manifest_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.5",
+                        "schema_version": "v0.72.32",
                         "model_family": "latent_diffusion_unet",
                         "status": "not_trained",
                         "usable_for_inference": False,
@@ -1238,7 +1893,7 @@ class GenerationRunnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--resume-tile-manifest", result.stderr)
 
-    def test_cli_rejects_tile_streaming_writer_for_torch_diffusion_smoke(self):
+    def test_cli_requires_training_index_for_torch_diffusion_smoke_tile_streaming(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             prior_manifest_path = self.create_prior_manifest(root)
@@ -1277,7 +1932,7 @@ class GenerationRunnerTests(unittest.TestCase):
             )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("--wsi-writer tile-streaming", result.stderr)
+        self.assertIn("--training-index is required", result.stderr)
 
 
 if __name__ == "__main__":

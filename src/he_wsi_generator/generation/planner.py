@@ -9,10 +9,14 @@ from ..schemas import ValidationError, validate_generation_config
 from .tiling import GenerationTilingError, create_tile_traversal_plan
 
 
+DEFAULT_GENERATION_BACKEND = "smoke-cascade"
+
+
 def create_generation_plan(
     generation_config: dict[str, Any],
     prior_manifest_path: str | Path,
     checkpoint_manifest_path: str | Path,
+    generation_backend: str = DEFAULT_GENERATION_BACKEND,
 ) -> dict[str, Any]:
     try:
         config = validate_generation_config(generation_config)
@@ -25,6 +29,12 @@ def create_generation_plan(
     checkpoint = load_checkpoint_manifest(checkpoint_manifest_path)
     if checkpoint["status"] != "trained" or not checkpoint["usable_for_inference"]:
         raise ModelRunError("checkpoint is not trained and cannot be used for inference")
+    inference_contract = checkpoint["inference_contract"]
+    compatible_backends = inference_contract["compatible_generation_backends"]
+    if generation_backend not in compatible_backends:
+        raise ModelRunError(
+            f"checkpoint inference_contract is not compatible with generation backend: {generation_backend}"
+        )
     try:
         tile_traversal_plan = create_tile_traversal_plan(
             canvas_size_40x=config.get("canvas_size_40x", config["tile_size_40x"]),
@@ -49,6 +59,8 @@ def create_generation_plan(
                     "texture_token",
                     "coord",
                     "structure_anchor",
+                    "source_condition",
+                    "previous_scale",
                 ],
                 "resume_index": 0,
             }
@@ -62,6 +74,30 @@ def create_generation_plan(
         "prior_id": prior["prior_id"],
         "checkpoint_manifest_path": str(checkpoint_manifest_path),
         "checkpoint_model_version": checkpoint["model_version"],
+        "generation_backend": generation_backend,
+        "checkpoint_inference_contract": {
+            "backend_type": inference_contract["backend_type"],
+            "artifact_role": inference_contract["artifact_role"],
+            "production_ready": inference_contract["production_ready"],
+            "limitations": list(inference_contract["limitations"]),
+            "compatible_generation_backends": list(compatible_backends),
+            "model_architecture_contract": dict(
+                inference_contract["model_architecture_contract"]
+            ),
+            "condition_input_contract": {
+                "required_condition_inputs": list(
+                    inference_contract["condition_input_contract"][
+                        "required_condition_inputs"
+                    ]
+                ),
+                "cascade_levels": list(
+                    inference_contract["condition_input_contract"]["cascade_levels"]
+                ),
+                "condition_feature_policy": inference_contract["condition_input_contract"][
+                    "condition_feature_policy"
+                ],
+            },
+        },
         "random_seed": config["random_seed"],
         "structure_anchor": config["structure_anchor"],
         "style_seed": config["style_seed"],

@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import math
 import os
@@ -18,6 +19,7 @@ from PIL import Image
 import tifffile
 
 from he_wsi_generator.generation.executor import run_torch_diffusion_smoke_generation
+from he_wsi_generator.generation.planner import create_generation_plan
 import he_wsi_generator.models.torch_training as torch_training
 from he_wsi_generator.models.torch_training import (
     TorchTrainingError,
@@ -25,7 +27,7 @@ from he_wsi_generator.models.torch_training import (
     train_torch_diffusion_smoke_model,
     train_torch_smoke_model,
 )
-from he_wsi_generator.models.training import load_checkpoint_manifest
+from he_wsi_generator.models.training import ModelRunError, load_checkpoint_manifest
 from he_wsi_generator.models.training_index import build_training_index
 from he_wsi_generator.priors.artifacts import create_prior_artifact_entry, save_prior_manifest
 from he_wsi_generator.schemas import validate_metadata, validate_qc_report
@@ -48,7 +50,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -83,7 +85,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -109,7 +111,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -154,7 +156,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_id": "prior-torch-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -170,7 +172,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def generation_config(self) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -253,6 +255,21 @@ class TorchSmokeTrainingTests(unittest.TestCase):
                 "fraction": 0.5,
                 "mean_embedding": [0.4, 0.5],
                 "std_embedding": [0.04, 0.05],
+                "texture_token": {
+                    "token_type": "embedding_cluster_texture_token_v1",
+                    "token_id": "texture-cluster-1",
+                    "prototype_index": 0,
+                    "cluster_id": 1,
+                    "representative_embedding_index": 4,
+                },
+                "morphology_latent": [0.2, 0.3],
+                "texture_codebook_reference": {
+                    "codebook_type": "fitted_embedding_cluster_codebook_v1",
+                    "token_type": "embedding_cluster_texture_token_v1",
+                    "embedding_dim": 2,
+                    "token_count": 3,
+                    "condition_outputs": ["texture_token", "morphology_latent"],
+                },
                 "limitations": ["statistical_policy_not_trainable_texture_codebook"],
             }
             if drop_sampled_style_selected_style:
@@ -262,7 +279,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.5",
+                    "schema_version": "v0.72.32",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T16:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -337,6 +354,8 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         self.assertEqual(texture_summary["sample_id"], "texture-torch-001")
         self.assertEqual(texture_summary["cluster_id"], 1)
         self.assertEqual(texture_summary["representative_embedding_index"], 4)
+        self.assertEqual(texture_summary["morphology_latent"], [0.2, 0.3])
+        self.assertEqual(texture_summary["texture_token"]["token_id"], "texture-cluster-1")
 
     def test_torch_condition_packet_loader_rejects_invalid_sampled_policy_summary(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -444,7 +463,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             log_exists = Path(run["training_log_path"]).exists()
             checkpoint_exists = Path(run["checkpoint_path"]).exists()
 
-        self.assertEqual(run["schema_version"], "v0.72.5")
+        self.assertEqual(run["schema_version"], "v0.72.32")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["status"], "trained")
         self.assertFalse(manifest["usable_for_inference"])
@@ -558,6 +577,30 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         self.assertEqual(manifest["training_parameters"]["condition_feature_count"], 7)
         self.assertEqual(manifest["training_parameters"]["cross_scale_condition_channels"], 3)
         self.assertEqual(manifest["training_parameters"]["loss_name"], "mse_noise_prediction")
+        self.assertTrue(manifest["usable_for_inference"])
+        self.assertEqual(
+            manifest["inference_contract"]["compatible_generation_backends"],
+            ["torch-diffusion-smoke"],
+        )
+        self.assertFalse(manifest["inference_contract"]["production_ready"])
+        self.assertEqual(
+            manifest["inference_contract"]["model_architecture_contract"]["architecture_name"],
+            "smoke_latent_unet",
+        )
+        self.assertEqual(
+            manifest["inference_contract"]["condition_input_contract"][
+                "required_condition_inputs"
+            ],
+            [
+                "mask",
+                "style_seed",
+                "texture_token",
+                "coord",
+                "structure_anchor",
+                "source_condition",
+                "previous_scale",
+            ],
+        )
         self.assertEqual(
             manifest["cross_scale_condition_schema"]["condition_name"],
             "previous_scale_rgb_proxy",
@@ -621,6 +664,53 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             )
         self.assertEqual(len(run["loss_history"]), 2)
         self.assertTrue(all(math.isfinite(value) for value in run["loss_history"]))
+
+    @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is not installed in this environment")
+    def test_torch_diffusion_smoke_checkpoint_can_plan_torch_generation_backend_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            index_path = self.write_training_index(root)
+            train_run = train_torch_diffusion_smoke_model(
+                training_index_path=index_path,
+                output_dir=root / "torch-diffusion-run",
+                batch_size=2,
+                split="train",
+                cascade_level="1/1",
+                epochs=1,
+                learning_rate=0.01,
+                random_seed=11,
+                diffusion_timesteps=8,
+                latent_size=64,
+            )
+
+            plan = create_generation_plan(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=train_run["checkpoint_manifest_path"],
+                generation_backend="torch-diffusion-smoke",
+            )
+            with self.assertRaisesRegex(ModelRunError, "not compatible"):
+                create_generation_plan(
+                    self.generation_config(),
+                    prior_manifest_path=prior_manifest_path,
+                    checkpoint_manifest_path=train_run["checkpoint_manifest_path"],
+                    generation_backend="smoke-cascade",
+                )
+
+        self.assertEqual(plan["generation_backend"], "torch-diffusion-smoke")
+        self.assertEqual(
+            plan["checkpoint_inference_contract"]["compatible_generation_backends"],
+            ["torch-diffusion-smoke"],
+        )
+        self.assertEqual(
+            plan["checkpoint_inference_contract"]["model_architecture_contract"][
+                "architecture_name"
+            ],
+            "smoke_latent_unet",
+        )
+        self.assertFalse(plan["checkpoint_inference_contract"]["production_ready"])
+        self.assertIn("previous_scale", plan["stages"][0]["condition_inputs"])
 
     @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is not installed in this environment")
     def test_cli_trains_torch_diffusion_smoke_model(self):
@@ -701,7 +791,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             latent_preview = np.load(run["latent_preview_path"])
             reconstruction_preview = np.load(run["reconstruction_preview_path"])
 
-        self.assertEqual(run["schema_version"], "v0.72.5")
+        self.assertEqual(run["schema_version"], "v0.72.32")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["training_backend"], "torch-smoke-rgb-vae-latent-autoencoder")
         self.assertEqual(manifest["target_type"], "vae_rgb_reconstruction")
@@ -1000,7 +1090,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
                 "structure_anchor",
             ],
         )
-        self.assertEqual(manifest["condition_feature_vector"], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(manifest["condition_feature_vector"], [0.0] * 7)
         self.assertEqual(manifest["cross_scale_condition_schema"]["channel_count"], 3)
         self.assertEqual(manifest["cross_scale_condition_source"], "default_zero_previous_scale")
         self.assertEqual(manifest["cross_scale_condition_shape"], [2, 3, 64, 64])
@@ -1092,6 +1182,10 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         self.assertEqual(
             manifest["condition_summary"]["sampled_texture_policy"]["representative_embedding_index"],
             4,
+        )
+        self.assertEqual(
+            manifest["condition_summary"]["sampled_texture_policy"]["morphology_latent"],
+            [0.2, 0.3],
         )
         self.assertEqual(manifest["condition_feature_source"], "condition_packet")
         self.assertEqual(manifest["condition_feature_vector"][0], 0.0019)
@@ -1207,6 +1301,10 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             payload = torch.load(train_run["checkpoint_path"], map_location="cpu", weights_only=False)
             payload.pop("denoiser_architecture")
             torch.save(payload, train_run["checkpoint_path"])
+            manifest["checkpoint_sha256"] = hashlib.sha256(
+                Path(train_run["checkpoint_path"]).read_bytes()
+            ).hexdigest()
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
             with self.assertRaisesRegex(Exception, "denoiser_architecture"):
                 sample_torch_diffusion_smoke_model(
@@ -1373,6 +1471,9 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             )
             batch_line = json.loads(Path(result["batch_index_path"]).read_text(encoding="utf-8"))
             run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+            diagnostics = json.loads(
+                Path(result["diagnostics_manifest_path"]).read_text(encoding="utf-8")
+            )
             cascade_records = run_summary["cascade_sample_manifests"]
             sample_manifests = [
                 json.loads(Path(record["sample_manifest_path"]).read_text(encoding="utf-8"))
@@ -1383,6 +1484,18 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
         self.assertEqual(result["backend"], "torch-diffusion-smoke")
         self.assertEqual(metadata["generation"]["generation_backend"], "torch-diffusion-smoke")
+        self.assertEqual(
+            metadata["output"]["diagnostics_manifest_path"],
+            result["diagnostics_manifest_path"],
+        )
+        self.assertEqual(
+            run_summary["outputs"]["diagnostics_manifest_path"],
+            result["diagnostics_manifest_path"],
+        )
+        self.assertFalse(diagnostics["tile_execution"]["applicable"])
+        self.assertEqual(diagnostics["tile_execution"]["reason"], "torch_diffusion_smoke_uses_training_batch_sampling")
+        self.assertFalse(diagnostics["tile_source"]["applicable"])
+        self.assertEqual(diagnostics["writer_summary"]["write_mode"], "chunked_pyramid_write")
         self.assertEqual(metadata["generation"]["model_checkpoint"], train_run["checkpoint_manifest_path"])
         self.assertEqual(qc["levels"]["wsi"]["status"], "pass")
         self.assertEqual(batch_line["generated_id"], "gen-torch-smoke")
@@ -1392,6 +1505,13 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             cascade_records,
         )
         self.assertEqual(run_summary["plan"]["stages"][0]["status"], "completed")
+        self.assertEqual(
+            run_summary["plan"]["checkpoint_inference_contract"][
+                "compatible_generation_backends"
+            ],
+            ["torch-diffusion-smoke"],
+        )
+        self.assertFalse(run_summary["plan"]["checkpoint_inference_contract"]["production_ready"])
         self.assertIn("previous_scale_rgb_proxy", run_summary["plan"]["stages"][0]["condition_inputs"])
         self.assertEqual(sample_manifests[0]["cross_scale_condition_source"], "default_zero_previous_scale")
         for index, manifest in enumerate(sample_manifests):
@@ -1406,6 +1526,65 @@ class TorchSmokeTrainingTests(unittest.TestCase):
                     manifest["previous_scale_condition_path"],
                     sample_manifests[index - 1]["sample_preview_path"],
                 )
+        self.assertEqual(shapes, [(512, 512, 3), (128, 128, 3), (32, 32, 3), (16, 16, 3)])
+
+    @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is not installed in this environment")
+    def test_run_torch_diffusion_smoke_generation_uses_tile_streaming_writer(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            index_path = self.write_training_index(root)
+            train_run = train_torch_diffusion_smoke_model(
+                training_index_path=index_path,
+                output_dir=root / "torch-diffusion-run",
+                batch_size=2,
+                split="train",
+                cascade_level="1/1",
+                epochs=1,
+                learning_rate=0.01,
+                random_seed=11,
+                diffusion_timesteps=8,
+                latent_size=64,
+            )
+
+            result = run_torch_diffusion_smoke_generation(
+                self.generation_config(),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=train_run["checkpoint_manifest_path"],
+                training_index_path=index_path,
+                output_root=root / "generated" / "gen-torch-streaming",
+                generated_id="gen-torch-streaming",
+                batch_size=1,
+                wsi_writer="tile-streaming",
+            )
+            metadata = validate_metadata(
+                json.loads(Path(result["metadata_path"]).read_text(encoding="utf-8"))
+            )
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+            diagnostics = json.loads(
+                Path(result["diagnostics_manifest_path"]).read_text(encoding="utf-8")
+            )
+            tile_source_manifest = json.loads(
+                Path(run_summary["plan"]["tile_source_manifest_path"]).read_text(
+                    encoding="utf-8"
+                )
+            )
+            with tifffile.TiffFile(metadata["output"]["wsi_path"]) as tiff:
+                shapes = [page.shape for page in tiff.series[0].levels]
+
+        self.assertEqual(metadata["generation"]["wsi_writer"], "tile-streaming")
+        self.assertEqual(run_summary["pyramid_report"]["write_mode"], "tile_iterator_streaming_write")
+        self.assertTrue(run_summary["pyramid_report"]["production_streaming"])
+        self.assertFalse(run_summary["pyramid_report"]["resume_capable"])
+        self.assertEqual(
+            tile_source_manifest["source"],
+            "torch_diffusion_smoke_cascade_tile_streaming_manifest",
+        )
+        self.assertEqual(tile_source_manifest["generation_status"], "completed")
+        self.assertEqual(tile_source_manifest["completed_tile_count"], 4)
+        self.assertEqual(diagnostics["writer_summary"]["write_mode"], "tile_iterator_streaming_write")
+        self.assertTrue(diagnostics["tile_source"]["applicable"])
+        self.assertEqual(diagnostics["tile_source"]["level_count"], 4)
         self.assertEqual(shapes, [(512, 512, 3), (128, 128, 3), (32, 32, 3), (16, 16, 3)])
 
     @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is not installed in this environment")
@@ -1473,6 +1652,8 @@ class TorchSmokeTrainingTests(unittest.TestCase):
                 "style-torch-001",
             )
             self.assertEqual(sample_manifest["condition_feature_vector"][0], 0.0019)
+            self.assertEqual(sample_manifest["condition_feature_vector"][1], 0.001)
+            self.assertEqual(sample_manifest["condition_feature_vector"][4], 1.0)
 
     @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is not installed in this environment")
     def test_run_torch_diffusion_smoke_generation_rejects_condition_prior_mismatch(self):

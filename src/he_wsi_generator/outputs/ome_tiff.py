@@ -1,4 +1,5 @@
 import json
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -146,7 +147,11 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = _streaming_transaction_temporary_path(target)
     transaction_manifest_path = _streaming_transaction_manifest_path(target)
+    progress_manifest_path = _streaming_progress_manifest_path(target)
+    previous_transaction = _load_existing_streaming_transaction_manifest(transaction_manifest_path)
     started_at = _utc_now_isoformat()
+    disk_space_preflight = None
+    progress_manifest = None
     _write_streaming_transaction_manifest(
         transaction_manifest_path,
         _build_streaming_transaction_manifest(
@@ -173,46 +178,138 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
         estimated_total_bytes = _estimated_total_bytes_from_shapes(plan["level_shapes"], numpy.uint8)
         use_bigtiff = estimated_total_bytes >= bigtiff_threshold
 
-        with tifffile.TiffWriter(temporary_path, bigtiff=use_bigtiff) as writer:
-            for offset, level in enumerate(plan["levels"]):
-                level_shape = tuple(level["shape"])
-                axes = "YXS" if len(level_shape) == 3 else "YX"
-                writer.write(
-                    _iter_streaming_level_tiles(numpy, level, chunk_height, chunk_width),
-                    shape=level_shape,
-                    dtype=numpy.uint8,
-                    tile=(chunk_height, chunk_width),
-                    photometric="rgb" if len(level_shape) == 3 else "minisblack",
-                    subifds=(len(plan["levels"]) - 1 if offset == 0 else None),
-                    subfiletype=(1 if offset > 0 else None),
-                    metadata=({"axes": axes, **(metadata or {})} if offset == 0 else {"axes": axes}),
+        recovery_action = None
+        reused_existing_target, level_shapes = _recover_completed_streaming_target(
+            previous_transaction,
+            target=target,
+            manifest_path=manifest_path,
+            expected_level_shapes=plan["level_shapes"],
+            tifffile=tifffile,
+        )
+        recovered_temporary_path = None
+        if reused_existing_target:
+            recovery_action = "validated_existing_target_ome_tiff"
+        else:
+            recovered_temporary_path, level_shapes = _recover_started_streaming_temporary(
+                previous_transaction,
+                target=target,
+                manifest_path=manifest_path,
+                expected_level_shapes=plan["level_shapes"],
+                tifffile=tifffile,
+            )
+        recovered_from_temporary = recovered_temporary_path is not None
+        if recovered_from_temporary:
+            recovery_action = "published_existing_temporary_ome_tiff"
+        published_temporary_path = recovered_temporary_path or temporary_path
+        if not reused_existing_target and not recovered_from_temporary:
+            progress_manifest = _build_streaming_progress_manifest(
+                target=target,
+                temporary_path=temporary_path,
+                manifest_path=manifest_path,
+                plan=plan,
+                status="started",
+                started_at=started_at,
+                ended_at=None,
+                failure_reason=None,
+            )
+            _write_streaming_progress_manifest(progress_manifest_path, progress_manifest)
+            _write_streaming_transaction_manifest(
+                transaction_manifest_path,
+                _build_streaming_transaction_manifest(
+                    target=target,
+                    temporary_path=temporary_path,
+                    manifest=manifest,
+                    manifest_path=manifest_path,
+                    status="started",
+                    started_at=started_at,
+                    ended_at=None,
+                    failure_reason=None,
+                    progress_manifest_path=progress_manifest_path,
+                    progress_summary=_streaming_progress_summary(progress_manifest),
+                ),
+            )
+            disk_space_preflight = _streaming_disk_space_report(
+                target.parent,
+                estimated_total_bytes=estimated_total_bytes,
+            )
+            if disk_space_preflight["preflight_status"] != "sufficient_space":
+                raise OutputWriteError(
+                    "insufficient disk space for streaming OME-TIFF write: "
+                    f"required {disk_space_preflight['minimum_required_bytes']} bytes, "
+                    f"free {disk_space_preflight['free_bytes']} bytes"
                 )
+            with tifffile.TiffWriter(temporary_path, bigtiff=use_bigtiff) as writer:
+                for offset, level in enumerate(plan["levels"]):
+                    level_shape = tuple(level["shape"])
+                    axes = "YXS" if len(level_shape) == 3 else "YX"
+                    writer.write(
+                        _iter_streaming_level_tiles(
+                            numpy,
+                            level,
+                            chunk_height,
+                            chunk_width,
+                            progress_manifest=progress_manifest,
+                            progress_manifest_path=progress_manifest_path,
+                        ),
+                        shape=level_shape,
+                        dtype=numpy.uint8,
+                        tile=(chunk_height, chunk_width),
+                        photometric="rgb" if len(level_shape) == 3 else "minisblack",
+                        subifds=(len(plan["levels"]) - 1 if offset == 0 else None),
+                        subfiletype=(1 if offset > 0 else None),
+                        metadata=({"axes": axes, **(metadata or {})} if offset == 0 else {"axes": axes}),
+                    )
+            level_shapes = _read_validated_streaming_ome_level_shapes(
+                tifffile,
+                temporary_path,
+                expected_level_shapes=plan["level_shapes"],
+            )
+            progress_manifest = _finish_streaming_progress_manifest(
+                progress_manifest,
+                status="completed",
+                failure_reason=None,
+            )
+            _write_streaming_progress_manifest(progress_manifest_path, progress_manifest)
 
-        with tifffile.TiffFile(temporary_path) as tiff:
-            if not tiff.is_ome:
-                raise OutputWriteError("written TIFF is not recognized as OME-TIFF")
-            level_shapes = [list(level.shape) for level in tiff.series[0].levels]
-        if level_shapes != plan["level_shapes"]:
-            raise OutputWriteError("written OME-TIFF pyramid shapes do not match streaming plan")
-
-        # Publish only after the temporary OME-TIFF has passed the same pyramid
-        # checks used for the returned report. Path.replace maps to os.replace
-        # on local filesystems, so an existing target is swapped atomically.
-        temporary_path.replace(target)
+        if not reused_existing_target:
+            # Publish only after the temporary OME-TIFF has passed the same pyramid
+            # checks used for the returned report. Path.replace maps to os.replace
+            # on local filesystems, so an existing target is swapped atomically.
+            published_temporary_path.replace(target)
         _write_streaming_transaction_manifest(
             transaction_manifest_path,
             _build_streaming_transaction_manifest(
                 target=target,
-                temporary_path=temporary_path,
+                temporary_path=published_temporary_path,
                 manifest=manifest,
                 manifest_path=manifest_path,
                 status="completed",
                 started_at=started_at,
                 ended_at=_utc_now_isoformat(),
                 failure_reason=None,
+                recovery_action=recovery_action,
+                disk_space_preflight=disk_space_preflight,
+                progress_manifest_path=(
+                    progress_manifest_path if progress_manifest is not None else None
+                ),
+                progress_summary=(
+                    _streaming_progress_summary(progress_manifest)
+                    if progress_manifest is not None
+                    else None
+                ),
             ),
         )
     except Exception as exc:
+        if progress_manifest is not None:
+            try:
+                progress_manifest = _finish_streaming_progress_manifest(
+                    progress_manifest,
+                    status="failed",
+                    failure_reason=str(exc),
+                )
+                _write_streaming_progress_manifest(progress_manifest_path, progress_manifest)
+            except OutputWriteError:
+                pass
         cleanup_error = None
         try:
             if temporary_path.exists():
@@ -228,6 +325,15 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
             started_at=started_at,
             ended_at=_utc_now_isoformat(),
             failure_reason=str(exc),
+            disk_space_preflight=disk_space_preflight,
+            progress_manifest_path=(
+                progress_manifest_path if progress_manifest is not None else None
+            ),
+            progress_summary=(
+                _streaming_progress_summary(progress_manifest)
+                if progress_manifest is not None
+                else None
+            ),
         )
         if cleanup_error is not None:
             failed_manifest["cleanup_error"] = cleanup_error
@@ -246,7 +352,16 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
         estimated_total_bytes=estimated_total_bytes,
         bigtiff=use_bigtiff,
         bigtiff_threshold_bytes=bigtiff_threshold,
+        disk_space_preflight=disk_space_preflight,
+        progress_manifest_path=progress_manifest_path if progress_manifest is not None else None,
+        progress_summary=(
+            _streaming_progress_summary(progress_manifest)
+            if progress_manifest is not None
+            else None
+        ),
     )
+    streaming_write_report["recovered_from_temporary"] = recovered_from_temporary
+    streaming_write_report["reused_existing_target"] = reused_existing_target
     streaming_contract["contract_status"] = "streaming_write_validated"
     streaming_contract["production_streaming"] = True
     streaming_contract["partial_contract_only"] = False
@@ -256,6 +371,8 @@ def write_pyramid_ome_tiff_streaming_from_tile_sources(
     streaming_contract["streaming_limitations"] = streaming_write_report["streaming_limitations"]
     streaming_contract["transaction_manifest_path"] = str(transaction_manifest_path)
     streaming_contract["atomic_publish"] = True
+    if disk_space_preflight is not None:
+        streaming_contract["disk_space_preflight"] = disk_space_preflight
     streaming_write_report["transaction_manifest_path"] = str(transaction_manifest_path)
     streaming_write_report["atomic_publish"] = True
     return {
@@ -331,6 +448,33 @@ def _estimated_total_bytes_from_shapes(shapes: list[list[int]], dtype) -> int:
             size *= int(value)
         total += size * itemsize
     return int(total)
+
+
+def _streaming_disk_space_report(
+    target_directory: Path,
+    *,
+    estimated_total_bytes: int,
+) -> dict:
+    """Estimate whether the target filesystem can hold a temporary OME write.
+
+    This preflight intentionally uses the raw pyramid byte estimate plus one
+    equal-sized safety margin. The final TIFF may include container overhead, so
+    a tight estimate would create false confidence for large WSI writes.
+    """
+    free_bytes = int(shutil.disk_usage(target_directory).free)
+    estimated_bytes = int(estimated_total_bytes)
+    safety_margin = max(estimated_bytes, 1)
+    minimum_required = estimated_bytes + safety_margin
+    return {
+        "preflight_status": (
+            "sufficient_space" if free_bytes >= minimum_required else "insufficient_space"
+        ),
+        "target_directory": str(target_directory),
+        "estimated_total_bytes": estimated_bytes,
+        "minimum_required_bytes": int(minimum_required),
+        "free_bytes": free_bytes,
+        "safety_margin_bytes": int(safety_margin),
+    }
 
 
 def _chunked_write_audit(
@@ -757,7 +901,15 @@ def _validate_streaming_tile_grid_cell(
     return y_origin // chunk_height, x_origin // chunk_width
 
 
-def _iter_streaming_level_tiles(numpy, level: dict, chunk_height: int, chunk_width: int):
+def _iter_streaming_level_tiles(
+    numpy,
+    level: dict,
+    chunk_height: int,
+    chunk_width: int,
+    *,
+    progress_manifest: dict | None = None,
+    progress_manifest_path: Path | None = None,
+):
     shape = level["shape"]
     channels = shape[2] if len(shape) == 3 else None
     for row in range(level["tile_grid"][0]):
@@ -771,6 +923,15 @@ def _iter_streaming_level_tiles(numpy, level: dict, chunk_height: int, chunk_wid
             else:
                 output_tile = numpy.zeros((chunk_height, chunk_width, channels), dtype=numpy.uint8)
                 output_tile[:height, :width, :] = tile[:height, :width, :]
+            if progress_manifest is not None and progress_manifest_path is not None:
+                _record_streaming_progress_tile(
+                    progress_manifest,
+                    progress_manifest_path,
+                    level=level,
+                    row=row,
+                    col=col,
+                    record=record,
+                )
             yield output_tile
 
 
@@ -782,8 +943,11 @@ def _tile_iterator_streaming_report(
     estimated_total_bytes: int,
     bigtiff: bool,
     bigtiff_threshold_bytes: int,
+    disk_space_preflight: dict | None = None,
+    progress_manifest_path: Path | None = None,
+    progress_summary: dict | None = None,
 ) -> dict:
-    return {
+    report = {
         "writer_backend": "tifffile",
         "write_mode": "tile_iterator_streaming_write",
         "production_streaming": True,
@@ -810,10 +974,147 @@ def _tile_iterator_streaming_report(
             "npy_tile_arrays_only",
         ],
     }
+    if disk_space_preflight is not None:
+        report["disk_space_preflight"] = disk_space_preflight
+    if progress_manifest_path is not None:
+        report["progress_manifest_path"] = str(progress_manifest_path)
+    if progress_summary is not None:
+        report["progress_summary"] = progress_summary
+    return report
 
 
 def _streaming_transaction_manifest_path(target: Path) -> Path:
     return target.with_name(f"{target.name}.transaction.json")
+
+
+def _streaming_progress_manifest_path(target: Path) -> Path:
+    return target.with_name(f"{target.name}.progress.json")
+
+
+def _build_streaming_progress_manifest(
+    *,
+    target: Path,
+    temporary_path: Path,
+    manifest_path: Path | None,
+    plan: dict,
+    status: str,
+    started_at: str,
+    ended_at: str | None,
+    failure_reason: str | None,
+) -> dict:
+    planned_tile_count = int(sum(level["tile_count"] for level in plan["levels"]))
+    return {
+        "schema_version": PROJECT_VERSION,
+        "manifest_type": "ome_tiff_streaming_write_progress",
+        "writer_type": "tile_iterator_streaming_write",
+        "target_path": str(target),
+        "temporary_path": str(temporary_path),
+        "tile_source_manifest_path": str(manifest_path) if manifest_path is not None else None,
+        "status": status,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "failure_reason": failure_reason,
+        "planned_level_count": len(plan["levels"]),
+        "planned_tile_count": planned_tile_count,
+        "yielded_tile_count": 0,
+        "completed_tile_count": 0,
+        "current_level_index": None,
+        "current_pyramid_position": None,
+        "current_tile_grid_position": None,
+        "last_tile": None,
+        "last_updated_at": started_at,
+        "resume_capable": False,
+        "progress_semantics": "tiles_yielded_to_tifffile_iterator_not_ome_internal_resume",
+        "levels": [
+            {
+                "level_index": level["level_index"],
+                "pyramid_position": level["pyramid_position"],
+                "tile_grid": level["tile_grid"],
+                "planned_tile_count": int(level["tile_count"]),
+                "yielded_tile_count": 0,
+            }
+            for level in plan["levels"]
+        ],
+    }
+
+
+def _record_streaming_progress_tile(
+    progress: dict,
+    progress_path: Path,
+    *,
+    level: dict,
+    row: int,
+    col: int,
+    record: dict,
+) -> None:
+    """Persist iterator progress without claiming TIFF-level resumability."""
+    updated_at = _utc_now_isoformat()
+    level_index = int(level["level_index"])
+    progress["status"] = "writing"
+    progress["yielded_tile_count"] = int(progress.get("yielded_tile_count", 0)) + 1
+    progress["completed_tile_count"] = int(progress.get("yielded_tile_count", 0))
+    progress["current_level_index"] = level_index
+    progress["current_pyramid_position"] = int(level["pyramid_position"])
+    progress["current_tile_grid_position"] = [int(row), int(col)]
+    progress["last_updated_at"] = updated_at
+    progress["last_tile"] = {
+        "level_index": level_index,
+        "pyramid_position": int(level["pyramid_position"]),
+        "tile_index": int(row) * int(level["tile_grid"][1]) + int(col),
+        "tile_grid_position": [int(row), int(col)],
+        "record_path": record["record_path"],
+        "write_region": [int(value) for value in record["region"]],
+        "path": str(record["path"]),
+        "updated_at": updated_at,
+    }
+    for level_progress in progress.get("levels", []):
+        if level_progress.get("level_index") == level_index:
+            level_progress["yielded_tile_count"] = int(level_progress.get("yielded_tile_count", 0)) + 1
+            break
+    _write_streaming_progress_manifest(progress_path, progress)
+
+
+def _finish_streaming_progress_manifest(
+    progress: dict,
+    *,
+    status: str,
+    failure_reason: str | None,
+) -> dict:
+    if status not in {"completed", "failed"}:
+        raise OutputWriteError("progress status must be completed or failed")
+    finished = dict(progress)
+    finished["status"] = status
+    finished["ended_at"] = _utc_now_isoformat()
+    finished["last_updated_at"] = finished["ended_at"]
+    finished["failure_reason"] = failure_reason
+    if status == "completed":
+        finished["completed_tile_count"] = int(finished.get("yielded_tile_count", 0))
+    return finished
+
+
+def _streaming_progress_summary(progress: dict) -> dict:
+    return {
+        "status": progress.get("status"),
+        "planned_level_count": int(progress.get("planned_level_count", 0)),
+        "planned_tile_count": int(progress.get("planned_tile_count", 0)),
+        "yielded_tile_count": int(progress.get("yielded_tile_count", 0)),
+        "completed_tile_count": int(progress.get("completed_tile_count", 0)),
+        "current_level_index": progress.get("current_level_index"),
+        "current_pyramid_position": progress.get("current_pyramid_position"),
+        "current_tile_grid_position": progress.get("current_tile_grid_position"),
+        "last_tile": progress.get("last_tile"),
+        "failure_reason": progress.get("failure_reason"),
+        "resume_capable": False,
+        "progress_semantics": progress.get("progress_semantics"),
+    }
+
+
+def _write_streaming_progress_manifest(path: Path, manifest: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise OutputWriteError(f"failed to write progress manifest: {exc}") from exc
 
 
 def _streaming_transaction_temporary_path(target: Path) -> Path:
@@ -827,6 +1128,150 @@ def _streaming_transaction_temporary_path(target: Path) -> Path:
     return target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp.ome.tiff")
 
 
+def _load_existing_streaming_transaction_manifest(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
+def _recover_started_streaming_temporary(
+    transaction: dict | None,
+    *,
+    target: Path,
+    manifest_path: Path | None,
+    expected_level_shapes: list[list[int]],
+    tifffile,
+) -> tuple[Path | None, list[list[int]] | None]:
+    if not _is_recoverable_started_transaction(
+        transaction,
+        target=target,
+        manifest_path=manifest_path,
+    ):
+        return None, None
+    temporary_path = Path(str(transaction["temporary_path"]))
+    try:
+        level_shapes = _read_validated_streaming_ome_level_shapes(
+            tifffile,
+            temporary_path,
+            expected_level_shapes=expected_level_shapes,
+        )
+    except OutputWriteError:
+        try:
+            if temporary_path.exists():
+                temporary_path.unlink()
+        except OSError:
+            pass
+        return None, None
+    return temporary_path, level_shapes
+
+
+def _recover_completed_streaming_target(
+    transaction: dict | None,
+    *,
+    target: Path,
+    manifest_path: Path | None,
+    expected_level_shapes: list[list[int]],
+    tifffile,
+) -> tuple[bool, list[list[int]] | None]:
+    if not _is_recoverable_completed_transaction(
+        transaction,
+        target=target,
+        manifest_path=manifest_path,
+    ):
+        return False, None
+    try:
+        level_shapes = _read_validated_streaming_ome_level_shapes(
+            tifffile,
+            target,
+            expected_level_shapes=expected_level_shapes,
+        )
+    except OutputWriteError:
+        return False, None
+    return True, level_shapes
+
+
+def _is_recoverable_completed_transaction(
+    transaction: dict | None,
+    *,
+    target: Path,
+    manifest_path: Path | None,
+) -> bool:
+    if not _streaming_transaction_matches_current_plan(
+        transaction,
+        target=target,
+        manifest_path=manifest_path,
+    ):
+        return False
+    if transaction.get("status") != "completed":
+        return False
+    if transaction.get("failure_reason") is not None:
+        return False
+    return target.exists()
+
+
+def _is_recoverable_started_transaction(
+    transaction: dict | None,
+    *,
+    target: Path,
+    manifest_path: Path | None,
+) -> bool:
+    if not _streaming_transaction_matches_current_plan(
+        transaction,
+        target=target,
+        manifest_path=manifest_path,
+    ):
+        return False
+    if transaction.get("status") != "started":
+        return False
+    temporary_value = transaction.get("temporary_path")
+    if not isinstance(temporary_value, str) or not temporary_value:
+        return False
+    return Path(temporary_value).exists()
+
+
+def _streaming_transaction_matches_current_plan(
+    transaction: dict | None,
+    *,
+    target: Path,
+    manifest_path: Path | None,
+) -> bool:
+    if not isinstance(transaction, dict):
+        return False
+    if transaction.get("manifest_type") != "ome_tiff_streaming_write_transaction":
+        return False
+    if transaction.get("writer_type") != "tile_iterator_streaming_write":
+        return False
+    if transaction.get("target_path") != str(target):
+        return False
+    tile_source = transaction.get("tile_source_manifest")
+    if manifest_path is not None:
+        if not isinstance(tile_source, dict) or tile_source.get("manifest_path") != str(manifest_path):
+            return False
+    return True
+
+
+def _read_validated_streaming_ome_level_shapes(
+    tifffile,
+    path: Path,
+    *,
+    expected_level_shapes: list[list[int]],
+) -> list[list[int]]:
+    try:
+        with tifffile.TiffFile(path) as tiff:
+            if not tiff.is_ome:
+                raise OutputWriteError("written TIFF is not recognized as OME-TIFF")
+            level_shapes = [list(level.shape) for level in tiff.series[0].levels]
+    except OSError as exc:
+        raise OutputWriteError(f"temporary OME-TIFF cannot be read: {exc}") from exc
+    if level_shapes != expected_level_shapes:
+        raise OutputWriteError("written OME-TIFF pyramid shapes do not match streaming plan")
+    return level_shapes
+
+
 def _build_streaming_transaction_manifest(
     *,
     target: Path,
@@ -837,10 +1282,14 @@ def _build_streaming_transaction_manifest(
     started_at: str,
     ended_at: str | None,
     failure_reason: str | None,
+    recovery_action: str | None = None,
+    disk_space_preflight: dict | None = None,
+    progress_manifest_path: Path | None = None,
+    progress_summary: dict | None = None,
 ) -> dict:
     if status not in {"started", "completed", "failed"}:
         raise OutputWriteError("transaction status must be started, completed, or failed")
-    return {
+    manifest_payload = {
         "schema_version": PROJECT_VERSION,
         "manifest_type": "ome_tiff_streaming_write_transaction",
         "writer_type": "tile_iterator_streaming_write",
@@ -859,7 +1308,15 @@ def _build_streaming_transaction_manifest(
         "failure_reason": failure_reason,
         "atomic_publish": True,
         "resume_capable": False,
+        "recovery_action": recovery_action,
     }
+    if disk_space_preflight is not None:
+        manifest_payload["disk_space_preflight"] = disk_space_preflight
+    if progress_manifest_path is not None:
+        manifest_payload["progress_manifest_path"] = str(progress_manifest_path)
+    if progress_summary is not None:
+        manifest_payload["progress_summary"] = progress_summary
+    return manifest_payload
 
 
 def _write_streaming_transaction_manifest(path: Path, manifest: dict) -> None:

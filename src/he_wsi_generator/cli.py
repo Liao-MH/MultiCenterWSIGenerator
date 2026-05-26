@@ -29,6 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
             "qc",
             "qc-report",
             "qc-review",
+            "generation-output-diagnostics",
+            "output-diagnostics",
         ],
         help="Schema kind to validate.",
     )
@@ -521,8 +523,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--backend",
         required=True,
-        choices=["smoke-cascade", "torch-diffusion-smoke"],
-        help="Generation backend. smoke backends validate plumbing, not production realism.",
+        choices=["smoke-cascade", "torch-diffusion-smoke", "production-tile-stream"],
+        help="Generation backend. production-tile-stream invokes an external tile generator contract.",
     )
     run_parser.add_argument("--prior-manifest", required=True, help="Path to prior_manifest.json.")
     run_parser.add_argument(
@@ -551,12 +553,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional resumable tile manifest JSON for smoke-cascade resume execution.",
     )
     run_parser.add_argument(
+        "--retry-failed-tiles",
+        action="store_true",
+        help=(
+            "For production-tile-stream only, retry failed tile source records from "
+            "--resume-tile-manifest after immutable manifest validation."
+        ),
+    )
+    run_parser.add_argument(
         "--wsi-writer",
         choices=["array", "tile-streaming"],
         default="array",
         help=(
             "WSI writer backend. array preserves the default in-memory pyramid path; "
-            "tile-streaming is smoke-cascade only."
+            "tile-streaming uses the disk tile source writer where supported."
         ),
     )
 

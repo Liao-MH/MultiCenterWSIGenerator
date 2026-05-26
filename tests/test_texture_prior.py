@@ -65,7 +65,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(prior, saved)
-        self.assertEqual(prior["schema_version"], "v0.72.5")
+        self.assertEqual(prior["schema_version"], "v0.72.32")
         self.assertEqual(prior["prior_type"], "texture_prior")
         self.assertEqual(prior["source"]["cache_dir"], str(cache_dir))
         self.assertEqual(prior["source"]["cache_key"], cache_key)
@@ -77,6 +77,10 @@ class TexturePriorTests(unittest.TestCase):
         self.assertEqual(prior["cluster_report_summary"]["cluster_counts"], {"0": 2, "1": 2})
         self.assertEqual(prior["global_embedding_mean"], [5.1, 5.1])
         self.assertEqual(prior["global_embedding_std"], [5.0009999, 5.0009999])
+        self.assertEqual(prior["texture_codebook"]["codebook_type"], "fitted_embedding_cluster_codebook_v1")
+        self.assertEqual(prior["texture_codebook"]["token_type"], "embedding_cluster_texture_token_v1")
+        self.assertEqual(prior["texture_codebook"]["condition_outputs"], ["texture_token", "morphology_latent"])
+        self.assertEqual(prior["texture_codebook"]["morphology_latent_schema"]["latent_dim"], 2)
         self.assertEqual(
             prior["texture_prototypes"],
             [
@@ -87,6 +91,14 @@ class TexturePriorTests(unittest.TestCase):
                     "mean_embedding": [0.1, 0.1],
                     "std_embedding": [0.1, 0.1],
                     "representative_embedding_index": 0,
+                    "texture_token": {
+                        "token_type": "embedding_cluster_texture_token_v1",
+                        "token_id": "texture-cluster-0",
+                        "prototype_index": 0,
+                        "cluster_id": 0,
+                        "representative_embedding_index": 0,
+                    },
+                    "morphology_latent": [-0.9998001, -0.9998001],
                 },
                 {
                     "cluster_id": 1,
@@ -95,6 +107,14 @@ class TexturePriorTests(unittest.TestCase):
                     "mean_embedding": [10.1, 10.1],
                     "std_embedding": [0.1, 0.1],
                     "representative_embedding_index": 2,
+                    "texture_token": {
+                        "token_type": "embedding_cluster_texture_token_v1",
+                        "token_id": "texture-cluster-1",
+                        "prototype_index": 1,
+                        "cluster_id": 1,
+                        "representative_embedding_index": 2,
+                    },
+                    "morphology_latent": [0.9998001, 0.9998001],
                 },
             ],
         )
@@ -174,7 +194,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(policy, saved)
-        self.assertEqual(policy["schema_version"], "v0.72.5")
+        self.assertEqual(policy["schema_version"], "v0.72.32")
         self.assertEqual(policy["artifact_type"], "sampled_texture_policy")
         self.assertEqual(policy["sample_id"], "texture-sample-001")
         self.assertEqual(policy["random_seed"], 3)
@@ -184,6 +204,21 @@ class TexturePriorTests(unittest.TestCase):
         self.assertEqual(policy["selected_texture_token"]["cluster_id"], 1)
         self.assertEqual(policy["selected_texture_token"]["representative_embedding_index"], 2)
         self.assertEqual(policy["selected_texture_token"]["mean_embedding"], [10.1, 10.1])
+        self.assertEqual(
+            policy["selected_texture_token"]["texture_token"],
+            {
+                "token_type": "embedding_cluster_texture_token_v1",
+                "token_id": "texture-cluster-1",
+                "prototype_index": 1,
+                "cluster_id": 1,
+                "representative_embedding_index": 2,
+            },
+        )
+        self.assertEqual(policy["selected_texture_token"]["morphology_latent"], [0.9998001, 0.9998001])
+        self.assertEqual(
+            policy["texture_codebook_reference"]["condition_outputs"],
+            ["texture_token", "morphology_latent"],
+        )
         self.assertIn("not_a_vq_vae_or_morphology_token_sampler", policy["limitations"])
 
     def test_sample_texture_policy_from_prior_rejects_invalid_inputs(self):
@@ -191,16 +226,32 @@ class TexturePriorTests(unittest.TestCase):
             root = Path(tmpdir)
             prior_path = root / "texture_prior.json"
             prior = {
-                "schema_version": "v0.72.5",
+                "schema_version": "v0.72.32",
                 "prior_type": "texture_prior",
                 "cluster_count": 1,
+                "texture_codebook": {
+                    "codebook_type": "fitted_embedding_cluster_codebook_v1",
+                    "token_type": "embedding_cluster_texture_token_v1",
+                    "embedding_dim": 2,
+                    "token_count": 1,
+                    "condition_outputs": ["texture_token", "morphology_latent"],
+                },
                 "texture_prototypes": [
                     {
                         "cluster_id": 0,
                         "sample_count": 2,
                         "fraction": 1.0,
                         "mean_embedding": [1.0, 2.0],
+                        "std_embedding": [0.1, 0.2],
                         "representative_embedding_index": 0,
+                        "texture_token": {
+                            "token_type": "embedding_cluster_texture_token_v1",
+                            "token_id": "texture-cluster-0",
+                            "prototype_index": 0,
+                            "cluster_id": 0,
+                            "representative_embedding_index": 0,
+                        },
+                        "morphology_latent": [0.0, 0.0],
                     }
                 ],
             }
@@ -230,6 +281,28 @@ class TexturePriorTests(unittest.TestCase):
                 self.sample_texture_policy(
                     texture_prior_path=prior_path,
                     output_path=root / "missing-representative.json",
+                    sample_id="texture-sample-001",
+                    random_seed=1,
+                )
+
+            prior["texture_prototypes"] = [
+                {
+                    "cluster_id": 0,
+                    "representative_embedding_index": 0,
+                    "texture_token": {
+                        "token_type": "embedding_cluster_texture_token_v1",
+                        "token_id": "texture-cluster-0",
+                        "prototype_index": 0,
+                        "cluster_id": 0,
+                        "representative_embedding_index": 0,
+                    },
+                }
+            ]
+            prior_path.write_text(json.dumps(prior), encoding="utf-8")
+            with self.assertRaisesRegex(TexturePriorBuildError, "morphology_latent"):
+                self.sample_texture_policy(
+                    texture_prior_path=prior_path,
+                    output_path=root / "missing-morphology-latent.json",
                     sample_id="texture-sample-001",
                     random_seed=1,
                 )

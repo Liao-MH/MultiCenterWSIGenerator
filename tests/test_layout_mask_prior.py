@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class LayoutMaskPriorTests(unittest.TestCase):
     def manifest(self, root: Path, mask_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "dataset_id": "demo-layout",
             "created_at": "2026-05-23T15:00:00Z",
             "records": [
@@ -56,7 +56,7 @@ class LayoutMaskPriorTests(unittest.TestCase):
 
     def audit(self, root: Path) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "dataset_id": "demo-layout",
             "created_at": "2026-05-23T15:00:00Z",
             "backend": "fixture-image",
@@ -82,7 +82,7 @@ class LayoutMaskPriorTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.5",
+            "schema_version": "v0.72.32",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -134,7 +134,7 @@ class LayoutMaskPriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(prior, saved)
-        self.assertEqual(prior["schema_version"], "v0.72.5")
+        self.assertEqual(prior["schema_version"], "v0.72.32")
         self.assertEqual(prior["prior_type"], "layout_mask_prior")
         self.assertEqual(prior["source"]["training_index_path"], str(index_path))
         self.assertEqual(prior["source"]["batch_size"], 2)

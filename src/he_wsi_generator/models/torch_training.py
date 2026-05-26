@@ -1313,6 +1313,27 @@ def _sampled_texture_policy_summary(value: Any) -> dict[str, Any]:
                 "condition packet conditions.texture_token.std_embedding",
             )
         ),
+        "texture_token": dict(
+            _require_condition_dict(
+                value,
+                "texture_token",
+                "condition packet conditions.texture_token.texture_token",
+            )
+        ),
+        "morphology_latent": list(
+            _require_condition_list(
+                value,
+                "morphology_latent",
+                "condition packet conditions.texture_token.morphology_latent",
+            )
+        ),
+        "texture_codebook_reference": dict(
+            _require_condition_dict(
+                value,
+                "texture_codebook_reference",
+                "condition packet conditions.texture_token.texture_codebook_reference",
+            )
+        ),
         "limitations": list(
             _require_condition_list(
                 value,
@@ -1416,6 +1437,13 @@ def _require_condition_list(data: dict[str, Any], key: str, path: str) -> list[A
     value = data.get(key)
     if not isinstance(value, list):
         raise TorchTrainingError(f"{path} must be a list")
+    return value
+
+
+def _require_condition_dict(data: dict[str, Any], key: str, path: str) -> dict[str, Any]:
+    value = data.get(key)
+    if not isinstance(value, dict):
+        raise TorchTrainingError(f"{path} must be an object")
     return value
 
 

@@ -57,6 +57,7 @@ def collect_output_summary(
             "wsi_path": output.get("wsi_path"),
             "mask_path": output.get("mask_path"),
             "qc_json_path": output.get("qc_json_path", str(qc_path)),
+            "diagnostics_manifest_path": output.get("diagnostics_manifest_path"),
             "metadata_path": str(metadata_path),
         },
         "level_status": {

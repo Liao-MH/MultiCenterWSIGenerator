@@ -83,6 +83,7 @@ def _metadata(generated_id: str = "gen-001", qc_path: str | Path = "qc.json") ->
             "wsi_path": "generated.ome.tiff",
             "mask_path": "generated_mask/mask.npy",
             "qc_json_path": str(qc_path),
+            "diagnostics_manifest_path": "generation_output_diagnostics.json",
         },
         "source": {"source_wsi_id": None},
         "generation": {

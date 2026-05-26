@@ -1,5 +1,1555 @@
 # CHANGELOG
 
+## v0.72.32 - 2026-05-25
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务，但不要启用 multiagent；本轮由主会话直接推进 P4 writer 功能闭环。
+- 用户要求继续开发前再次查看 `AGENTS.md`，并继续按里程碑集中验证节奏推进，不新增低价值 helper 级测试。
+- 用户要求减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 输出可靠性；本轮聚焦 OME streaming writer progress evidence。
+- 用户要求代码确认过关之后，再更新设计文档和开发文档代码追踪块。
+- 用户要求先将当前工作区收束，整理所有未提交改动，不做后续开发；本轮收束使用两个只读 multiagent explorer 分别审查源码/测试/版本一致性和文档/审计/report 一致性。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.32`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `write_pyramid_ome_tiff_streaming_from_tile_sources()` 在正常完整 tile iterator 写出路径新增 `<target>.progress.json` progress sidecar。
+- progress sidecar 记录 planned level/tile 数、已 yield 给 `tifffile` 的 tile 数、当前 level/tile grid 位置、last tile、最后更新时间、失败原因和 `progress_semantics=tiles_yielded_to_tifffile_iterator_not_ome_internal_resume`。
+- started/completed/failed transaction manifest 新增 `progress_manifest_path` 和 `progress_summary`；失败 transaction 会保留失败前 writer 进度和 failure reason。
+- `generation_output_diagnostics.json` 的 `writer_summary.progress_manifest_path` / `writer_summary.progress_summary` 透传 writer 进度摘要，schema validator 对 progress summary 状态、计数字段和 `resume_capable=false` 做契约校验。
+- README、需求记录、审计验收清单、审计决策、实施计划、开发附录和研究设计同步到 `v0.72.32`；继续明确本轮不是同一 OME-TIFF 文件内部 partial tile 续写，也不是内置 production diffusion / ControlNet / DiT 模型。
+- 收束阶段修正 README 中关于 `torch-diffusion-smoke --wsi-writer tile-streaming` 的过时说明，并同步补充全量单元测试与 CLI 版本验证记录。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/schemas.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_generation_runner.py`
+- `tests/test_schemas.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `.agent/reports/p3-backend-compatibility-contract-20260525.md`
+- `.agent/reports/p3-inference-architecture-condition-contract-20260525.md`
+- `.agent/reports/p3-production-training-contract-20260525.md`
+- `.agent/reports/p3-torch-diffusion-smoke-inference-planning-20260525.md`
+- `.agent/reports/p3-training-objective-contract-20260525.md`
+- `.agent/reports/p4-generation-output-diagnostics-contract-20260525.md`
+- `.agent/reports/p4-mask-image-tissue-alignment-qc-20260525.md`
+- `.agent/reports/p5-prior-production-readiness-contract-20260525.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_records_transaction_manifest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_failed_transaction_preserves_target -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现报错 `KeyError: 'progress_manifest_path'`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_records_transaction_manifest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_failed_transaction_preserves_target -v`
+  - 结果：通过，`Ran 2 tests in 0.005s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/outputs/ome_tiff.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/schemas.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 84 tests in 3.295s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，输出 `generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无输出。
+- 收束审计补充验证：`conda run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 300 tests in 28.868s OK`。
+- 收束审计补充验证：`conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli --version`
+  - 结果：输出 `v0.72.32`。
+- 收束审计补充：两个只读 multiagent explorer 完成审查，结论均要求把未跟踪的 `src/he_wsi_generator/generation/production_streaming.py` 和 8 个被 changelog/audit 引用的 `.agent/reports/*.md` 纳入同一收束提交。
+- 本轮暂未执行 editable install、包元数据检查或真实 SVS 全链路复跑；原因是本轮按 OME streaming writer progress evidence 代码里程碑做集中验证，未进入发布打包或真实数据全链路验收。
+
+## v0.72.31 - 2026-05-25
+
+### 用户需求
+
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮确认 conda/mamba 同名环境指向同一个 prefix，因此不删除共享环境目录，后续开发和验证统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求继续开发前再次查看 `AGENTS.md`，并继续按里程碑集中验证节奏推进，不新增低价值 helper 级测试。
+- 用户要求减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 生成；本轮聚焦 `production-tile-stream` 外部 backend 执行证据合同。
+- 用户要求代码确认过关之后，再更新设计文档和开发文档代码追踪块。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.31`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `materialize_production_tile_sources()` 在每个新完成 production tile record 中写入 `request_evidence`、`backend_execution` 和 `output_evidence`。
+- `request_evidence` 记录 per-tile request JSON 的相对路径、大小和 SHA-256；`backend_execution` 记录外部命令 command、cwd、return code、timeout、duration 和有限 stdout/stderr preview；`output_evidence` 记录 RGB tile 和 level0 mask tile 的相对路径、大小和 SHA-256。
+- `production_tile_source_manifest.json` 顶层新增 `backend_execution_summary`，统计 completed tile 中 request / execution / output evidence 的覆盖情况。
+- `generation_output_diagnostics.json` 的 `tile_source.backend_execution_summary` 透传上述覆盖统计，`validate_generation_output_diagnostics()` 接受并校验该摘要字段。
+- README、需求记录、审计验收清单、审计决策、实施计划、开发附录和研究设计同步到 `v0.72.31`；继续明确本轮不是内置 production latent diffusion / ControlNet / DiT 模型，也不是同一 OME-TIFF 文件内部 partial tile 续写。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/production_streaming.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/schemas.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda env list`
+  - 结果：`MultiCenterWSIGenerator` 指向 `/home/muhengliao/miniconda3/envs/MultiCenterWSIGenerator`。
+- `mamba env list`
+  - 结果：`MultiCenterWSIGenerator` 指向 `/home/muhengliao/miniconda3/envs/MultiCenterWSIGenerator`，与 conda 同 prefix；本轮未删除共享环境目录。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现报错 `KeyError: 'backend_execution_summary'`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles -v`
+  - 结果：通过，`Ran 1 test in 0.448s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/generation/production_streaming.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/schemas.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 47 tests in 3.578s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，输出 `generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无输出。
+- 本轮暂未执行全量单元测试、editable install、CLI 版本、包元数据检查或真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 production tile backend execution evidence 及其直接相关 generation/schema/CLI/version 闭环，真实 SVS 复跑和发布包检查属于更大范围验收。
+
+## v0.72.30 - 2026-05-25
+
+### 用户需求
+
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮确认 conda/mamba 同名环境指向同一个 prefix，因此不删除共享环境目录，后续开发和验证统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求继续开发前再次查看 `AGENTS.md`，并继续按里程碑集中验证节奏推进，不新增低价值 helper 级测试。
+- 用户要求减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 输出可靠性；本轮聚焦 OME streaming writer 写入前磁盘空间 preflight。
+- 用户要求代码确认过关之后，再更新设计文档和开发文档代码追踪块。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.30`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `write_pyramid_ome_tiff_streaming_from_tile_sources()` 在打开 `TiffWriter` 和读取 tile iterator 前新增 `disk_space_preflight`，用 raw pyramid byte estimate 加同等安全余量检查目标文件系统可用空间。
+- 空间不足时显式抛出 `OutputWriteError`，写出 failed transaction，并避免开始 tile iterator 写入。
+- completed target reuse 或 started temporary recovery 路径不重复做新写入空间 preflight；正常完整写出路径会在 transaction、streaming write report、streaming contract 和 diagnostics `writer_summary.disk_space_preflight` 中保留 preflight 摘要。
+- `validate_generation_output_diagnostics()` 接受并校验 `writer_summary.disk_space_preflight`，要求 status、target directory 和非负字节字段符合契约。
+- README、需求记录、审计验收清单、审计决策、实施计划、开发附录和研究设计同步到 `v0.72.30`；继续明确本轮不是精确 TIFF 体积预测、不是同一 OME-TIFF 文件内部 partial tile 续写，也不是内置 production diffusion/ControlNet/DiT 模型。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/schemas.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_generation_runner.py`
+- `tests/test_schemas.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda env list`
+  - 结果：`MultiCenterWSIGenerator` 指向 `/home/muhengliao/miniconda3/envs/MultiCenterWSIGenerator`。
+- `mamba env list`
+  - 结果：`MultiCenterWSIGenerator` 指向 `/home/muhengliao/miniconda3/envs/MultiCenterWSIGenerator`，与 conda 同 prefix；本轮未删除共享环境目录。
+- `conda run -n MultiCenterWSIGenerator python --version`
+  - 结果：`Python 3.11.15`。
+- `conda run -n MultiCenterWSIGenerator python -c "import sys; print(sys.executable)"`
+  - 结果：`/home/muhengliao/miniconda3/envs/MultiCenterWSIGenerator/bin/python`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现报错 `AttributeError: module ... does not have the attribute '_streaming_disk_space_report'`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space -v`
+  - 结果：通过，`Ran 1 test in 0.002s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space tests.test_generation_runner.GenerationRunnerTests.test_cli_runs_smoke_generation_with_tile_streaming_writer tests.test_schemas.SchemaValidationTests.test_generation_output_diagnostics_accepts_required_contract -v`
+  - 结果：通过，`Ran 3 tests in 0.211s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 84 tests in 3.753s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/outputs/ome_tiff.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/schemas.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，输出 `generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无输出。
+- 本轮暂未执行全量单元测试、editable install、CLI 版本、包元数据检查或真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 P4 OME streaming disk-space preflight 及其直接相关 outputs/generation/schema/CLI/version 闭环，真实 SVS 复跑和发布包检查属于更大范围验收。
+
+## v0.72.29 - 2026-05-25
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续完成设计文档与开发附录覆盖的任务，但不要启用 multiagent；本轮由主会话继续推进 P4 writer 可靠性。
+- 用户要求减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 输出可靠性；本轮聚焦 OME streaming writer 对已发布目标文件的验证复用。
+- 用户要求每完成开发节点里程碑后集中测试主功能，不增加额外 helper 级测试；代码确认过关后再更新设计文档和开发文档代码追踪块。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.29`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `write_pyramid_ome_tiff_streaming_from_tile_sources()` 新增 completed transaction 目标复用：当既有 transaction 为 `completed`，且 target path、tile source manifest path 与当前 plan 匹配时，先验证已发布目标 OME-TIFF 可读且 pyramid shapes 一致。
+- 校验通过后跳过 tile iterator 重写，复用现有目标 OME-TIFF，并在 transaction 中记录 `recovery_action=validated_existing_target_ome_tiff`。
+- streaming writer report 新增 `reused_existing_target`，diagnostics `writer_summary` 同步记录 `reused_existing_target` 与 `recovered_from_temporary`，用于区分“已发布目标复用”和“started 临时文件发布恢复”。
+- README、需求记录、审计验收清单、审计决策、实施计划、开发附录和研究设计同步到 `v0.72.29`；继续明确本轮不是同一 OME-TIFF 文件内部 partial tile 续写，也不是内置 production diffusion/ControlNet/DiT 模型。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/schemas.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_reuses_completed_target_ome -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现触发 `AssertionError: should reuse completed target OME-TIFF`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_reuses_completed_target_ome tests.test_generation_runner.GenerationRunnerTests.test_cli_runs_smoke_generation_with_tile_streaming_writer -v`
+  - 结果：通过，`Ran 2 tests in 0.150s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 83 tests in 3.420s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/outputs/ome_tiff.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/schemas.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，输出 `generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无输出。
+- 本轮暂未执行全量单元测试、editable install、CLI 版本、包元数据检查或真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 P4 completed OME target validation reuse 及其直接相关 outputs/generation/schema/CLI/version 闭环，真实 SVS 复跑和发布包检查属于更大范围验收。
+
+## v0.72.28 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续开发前再次查看 `AGENTS.md`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮确认 conda/mamba 同名环境指向同一 prefix，因此未删除共享环境目录。
+- 用户要求减少 smoke test 级别代码开发，直接推进真正 gigabyte 级 WSI 生成相关能力；本轮聚焦 `production-tile-stream` 的 failed tile 显式重试恢复。
+- 用户要求每完成开发节点里程碑后集中测试主功能，不增加额外 helper 级测试；代码确认过关后再更新设计文档和开发文档代码追踪块。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.28`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `run_production_tile_stream_generation()` 与 `materialize_production_tile_sources()` 新增 `retry_failed_tiles` 显式参数；默认仍拒绝包含 failed tile 的 production tile source resume manifest。
+- `_load_resumable_tile_source_manifest()` 在 `retry_failed_tiles=True` 时先校验 manifest 顶层字段和每条 tile 的不可变字段（含 `tile_request_path`），再把 failed record 重置为 pending 重新调用外部 backend。
+- 重试完成后的 tile record 保留 `retry_from_failed`、`previous_status`、`previous_error_message` 和 `retry_count` 审计字段，并继续维护 attempt count、completed/pending/failed 计数和 resume index。
+- CLI `run-generation` 新增 production 专用 `--retry-failed-tiles`；smoke-cascade 和 torch-diffusion-smoke 使用该参数会显式报错，避免把 production tile source retry 与 smoke resume 或 torch sampling 混淆。
+- README、需求记录、审计验收清单、审计决策、实施计划、开发附录和研究设计同步到 `v0.72.28`；继续明确本轮只覆盖 OME 发布前的 production tile source 物化恢复，不是内置 production diffusion/ControlNet/DiT 模型，也不是同一 OME-TIFF 文件内部 partial tile 续写。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/production_streaming.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_production_tile_stream_generation_retries_failed_tile_source_manifest_when_requested -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现报错 `TypeError: run_production_tile_stream_generation() got an unexpected keyword argument 'retry_failed_tiles'`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_production_tile_stream_generation_retries_failed_tile_source_manifest_when_requested -v`
+  - 结果：通过，`Ran 1 test in 0.549s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 47 tests in 3.778s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/generation/production_streaming.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/cli.py src/he_wsi_generator/cli_commands.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无输出。
+- 本轮暂未执行全量单元测试、editable install、CLI 版本、包元数据检查或真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 P4 production failed tile retry/resume 及其直接相关 generation/schema/CLI/version 闭环，真实 SVS 复跑和发布包检查属于更大范围验收。
+
+## v0.72.27 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续开发前再次查看 `AGENTS.md`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发。
+- 用户要求不要删除共享 prefix 的 `MultiCenterWSIGenerator` 环境；本轮再次确认 `mamba env list` 与 `conda env list` 指向同一目录，因此保留环境并统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求减少 smoke test 级别代码开发，直接推进真正 gigabyte 级 WSI 生成相关能力；本轮聚焦 `production-tile-stream` 外部 backend 的 per-tile request manifest 输入合同。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.27`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `production-tile-stream` 的 `production_tile_source_manifest.json` 新增顶层 `request_manifest_type="production_tile_request_v1"`，每条 tile record 新增稳定 `tile_request_path`。
+- 外部 tile backend 执行前写出 `production_tile_requests/level-*-tile-*.request.json`，记录 generated id、random seed、condition packet path、tile 坐标/shape/write region、RGB/mask 输出路径、prior、checkpoint 和 backend 摘要。
+- `external_tile_generator_v1` 命令模板新增 `{tile_request_path}` 占位符，允许真实外部 backend 通过单个 request JSON 消费完整 tile 请求，而不是只依赖零散命令行占位符。
+- production tile source resume 校验把 `request_manifest_type` 与每条 `tile_request_path` 纳入不可变合同，避免恢复时混用旧 request。
+- README、需求记录、审计验收清单、审计决策、实施计划、开发附录和研究设计同步到 `v0.72.27`；继续明确本轮不是内置 production diffusion/ControlNet/DiT 模型，也不是同一 OME-TIFF 文件内部 partial tile 续写。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/production_streaming.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_production_tile_stream_generation_writes_tile_request_manifests -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现报错 `external tile backend command has unknown placeholder: 'tile_request_path'`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_production_tile_stream_generation_writes_tile_request_manifests -v`
+  - 结果：通过，`Ran 1 test in 0.352s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 46 tests in 2.730s OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/generation/production_streaming.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过，无输出。
+- 本轮暂未执行全量单元测试、editable install、CLI 版本、包元数据检查或真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 P4 production tile request manifest contract 及其直接相关 generation/schema/CLI/version 闭环，真实 SVS 复跑和发布包检查属于更大范围验收。
+
+## v0.72.26 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续开发前再次查看 `AGENTS.md`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发。
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator`；本轮确认 mamba 与 conda 列出的该环境是同一个 prefix，因此未删除要保留的 conda 环境，后续验证统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求减少 smoke test 级别开发，继续推进真正 gigabyte 级 WSI 生成相关能力；本轮聚焦 P4 OME streaming writer 在发布阶段的恢复能力。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.26`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `write_pyramid_ome_tiff_streaming_from_tile_sources()` 在新写入前读取既有 `<target>.transaction.json`，识别上次 `started` transaction 留下的完整临时 OME-TIFF。
+- 新增 started transaction temporary publish recovery：当 transaction 目标路径、tile source manifest 路径和临时 OME-TIFF pyramid shapes 均与当前 plan 匹配时，跳过 tile iterator 重写，直接原子发布该临时文件。
+- completed transaction 新增 `recovery_action="published_existing_temporary_ome_tiff"`；返回报告新增 `streaming_write_report.recovered_from_temporary`，用于审计是否发生恢复发布。
+- 临时 OME-TIFF 不可读或 pyramid shape 不匹配时，writer 不接受该临时文件，而是清理后基于完整 tile source 重新写出。
+- README、需求记录、审计验收清单、审计决策、实施计划、开发附录和研究设计同步到 `v0.72.26`；明确本轮不是同一 OME-TIFF 文件内部 append/resume，`resume_capable=false` 继续保留。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/outputs/ome_tiff.py`
+- `tests/test_outputs_qc_archive.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_publishes_recovered_temporary_ome -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现会尝试重新读取 tile iterator。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_publishes_recovered_temporary_ome -v`
+  - 结果：通过，`Ran 1 test ... OK`
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 80 tests in 2.615s OK`
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/outputs/ome_tiff.py`
+  - 结果：通过，无输出
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮暂未执行全量单元测试、editable install、CLI 版本、包元数据检查或真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 P4 OME streaming temporary publish recovery 及其直接相关 writer/generation/schema/CLI/version 闭环，真实 SVS 复跑和发布包检查属于更大范围验收。
+
+## v0.72.25 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续开发前再次查看 `AGENTS.md`，并在 `conda` 环境 `MultiCenterWSIGenerator` 中开发。
+- 用户要求确认代码过关之后，再更新设计文档和开发文档的代码追踪块；当前生产 tile-stream 闭环已经实现，本轮补齐相关最小章节 trace。
+- 继续按“开发文档代码里程碑完成后集中验证”的节奏推进，不新增额外 helper 级测试。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.25`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 重新读取并更新 `AGENTS.md`，固化里程碑集中验证、减少 helper 级测试、以及功能实现/修改后维护设计与开发文档最小章节代码追踪块的约束。
+- 确认 `mamba env list` 与 `conda env list` 中的 `MultiCenterWSIGenerator` 指向同一个 prefix：`/home/muhengliao/miniconda3/envs/MultiCenterWSIGenerator`；因此未删除该目录，后续验证命令改用 `conda run -n MultiCenterWSIGenerator ...`。
+- 补齐开发附录 `4.5 输出契约`、`7.4 推理与 OME-TIFF 重建`、`10. 测试与验收` 的 Implementation Trace，记录 production tile-stream 真实代码路径、依赖链、测试和验证命令。
+- 补齐研究设计 `9.1 输出文件结构`、`9.2 必填 metadata 字段`、`9.3 成功标准与失败信号`、`10.1 QC 定位`、`10.4 QC 结果解释` 的 Relevant Code，记录 production tile-stream 输出、metadata、diagnostics、QC 与当前边界。
+- README、需求记录、审计验收清单、审计决策和实施计划同步到 `v0.72.25`；明确本轮是文档追踪块和审计基线同步，不新增内置 production diffusion 模型或 OME-TIFF 文件级中断续写。
+
+### 影响文件
+
+- `AGENTS.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `tests/test_annotations.py`
+- `tests/test_cli.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_generation_runner.py`
+- `tests/test_layout_mask_prior.py`
+- `tests/test_layout_mask_sampler.py`
+- `tests/test_models_generation.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_priors.py`
+- `tests/test_qc_reference.py`
+- `tests/test_qc_review.py`
+- `tests/test_schemas.py`
+- `tests/test_style_prior.py`
+- `tests/test_texture_prior.py`
+- `tests/test_torch_training.py`
+- `tests/test_training_batch.py`
+- `tests/test_training_index.py`
+- `tests/test_ui.py`
+- `tests/test_ui_workflow.py`
+- `tests/test_version.py`
+- `tests/test_wsi_io.py`
+- `tests/test_wsi_tissue_overview.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/DECISIONS.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/generation/production_streaming.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/cli.py src/he_wsi_generator/cli_commands.py src/he_wsi_generator/schemas.py`
+  - 结果：通过，无输出
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 45 tests in 2.458s OK`
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未执行全量单元测试、editable install、CLI 版本、包元数据检查或真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 production tile-stream 与追踪块同步相关主功能闭环，真实 SVS 复跑和发布包检查属于更大范围验收。
+
+## v0.72.24 - 2026-05-25
+
+### 用户需求
+
+- 用户要求减少 smoke test 级别代码开发，直接着手真正 gigabyte 级别 WSI 的生成开发。
+- 继续按“功能闭环完成后集中验证”的节奏推进；本轮只围绕 production tile-stream WSI 生成主功能补测试。
+- 设计文档与开发文档中的代码追踪块继续等所有开发里程碑结束后统一补充。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.24`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 新增 `src/he_wsi_generator/generation/production_streaming.py`，定义 `production-tile-stream` 外部 tile generator 合同、逐 tile 命令执行、可恢复 `production_tile_source_manifest.json`、GB 级未压缩字节估算、memmap mask 写出和 streaming QC。
+- `run-generation` 新增 `production-tile-stream` backend；只接受 production-ready checkpoint，checkpoint artifact 必须声明 `external_tile_generator_v1` 命令合同。
+- production tile-stream backend 按四层 pyramid tile grid 写出磁盘 `.npy` tile source 和 level0 mask tile，不构造整张 level0 canvas，再复用现有 tiled iterator writer 原子发布 OME-TIFF。
+- diagnostics schema 接受 `production-tile-stream`，metadata / generation run summary / diagnostics 会记录 writer、tile source、mask 和 QC 状态。
+- README、需求和审计文档同步记录当前边界：本轮实现外部 production tile backend 接入与磁盘级 WSI 生成执行合同，不实现内置 production diffusion 模型或 OME-TIFF 文件级中断续写。
+- 按当前 `AGENTS.md` 约束，本轮未更新设计文档和开发文档的章节级代码追踪块；待所有开发里程碑结束后统一补充。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/generation/production_streaming.py`
+- `tests/test_generation_runner.py`
+- `tests/test_version.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v`
+  - 结果：通过，`Ran 45 tests in 2.807s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+
+## v0.72.23 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4.5 production prior 与采样策略：让 texture prior 输出可审计 fitted embedding-cluster codebook、prototype `texture_token` 和 `morphology_latent`，并让 sampled texture policy / condition packet / generation summary 保留该条件对象。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.23`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `texture_prior.json` 新增 `texture_codebook`，记录 `fitted_embedding_cluster_codebook_v1`、token schema、morphology latent schema 和 `condition_outputs=["texture_token","morphology_latent"]`。
+- `texture_prototypes` 新增 `texture_token` 与标准化 `morphology_latent`，让每个 cluster prototype 同时携带离散 token 和 morphology latent 条件对象。
+- `sample_texture_policy_from_prior()` 新增 `texture_token` / `morphology_latent` 校验与输出，并写入 `texture_codebook_reference`。
+- `build_generation_condition_packet()` 会校验 sampled texture policy 的 `morphology_latent`，并把 token、latent 和 codebook reference 写入 `conditions.texture_token`。
+- smoke generation summary 与 torch smoke summary 继续保留 sampled texture policy 的 `morphology_latent`、`texture_token` 和 codebook reference。
+- README、需求和审计文档同步记录当前边界：本轮是 fitted embedding-cluster codebook / morphology latent contract，不是 trainable texture codebook、VQ-VAE 或 production morphology token sampler。
+- 按当前 `AGENTS.md` 约束，本轮未更新设计文档和开发文档的章节级代码追踪块；待所有开发里程碑结束后统一补充。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/priors/texture.py`
+- `src/he_wsi_generator/generation/conditioning.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/models/torch_training.py`
+- `tests/test_texture_prior.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_generation_runner.py`
+- `tests/test_torch_training.py`
+- `tests/test_version.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_texture_prior tests.test_generation_conditioning tests.test_generation_runner tests.test_torch_training tests.test_version -v`
+  - 结果：通过，`Ran 69 tests in 20.023s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过
+- `git diff --check`
+  - 结果：通过
+- 未执行全量单元测试和真实 SVS 全链路复跑；原因是本轮按里程碑测试节奏只验证 P4.5 texture prior / sampled policy / condition summary 主功能闭环，真实 SVS 复跑属于更大范围验收。
+
+## v0.72.22 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4.5 production prior 与采样策略：让 style prior 输出可审计 fitted style latent encoder 和 tile-level `style_latent`，而不是只保留 RGB 均值统计。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.22`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `build_style_prior_from_training_index()` 新增 `fitted_rgb_stats_pca_v1`，用 tile RGB mean/std 归一化特征拟合固定 3 维 style latent encoder。
+- `style_prior.json` 新增 `style_latent_encoder`，记录 feature schema、feature mean、PCA components、explained variance、condition outputs 和限制说明。
+- `tile_style_records` 新增 `style_latent`，让每个 tile-level style record 同时携带 RGB 均值和可被条件包引用的 latent。
+- `sample_style_policy_from_prior()` 新增 `style_latent` 校验与输出，并写入 `style_latent_encoder_reference`。
+- README、需求和审计文档同步记录当前边界：本轮是 fitted RGB-stat style latent，不是深度 trainable style encoder、VAE style latent、style transfer 模型或 production style conditioning backend。
+- 按当前 `AGENTS.md` 里程碑执行约束，设计文档和开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充；本轮未新增追踪块。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/priors/style.py`
+- `tests/test_style_prior.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_style_prior.StylePriorTests.test_build_style_prior_from_training_index_writes_rgb_statistics tests.test_style_prior.StylePriorTests.test_sample_style_policy_from_prior_writes_selected_style_artifact -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现缺少 `style_latent_encoder` 和 `style_latent`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_style_prior.StylePriorTests.test_build_style_prior_from_training_index_writes_rgb_statistics tests.test_style_prior.StylePriorTests.test_sample_style_policy_from_prior_writes_selected_style_artifact -v`
+  - 结果：通过，`Ran 2 tests in 0.137s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_style_prior tests.test_version -v`
+  - 结果：通过，`Ran 8 tests in 0.413s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮暂未执行真实 deep trainable style encoder 训练、VAE style latent、production style conditioning backend、真实 production 推理或真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.21 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P5 prior 边界：让 `prior_manifest.production_readiness.production_ready=true` 必须由 production prior component contract v1、condition outputs 和训练证据 artifact path/hash 对齐共同支撑。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.21`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `validate_prior_manifest()` 在 `production_ready=true` 时继续拒绝 statistical/proxy backend，并进一步要求 layout/style/texture component 声明 `contract_version="production_prior_component_v1"`。
+- production prior component contract 新增 `condition_outputs` 校验：layout/mask prior 需输出 `layout` / `mask`，style prior 需输出 `style_seed` / `style_latent`，texture prior 需输出 `texture_token` / `morphology_latent`。
+- production prior component contract 新增 `training_evidence` 校验，要求 `training_run_id` 非空，并要求 `artifact_path` / `artifact_sha256` 与 manifest 中对应 artifact 完全匹配。
+- README、需求和审计文档同步记录当前边界：本轮是 production prior component contract interface，不是 trainable layout/mask generator、trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler。
+- 按当前 `AGENTS.md` 里程碑执行约束，设计文档和开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充；本轮未新增追踪块。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/priors/artifacts.py`
+- `tests/test_priors.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_priors tests.test_version -v`
+  - 结果：通过，`Ran 14 tests in 0.090s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮暂未执行真实 production prior 训练、真实 production 推理或真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.20 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 本批次继续推进 P3 / M5 训练与生成骨架：让 `init-training-run` 在已有 production training dataset contract、training index JSONL 证据核对和 training objective/loss/QC mapping contract 之后写出可审计的 production training plan artifact。
+- 本轮维护相关设计文档和开发附录的章节级代码追踪块，明确当前仍是 plan-only，不是 production 训练 loop。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.20`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `create_training_run()` 新增 `training_plan.json` 写出，artifact 类型为 `production_training_plan`。
+- `training_plan.json` 记录 `prior_ready -> image_generator -> wsi_consistency` 三阶段、每阶段 objectives、条件输入、输出占位和 QC 映射。
+- `training_run.json` 和 skeleton `checkpoint_manifest.json` 新增 `training_plan_path` 引用，使 run / plan / checkpoint 形成可追踪闭环。
+- README、需求和审计文档同步记录当前边界：本轮是 production training plan artifact，不是真实 production latent diffusion / ControlNet / DiT 训练、production checkpoint 或 production sampler。
+- 设计文档 §7.1、§7.4、§7.5、§7.6 和开发附录 §7.1、§7.2 更新本轮真实 `Relevant Code` / `Implementation Trace`。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training.py`
+- `tests/test_models_generation.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation.ModelGenerationSkeletonTests.test_create_training_run_writes_manifest_and_untrained_checkpoint -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现缺少 `training_plan_path`，触发 `KeyError: 'training_plan_path'`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation.ModelGenerationSkeletonTests.test_create_training_run_writes_manifest_and_untrained_checkpoint -v`
+  - 结果：通过，`Ran 1 test in 0.002s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation.ModelGenerationSkeletonTests.test_create_training_run_writes_manifest_and_untrained_checkpoint tests.test_version -v`
+  - 结果：通过，`Ran 3 tests in 0.002s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation tests.test_version -v`
+  - 结果：通过，`Ran 36 tests in 0.100s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未执行真实 production diffusion 训练、真实 production 推理或真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.19 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 自动 QC：补充 stain / focus proxy，让 `qc.json` 能暴露近单色染色缺失和局部边缘对比缺失。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.19`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `build_qc_report()` 的 WSI 级 metrics 新增 `stain_color_separation_proxy`，用 RGB 通道平均分离度暴露近单色输出。
+- `build_qc_report()` 的 tile 级 metrics 新增 `focus_edge_density_proxy`，用局部边缘对比暴露无焦点/大面积平坦输出。
+- 新增主功能测试覆盖低 stain/focus proxy fail，并扩展已有 QC 输出质量测试，确认新增 metrics 被写入。
+- `AGENTS.md` 更新为最新里程碑执行约束：优先完成功能实现，里程碑闭环后集中验证主功能，不额外增加测试，节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 设计文档 §10.2 / §10.3 和开发附录 §8 更新本轮真实 `Relevant Code` / `Implementation Trace`。
+- README、需求和审计文档同步记录当前边界：本轮是轻量 stain/focus QC proxy，不是专家级 stain/focus 模型、production diffusion backend 或真实 production QC。
+
+### 影响文件
+
+- `AGENTS.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/qc/engine.py`
+- `tests/test_outputs_qc_archive.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_flags_low_stain_and_focus_proxy -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现只到 `overall_status=warning`，未把低 stain/focus proxy 暴露为 fail
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_flags_low_stain_and_focus_proxy -v`
+  - 结果：通过，`Ran 1 test in 0.006s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_reads_outputs_and_records_quality_metrics -v`
+  - 结果：通过，`Ran 1 test in 0.010s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_version -v`
+  - 结果：通过，`Ran 36 tests in 0.105s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.18 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户要求根据开发文档优先完成功能实现代码，每完成开发节点中的里程碑后再对主功能集中测试，不额外增加测试；节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 输出可靠性：让自动 QC 的 `seam_score_proxy` 使用 writer chunk/tile grid 的真实内部边界，而不是只检查图像中线，避免漏掉非中线 tile seam 突变。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.18`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `build_qc_report()` 将 `pyramid_report` 传入图像质量指标计算，使 seam proxy 能读取 writer 报告。
+- `_seam_score_proxy()` 优先读取 `pyramid_report.chunked_write_audit.levels[0].chunk_shape`、`pyramid_report.chunked_write_audit.chunk_shape` 或 `pyramid_report.streaming_write_report.tile_shape`，按 writer 的内部 chunk/tile 边界计算边界差异。
+- 缺少可用 writer grid 或图像没有内部 writer 边界时，保留旧的图像中线 seam proxy 作为轻量回退。
+- 新增主功能回归测试，覆盖非中线 writer tile 边界颜色突变会让 `seam_score_proxy` 进入 fail。
+- README、需求和审计文档同步记录当前边界：本轮是 writer tile-grid seam QC proxy，不是专家级 morphology seam detector、production diffusion backend 或可恢复 OME-TIFF 文件续写。
+- 按用户最新要求，本轮不更新设计文档和开发附录中的章节级代码追踪块。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/qc/engine.py`
+- `tests/test_outputs_qc_archive.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_uses_writer_tile_grid_for_seam_proxy -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现只检查中线，未能让非中线 writer tile seam 进入 fail
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_uses_writer_tile_grid_for_seam_proxy -v`
+  - 结果：通过，`Ran 1 test in 0.006s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_version -v`
+  - 结果：通过，`Ran 35 tests in 0.098s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.17 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户要求根据开发文档优先完成功能实现代码，每完成开发节点中的里程碑后再对主功能集中测试，不额外增加测试；节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 输出可靠性：让 `torch-diffusion-smoke` backend 也能选择 `--wsi-writer tile-streaming`，把已有 PyTorch smoke cascade sample previews 物化为四层磁盘 tile source，并复用受限 tiled iterator writer 写出 OME-TIFF。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.17`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `run_torch_diffusion_smoke_generation()` 新增 `wsi_writer` 参数，支持 `array` 与 `tile-streaming` 两种 writer。
+- 新增 `_write_torch_diffusion_smoke_tile_source_manifest()`，将四层 PyTorch smoke cascade sample preview 物化为 `tile_source_manifest.streaming.json` 与 `streaming_tiles/*.npy`。
+- `torch-diffusion-smoke` 的 `tile-streaming` 路径调用 `write_pyramid_ome_tiff_streaming_from_tile_sources()` 写出 OME-TIFF，并在 plan、metadata、generation run summary 和 diagnostics 中保留 writer 与 tile source 状态。
+- CLI `run-generation --backend torch-diffusion-smoke --wsi-writer tile-streaming` 不再被 writer gating 拒绝；`--resume-tile-manifest` 仍只支持 `smoke-cascade`。
+- README、需求和审计文档同步记录当前边界：本轮是 PyTorch smoke backend 到磁盘 tile source writer 的接入，不是 production diffusion backend 或可恢复 OME-TIFF 文件续写。
+- 按用户最新要求，本轮不更新设计文档和开发附录中的章节级代码追踪块。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_torch_training.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training.TorchSmokeTrainingTests.test_run_torch_diffusion_smoke_generation_uses_tile_streaming_writer -v`
+  - 结果：RED 失败符合预期，旧实现不接受 `wsi_writer` 参数
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training.TorchSmokeTrainingTests.test_run_torch_diffusion_smoke_generation_uses_tile_streaming_writer -v`
+  - 结果：通过，`Ran 1 test in 3.115s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training.TorchSmokeTrainingTests.test_run_torch_diffusion_smoke_generation_uses_tile_streaming_writer tests.test_generation_runner.GenerationRunnerTests.test_cli_requires_training_index_for_torch_diffusion_smoke_tile_streaming tests.test_version -v`
+  - 结果：通过，`Ran 4 tests in 2.566s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training tests.test_generation_runner tests.test_version -v`
+  - 结果：通过，`Ran 53 tests in 15.011s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.16 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户要求根据开发文档优先完成功能实现代码，每完成开发节点中的里程碑后再对主功能集中测试，不额外增加测试；节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 输出可靠性：让 smoke-cascade 显式 `--wsi-writer tile-streaming` 的四层 direct tile source 物化过程支持从已有 `tile_source_manifest.streaming.json` 继续完成 pending tile，避免重跑时覆盖已完成 streaming tile。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.16`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `_write_smoke_direct_multilevel_tile_source_manifest()` 现在先写入 pending 状态 manifest，再逐 tile 生成 `.npy` 并刷新 `completed_tile_count`、`pending_tile_count`、`failed_tile_count` 和 `generation_status`。
+- 新增 `_load_resumable_smoke_direct_tile_source_manifest()`，重跑时校验已有 streaming tile source manifest 与当前 generation plan 完全匹配，并复用已完成 tile。
+- 新增 `_ensure_smoke_direct_tile_source_file()` 和 `_refresh_smoke_direct_tile_source_manifest()`，确保 completed 记录对应文件存在、shape/dtype 匹配，并集中刷新 resume 状态。
+- 新增主功能测试覆盖 partial streaming tile source manifest resume：已完成的 streaming tile 不会被重写，pending tile 会补齐并让 manifest 进入 completed 状态。
+- README、需求和审计文档同步记录当前边界：本轮是 smoke direct tile source 物化恢复能力，不是可恢复 OME-TIFF 文件续写或 production diffusion backend。
+- 按用户最新要求，本轮不更新设计文档和开发附录中的章节级代码追踪块。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `PYTHONPATH=src python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_tile_streaming_resumes_partial_tile_source_manifest -v`
+  - 结果：RED 失败符合预期，旧实现覆盖了已完成 streaming tile
+- `PYTHONPATH=src python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_tile_streaming_resumes_partial_tile_source_manifest -v`
+  - 结果：通过，`Ran 1 test in 0.098s OK`
+- `PYTHONPATH=src python -m unittest tests.test_generation_runner -v`
+  - 结果：通过，`Ran 24 tests in 1.315s OK`
+- `PYTHONPATH=src python -m unittest tests.test_generation_runner tests.test_version -v`
+  - 结果：通过，`Ran 26 tests in 1.301s OK`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.15 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户要求根据开发文档优先完成功能实现代码，每完成开发节点中的里程碑后再对主功能集中测试，不额外增加测试；节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次选择 P4 / M6 输出可靠性的保守增量：让 smoke-cascade 显式 `--wsi-writer tile-streaming` 路径直接生成四层磁盘 tile source，避免为了 tiled iterator writer 先构造整张 blended canvas。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.15`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `run_smoke_generation(..., wsi_writer="tile-streaming")` 改为调用直接 tile source 生成路径，不再为 tile-streaming writer 调用 `blend_rgb_tiles()` 构造整张 level-0 canvas。
+- 新增 `_write_smoke_direct_multilevel_tile_source_manifest()`，按 pyramid level 和 TIFF tile grid 直接写出四层 `.npy` tile source 与 `tile_source_manifest.streaming.json`。
+- `_prepare_smoke_tile_outputs()` 增加受控的 `keep_tile_images` 参数，默认 `array` writer 仍保留旧行为；tile-streaming 路径只保留 tile manifest/path 契约，不把已完成 tile 图像堆在内存中。
+- README、需求和审计文档同步记录当前边界：本轮是 smoke tile-streaming writer 内存路径改进，不是 production diffusion backend、可恢复 OME-TIFF 续写或真实 gigapixel 生产推理。
+- 按用户最新要求，本轮不更新设计文档和开发附录中的章节级代码追踪块。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- `python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_tile_streaming_does_not_blend_full_canvas -v`
+  - 结果：RED 失败符合预期，旧实现触发 `tile-streaming must not build a full blended canvas`
+- `python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_tile_streaming_does_not_blend_full_canvas -v`
+  - 结果：通过，`Ran 1 test in 0.048s OK`
+- `python -m unittest tests.test_generation_runner -v`
+  - 结果：通过，`Ran 23 tests in 1.263s OK`
+- `PYTHONPATH=src python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `PYTHONPATH=src python -m unittest tests.test_generation_runner tests.test_version -v`
+  - 结果：通过，`Ran 25 tests in 1.246s OK`
+- `PYTHONPATH=src python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.14 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 本批次选择 P4 / M6 输出可靠性的保守增量：为 generation run 新增集中 `generation_output_diagnostics.json`，汇总 WSI、mask、metadata、QC、batch index、tile manifest、tile source manifest、writer report 和 QC 状态，避免用户只能从多个分散 JSON 中手工判断一次生成是否完整。
+- 用户要求代码与测试确认过关之后，再更新设计文档和开发文档中的章节级代码追踪块。
+
+### 已做改动
+
+- 版本号升级到 `v0.72.14`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `run_smoke_generation()` 与 `run_torch_diffusion_smoke_generation()` 写出 `generation_output_diagnostics.json`，并让 metadata output、`generation_run.json` 和函数返回值引用该 manifest。
+- diagnostics manifest 记录 `manifest_type=generation_output_diagnostics`、artifact 路径、pyramid 摘要、writer 摘要、tile execution 摘要、tile source 摘要和 QC 摘要。
+- smoke-cascade 路径汇总 `tile_manifest.json` 与 `tile_source_manifest.json` 的 completed/pending/failed 计数；tile-streaming 路径记录 transaction manifest path、`atomic_publish` 和 `resume_capable=false`；torch-diffusion-smoke 路径显式记录 `tile_execution.applicable=false`。
+- `validate_generation_output_diagnostics()` 与 `he-wsi-gen validate generation-output-diagnostics` / `output-diagnostics` 支持校验 diagnostics manifest 的关键字段和状态边界。
+- metadata schema 要求 `output.diagnostics_manifest_path`，UI output summary 同步保留该路径。
+- README、`docs/audit/`、设计文档和开发附录同步记录当前能力边界：本轮是 output diagnostics manifest contract，不是 production backend 磁盘级逐 tile 生成或可恢复 OME-TIFF 续写。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/schemas.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/ui/controller.py`
+- `tests/test_generation_runner.py`
+- `tests/test_schemas.py`
+- `tests/test_cli.py`
+- `tests/test_torch_training.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_qc_review.py`
+- `tests/test_ui.py`
+- `tests/test_ui_workflow.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `.agent/reports/p4-generation-output-diagnostics-contract-20260525.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_writes_complete_output_object -v`
+  - 结果：通过，`Ran 1 test in 0.066s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_schemas.SchemaValidationTests.test_generation_output_diagnostics_accepts_required_contract tests.test_schemas.SchemaValidationTests.test_generation_output_diagnostics_rejects_invalid_status -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_cli.CliValidationTests.test_cli_validates_generation_output_diagnostics_file -v`
+  - 结果：通过，`Ran 1 test in 0.049s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_cli_runs_smoke_generation_with_tile_streaming_writer -v`
+  - 结果：通过，`Ran 1 test in 0.147s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_schemas tests.test_cli tests.test_generation_runner -v`
+  - 结果：通过，`Ran 40 tests in 1.706s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_qc_review tests.test_ui_workflow tests.test_ui -v`
+  - 结果：通过，`Ran 80 tests in 0.559s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training -v`
+  - 结果：通过，`Ran 26 tests in 19.133s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 287 tests in 22.283s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable wheel `multi_center_wsi_generator-0.72.14-0.editable-py3-none-any.whl` 构建并安装，卸载旧 `0.72.13` 后安装 `0.72.14`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.14`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/constants ... PY`
+  - 结果：包元数据 `0.72.14`，`PROJECT_VERSION=v0.72.14`，`PACKAGE_VERSION=0.72.14`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.13 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/`、设计文档和开发附录中的未完成项推进开发；本轮不启动 multiagent。
+- 本批次选择 `AC-MISS-04` / P3 production 级生成模型缺口的保守增量：将现有 PyTorch diffusion smoke 训练产物接入统一 generation planning 的 inference artifact 契约，避免训练出的 checkpoint 只能被 sampler 私有消费而不能进入上层推理规划。
+- 用户最新要求：整个项目开发完成之后，再统一补充或更新设计文档和开发文档中的代码追踪块；本轮不提前更新 `Relevant Code` / `Implementation Trace`。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.13`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/models/torch_training_contracts.py` 让 `diffusion_checkpoint_manifest()` 写入 `usable_for_inference=true` 和 `inference_contract`，并限定 `compatible_generation_backends=["torch-diffusion-smoke"]`。
+- 新增 `_diffusion_smoke_inference_contract()`，记录 `production_ready=false`、非 production limitation、模型架构契约和七类条件输入契约：mask、style seed、texture token、coord、structure anchor、source condition、previous scale。
+- `src/he_wsi_generator/generation/planner.py` 支持通过 `generation_backend` 参数校验 checkpoint/backend compatibility，并在 generation plan 中保留 checkpoint inference contract 摘要。
+- `src/he_wsi_generator/generation/executor.py` 在 `torch-diffusion-smoke` run summary plan 中记录 checkpoint inference contract 摘要。
+- `tests/test_torch_training.py` 增加 smoke checkpoint 可进入 `torch-diffusion-smoke` planning 且拒绝 `smoke-cascade` 的闭环测试，并扩展 manifest/run summary contract 断言。
+- README、`docs/DEMANDS.MD` 和 `docs/audit/` 同步记录当前能力边界：本轮是 smoke checkpoint inference planning contract 接通，不是 production latent diffusion / ControlNet / DiT 训练或真实 production 推理 backend。
+- 按用户最新要求，设计文档和开发附录的代码追踪块等整个项目开发完成后再统一补充，本轮不更新。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/torch_training_contracts.py`
+- `src/he_wsi_generator/generation/planner.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_torch_training.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `.agent/reports/p3-torch-diffusion-smoke-inference-planning-20260525.md`
+
+### 验证结果
+
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training.TorchSmokeTrainingTests.test_run_torch_diffusion_smoke_generation_writes_archived_sample tests.test_torch_training.TorchSmokeTrainingTests.test_torch_diffusion_smoke_checkpoint_can_plan_torch_generation_backend_only tests.test_torch_training.TorchSmokeTrainingTests.test_train_torch_diffusion_smoke_model_writes_noise_prediction_manifest -v`
+  - 结果：通过，`Ran 3 tests in 2.084s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_torch_training -v`
+  - 结果：通过，`Ran 26 tests in 11.825s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation tests.test_generation_runner tests.test_version -v`
+  - 结果：通过，`Ran 59 tests in 1.485s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 284 tests in 14.265s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable wheel `multi_center_wsi_generator-0.72.13-0.editable-py3-none-any.whl` 构建并安装，卸载旧 `0.72.12` 后安装 `0.72.13`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.13`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/constants ... PY`
+  - 结果：包元数据 `0.72.13`，`PROJECT_VERSION=v0.72.13`，`PACKAGE_VERSION=0.72.13`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.12 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/`、设计文档和开发附录中的未完成项推进开发；本轮不启动 multiagent。
+- 本批次选择 `AC-MISS-05` / P5 prior 的保守增量：为 prior manifest 增加 production readiness contract gate，避免统计型 layout/style/texture prior 被误标记为 production-ready trainable prior。
+- 用户最新要求：整个项目开发完成之后，再统一补充或更新设计文档和开发文档中的代码追踪块；本轮不提前更新 trace 内容。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.12`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/priors/artifacts.py` 在 `build_prior_manifest_from_artifacts()` 输出中新增 `production_readiness` 摘要，明确当前统计型 layout/style/texture prior 均为非 production-ready proxy。
+- `validate_prior_manifest()` 新增 production readiness contract gate：`production_ready=true` 时必须声明 layout/style/texture component contract，且不能使用 statistical/proxy backend 或仍含非 production limitation。
+- `tests/test_priors.py` 增加 prior manifest production readiness 写入与 production-ready 缺 component contract 失败覆盖。
+- README、`docs/audit/` 同步记录当前能力边界：本轮是 prior manifest contract gate，不是 production trainable style encoder、texture codebook、VQ-VAE 或 morphology token sampler。
+- 按用户最新要求，设计文档和开发附录的代码追踪块等整个项目开发完成后再统一补充，本轮不更新。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/priors/artifacts.py`
+- `tests/test_priors.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `.agent/reports/p5-prior-production-readiness-contract-20260525.md`
+
+### 验证结果
+
+- RED evidence：新增 `test_build_prior_manifest_from_artifacts_writes_valid_manifest` 的 production readiness 断言后，旧实现返回 `KeyError: 'production_readiness'`。
+- RED evidence：新增 `test_prior_manifest_rejects_production_ready_without_component_contracts` 后，旧实现返回 `AssertionError: PriorArtifactError not raised`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_priors.PriorArtifactTests.test_build_prior_manifest_from_artifacts_writes_valid_manifest tests.test_priors.PriorArtifactTests.test_prior_manifest_rejects_production_ready_without_component_contracts -v`
+  - 结果：通过，`Ran 2 tests in 0.001s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_priors -v`
+  - 结果：通过，`Ran 10 tests in 0.235s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 283 tests in 22.987s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable wheel `multi_center_wsi_generator-0.72.12-0.editable-py3-none-any.whl` 构建并安装，卸载旧 `0.72.11` 后安装 `0.72.12`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.12`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/constants ... PY`
+  - 结果：包元数据 `0.72.12`，`PROJECT_VERSION=v0.72.12`，`PACKAGE_VERSION=0.72.12`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.11 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/`、设计文档和开发附录中的未完成项推进开发；本轮不启动 multiagent。
+- 本批次选择 P4 / Phase 6 自动 QC 的保守增量：为 QC report 增加 mask 与生成图像组织区域一致性代理指标，帮助暴露“mask 区域和图像内容不匹配”的失败类型。
+- 用户当时要求整个项目开发完成之后，再统一补充设计文档和开发文档中的代码追踪块；该要求在当前会话继续生效。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.11`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/qc/engine.py` 新增 `mask_image_tissue_alignment_proxy`：从生成 WSI 首层估计明亮背景/组织区域 proxy，并与 `.npy` mask 的 `mask > 0` 区域计算一致性分数。
+- 当 mask 组织区域与图像组织区域明显错位时，`levels.mask_region.status` 与 `overall_status` 会进入 `fail`；不可判定场景保留可解释 message，不把 proxy 表述为专家级语义 QC。
+- `tests/test_outputs_qc_archive.py` 增加 mask/image tissue alignment 的成功与失败路径覆盖，并扩展现有 QC metrics 断言。
+- README、`docs/audit/` 同步记录能力边界：该轮是 P4 QC proxy 增量，不是 production 模型、真实 segmentation 或专家级语义判读。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/qc/engine.py`
+- `tests/test_outputs_qc_archive.py`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `.agent/reports/p4-mask-image-tissue-alignment-qc-20260525.md`
+
+### 验证结果
+
+- RED evidence：新增 `test_build_qc_report_flags_mask_image_tissue_alignment_mismatch` 后，旧实现因缺少 `mask_image_tissue_alignment_proxy` 返回 `KeyError: 'mask_image_tissue_alignment_proxy'`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive.OutputQCArchiveTests.test_build_qc_report_flags_mask_image_tissue_alignment_mismatch -v`
+  - 结果：通过，`Ran 1 test in 0.007s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive -v`
+  - 结果：通过，`Ran 32 tests in 0.096s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 282 tests in 20.835s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable wheel `multi_center_wsi_generator-0.72.11-0.editable-py3-none-any.whl` 构建并安装，卸载旧 `0.72.10` 后安装 `0.72.11`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.11`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/constants ... PY`
+  - 结果：包元数据 `0.72.11`，`PROJECT_VERSION=v0.72.11`，`PACKAGE_VERSION=0.72.11`
+- `git diff --check`
+  - 结果：通过，无输出
+- 本轮未重新执行真实 SVS 全链路；真实 SVS smoke/proxy 复跑证据仍来自历史 v0.72.1 验证目录。
+
+## v0.72.10 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/`、设计文档和开发附录中的未完成项推进开发；本轮仍不启动 multiagent。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：为 `usable_for_inference=true` checkpoint 增加 inference architecture/condition contract gate，避免 generation planning 只凭 backend 名称判断 checkpoint 兼容性。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.10`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/models/training.py` 加固 `inference_contract`：`usable_for_inference=true` checkpoint 现在必须声明 `model_architecture_contract` 和 `condition_input_contract`。
+- `src/he_wsi_generator/generation/planner.py` 将 checkpoint architecture/condition contract 摘要写入 generation plan，并让每层 `condition_inputs` 显式包含 `source_condition` 和 `previous_scale`。
+- `tests/test_models_generation.py` 新增缺失模型架构契约、缺失必需条件输入的失败覆盖，并扩展成功路径断言；`tests/test_generation_runner.py` 同步 smoke fixture 的 inference contract 字段。
+- README、`docs/audit/` 同步记录当前能力边界：本轮只是 inference architecture/condition contract gate，不是 production 模型推理 backend。按用户最新要求，设计文档和开发附录的代码追踪块等整个项目开发完成后再统一补充，本轮不更新。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training.py`
+- `src/he_wsi_generator/generation/planner.py`
+- `tests/test_models_generation.py`
+- `tests/test_generation_runner.py`
+- `.agent/reports/p3-inference-architecture-condition-contract-20260525.md`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- RED evidence：新增 `test_generation_plan_rejects_checkpoint_without_model_architecture_contract` 后，旧实现返回 `AssertionError: ModelRunError not raised`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation.ModelGenerationSkeletonTests.test_generation_plan_rejects_checkpoint_without_model_architecture_contract tests.test_models_generation.ModelGenerationSkeletonTests.test_generation_plan_rejects_checkpoint_missing_required_condition_input tests.test_models_generation.ModelGenerationSkeletonTests.test_generation_plan_accepts_trained_checkpoint_manifest -v`
+  - 结果：通过，`Ran 3 tests in 0.002s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation tests.test_generation_runner -v`
+  - 结果：通过，`Ran 57 tests in 1.446s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 281 tests in 20.749s OK`
+- `git diff --check`
+  - 结果：通过，无输出
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable wheel `multi_center_wsi_generator-0.72.10-0.editable-py3-none-any.whl` 构建并安装，卸载旧 `0.72.9` 后安装 `0.72.10`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.10`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/constants ... PY`
+  - 结果：包元数据 `0.72.10`，`PROJECT_VERSION=v0.72.10`，`PACKAGE_VERSION=0.72.10`
+
+## v0.72.9 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`；本轮仍不启动 multiagent。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：为 `usable_for_inference=true` checkpoint 增加 generation backend compatibility contract gate，避免 checkpoint 只凭泛化 inference contract 被错误 backend 消费。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.9`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/models/training.py` 加固 `inference_contract`：`usable_for_inference=true` checkpoint 现在必须声明非空 `compatible_generation_backends` 字符串列表。
+- `src/he_wsi_generator/generation/planner.py` 新增 generation backend compatibility gate：`create_generation_plan()` 默认按 `smoke-cascade` 校验 checkpoint 是否允许当前 backend 消费，并把 `generation_backend` 与 `checkpoint_inference_contract` 摘要写入 generation plan。
+- `tests/test_models_generation.py` 新增缺失 `compatible_generation_backends` 的失败覆盖，并更新可推理 checkpoint fixture；`tests/test_generation_runner.py` 同步为 smoke checkpoint fixture 声明 `compatible_generation_backends=["smoke-cascade"]`。
+- README、`docs/audit/`、设计文档和开发附录同步记录当前能力边界：本轮只是 checkpoint/backend compatibility contract gate，不是 production 模型推理 backend。
+
+### 影响文件
+
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training.py`
+- `src/he_wsi_generator/generation/planner.py`
+- `tests/test_models_generation.py`
+- `tests/test_generation_runner.py`
+- `.agent/reports/p3-backend-compatibility-contract-20260525.md`
+- 版本断言更新涉及 `tests/*.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+
+### 验证结果
+
+- RED evidence：新增 `test_generation_plan_rejects_checkpoint_without_compatible_generation_backend` 后，旧实现返回 `AssertionError: ModelRunError not raised`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation tests.test_generation_runner -v`
+  - 结果：通过，`Ran 55 tests in 1.516s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 279 tests in 17.022s OK`
+- `git diff --check`
+  - 结果：通过，无 whitespace error 输出
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.9`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.9`
+- 包元数据检查：
+  - `metadata.version('multi-center-wsi-generator') = 0.72.9`
+  - `PROJECT_VERSION = v0.72.9`
+  - `PACKAGE_VERSION = 0.72.9`
+
+## v0.72.8 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`；本轮仍不启动 multiagent。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：为 `init-training-run` 增加训练目标 / loss / QC 映射契约 gate，覆盖设计文档 `7.5 训练约束` 和 `7.6 训练约束与自动 QC 的对应关系`。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.8`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/models/training.py` 新增 `training_objective_contract` 校验，要求声明五类训练约束：`diffusion_generation`、`semantic_mask_consistency`、`cross_scale_consistency`、`tile_seam_consistency` 和 `slide_style_consistency`。
+- `training_objective_contract` 现在必须声明非负 `loss_weights`、`image_generator` / `wsi_consistency` 阶段目标映射，以及五类训练约束到 QC 指标的映射；缺失或不一致会显式抛出 `ModelRunError`。
+- `create_training_run()` 现在把通过校验的 `training_objective_contract` 写入 `training_run.json`，并在 skeleton checkpoint manifest 中写入 `training_objective_contract_summary`；checkpoint 仍保持 `status=not_trained` 与 `usable_for_inference=false`。
+- `tests/test_models_generation.py` 新增训练目标契约覆盖：缺失 contract、缺失 loss weight、缺失阶段映射和 QC 映射不完整；成功路径断言 run/checkpoint 写入训练目标契约摘要。
+- README、`docs/audit/`、设计文档和开发附录同步记录当前能力边界：本轮只是 training objective/loss/QC mapping contract gate，不是 production 模型训练 loop、真实 production checkpoint 或 production inference backend。
+
+### 影响文件
+
+- `README.md`
+- `.agent/reports/p3-training-objective-contract-20260525.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training.py`
+- `tests/test_annotations.py`
+- `tests/test_cli.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_generation_runner.py`
+- `tests/test_layout_mask_prior.py`
+- `tests/test_layout_mask_sampler.py`
+- `tests/test_models_generation.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_priors.py`
+- `tests/test_qc_reference.py`
+- `tests/test_qc_review.py`
+- `tests/test_schemas.py`
+- `tests/test_style_prior.py`
+- `tests/test_texture_prior.py`
+- `tests/test_torch_training.py`
+- `tests/test_training_batch.py`
+- `tests/test_training_index.py`
+- `tests/test_version.py`
+- `tests/test_wsi_io.py`
+- `tests/test_wsi_tissue_overview.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+
+### 验证结果
+
+- RED evidence：新增 `test_create_training_run_rejects_missing_training_objective_contract` 后，旧实现返回 `AssertionError: ModelRunError not raised`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation.ModelGenerationSkeletonTests.test_create_training_run_rejects_missing_training_objective_contract -v`
+  - 结果：通过，`Ran 1 test in 0.001s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation -v`
+  - 结果：通过，`Ran 30 tests in 0.100s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 277 tests in 21.053s OK`
+- `git diff --check`
+  - 结果：通过，无 whitespace error 输出
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.8`
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.8`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata.version(...) ... PY`
+  - 结果：包元数据 `0.72.8`，`PROJECT_VERSION` 为 `v0.72.8`，`PACKAGE_VERSION` 为 `0.72.8`
+
+## v0.72.7 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：在 v0.72.6 的 production training dataset contract gate 基础上，要求 `init-training-run` 读取并核对实际 `training_index_path` JSONL，避免只靠手写 `dataset_contract` 汇总字段绕过训练数据覆盖检查。
+- 用户补充测试节奏：按“功能闭环完成后集中验证”，避免为每个内部 helper 追加大量细碎测试；最终回复需说明本次闭环、已执行测试和未执行测试原因。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.7`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/models/training.py` 为 `dataset_contract` 增加实际 training index JSONL 证据核对：文件必须存在、非空、逐行 JSON object，record `schema_version` 必须匹配当前版本。
+- `create_training_run()` 现在会核对 `dataset_contract.sample_count`、`records_by_split`、`records_by_level` 是否与实际 training index record 数、split 计数和 cascade level 计数完全一致。
+- training index record 现在必须提供 tile 坐标、6 类 mask class mapping 和 conditioning 字段证据；缺少 `structure_anchor_policy`、`style_seed_source`、`texture_token_source` 或 mask mapping 不覆盖 6 类时显式抛出 `ModelRunError`。
+- `src/he_wsi_generator/models/training_index.py` 生成的 training index record 现在写入 `conditioning.texture_token_source`，保证项目自身 `build-training-index` 输出能通过 v0.72.7 的 evidence gate。
+- `tests/test_models_generation.py` 新增 actual training index mismatch 覆盖：sample_count mismatch、split mismatch、condition evidence 缺失和 mask mapping mismatch；成功路径改为写入最小真实 training index fixture。
+- `tests/test_training_index.py` 新增断言，验证 `build_training_index()` 输出包含 `texture_token_source`。
+- README、`docs/audit/`、设计文档和开发附录同步记录当前能力边界：本轮只是 training index evidence contract gate，不是 production 模型训练 loop、真实 production checkpoint 或 production inference backend。
+- `AGENTS.md`、`docs/DEMANDS.MD` 和 README 同步记录“功能闭环完成后集中验证”的测试节奏。
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 更新 `7.4 三阶段训练协议`、`7.4.1 训练样本构造` 和 `Phase 4：三阶段生成模型训练` 的 `Relevant Code`。
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 更新 `7.2 训练阶段` 的 `Implementation Trace`。
+
+### 影响文件
+
+- `.agent/reports/p3-production-training-contract-20260525.md`
+- `README.md`
+- `AGENTS.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training.py`
+- `src/he_wsi_generator/models/training_index.py`
+- `tests/test_annotations.py`
+- `tests/test_cli.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_generation_runner.py`
+- `tests/test_layout_mask_prior.py`
+- `tests/test_layout_mask_sampler.py`
+- `tests/test_models_generation.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_priors.py`
+- `tests/test_qc_reference.py`
+- `tests/test_qc_review.py`
+- `tests/test_schemas.py`
+- `tests/test_style_prior.py`
+- `tests/test_texture_prior.py`
+- `tests/test_torch_training.py`
+- `tests/test_training_batch.py`
+- `tests/test_training_index.py`
+- `tests/test_version.py`
+- `tests/test_wsi_io.py`
+- `tests/test_wsi_tissue_overview.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+
+### 验证结果
+
+- RED evidence：新增 `test_create_training_run_rejects_dataset_contract_sample_count_mismatch_with_index` 后，旧实现返回 `AssertionError: ModelRunError not raised`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation -v`
+  - 结果：通过，`Ran 26 tests in 0.210s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_training_index -v`
+  - 结果：通过，`Ran 3 tests in 0.042s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 273 tests in 20.181s OK`
+- `git diff --check`
+  - 结果：通过，无 whitespace error
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.7`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.7`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/version check ... PY`
+  - 结果：包元数据 `0.72.7`，`PROJECT_VERSION` 为 `v0.72.7`，`PACKAGE_VERSION` 为 `0.72.7`
+
+## v0.72.6 - 2026-05-25
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次选择 `AC-MISS-04` / P3 的保守契约增量：不直接实现 production latent diffusion / ControlNet / DiT 训练本体，而是先让 `init-training-run` 的训练配置具备可审计的 production training dataset contract，避免没有真实数据规模、split、cascade 覆盖、条件输入和目标 backend 约束的配置进入 run manifest。
+
+### 已做改动
+
+- 版本号补丁升级到 `v0.72.6`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 创建 P3 worker 任务 `.agent/tasks/p3-production-training-contract-20260525.md`；worker 在 `.worktrees/p3-production-training-contract-20260525` 长时间停滞且没有实现 diff，主 orchestrator 接管实现与复审计，并写入 `.agent/reports/p3-production-training-contract-20260525.md`。
+- `src/he_wsi_generator/models/training.py` 为 `create_training_run()` 增加 `training_backend=latent_diffusion_unet` 和 `dataset_contract` 校验。
+- `dataset_contract` 现在必须声明并校验 training index path、production readiness、最小样本数、样本数、train split、四层 cascade 记录数、必需条件输入和 6 类 `integer_index` mask schema；非法、缺失或不一致字段会显式抛出 `ModelRunError`。
+- `training_run.json` 写入通过校验的 `training_backend` 与 `dataset_contract`；skeleton checkpoint manifest 写入 `training_backend`、`target_type` 和 `dataset_contract_summary`，但继续保持 `status=not_trained` 与 `usable_for_inference=false`。
+- `tests/test_models_generation.py` 新增缺失 dataset contract、缺 cascade level、样本数不足、mask schema mismatch、unsupported backend、training index mismatch、readiness 缺失、缺必需条件输入和缺 train split 的失败覆盖。
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 为 `7.4 三阶段训练协议`、`7.4.1 训练样本构造` 和 `Phase 4：三阶段生成模型训练` 补充 `Relevant Code`，标明当前为部分实现。
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 为 `7.2 训练阶段` 补充 `Implementation Trace`，记录 training dataset contract gate 的完整项目内依赖、调用链和验证命令。
+- README 与 `docs/audit/` 同步记录当前能力边界：本轮只是 production training dataset contract gate，不是 production 模型训练 loop、真实 production checkpoint 或 production inference backend。
+
+### 影响文件
+
+- `.agent/tasks/p3-production-training-contract-20260525.md`
+- `.agent/reports/p3-production-training-contract-20260525.md`
+- `README.md`
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training.py`
+- `tests/test_annotations.py`
+- `tests/test_cli.py`
+- `tests/test_generation_conditioning.py`
+- `tests/test_generation_runner.py`
+- `tests/test_layout_mask_prior.py`
+- `tests/test_layout_mask_sampler.py`
+- `tests/test_models_generation.py`
+- `tests/test_outputs_qc_archive.py`
+- `tests/test_priors.py`
+- `tests/test_qc_reference.py`
+- `tests/test_qc_review.py`
+- `tests/test_schemas.py`
+- `tests/test_style_prior.py`
+- `tests/test_texture_prior.py`
+- `tests/test_torch_training.py`
+- `tests/test_training_batch.py`
+- `tests/test_training_index.py`
+- `tests/test_version.py`
+- `tests/test_wsi_io.py`
+- `tests/test_wsi_tissue_overview.py`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+- `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md`
+- `docs/audit/ACCEPTANCE_CHECKLIST.md`
+- `docs/audit/IMPLEMENTATION_PLAN.md`
+- `docs/audit/DECISIONS.md`
+
+### 验证结果
+
+- RED evidence：新增 `test_create_training_run_rejects_missing_dataset_contract` 后，旧实现返回 `AssertionError: ModelRunError not raised`。
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation -v`
+  - 结果：通过，`Ran 21 tests in 0.092s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_version -v`
+  - 结果：通过，`Ran 2 tests in 0.000s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner -v`
+  - 结果：通过，`Ran 23 tests in 1.608s OK`
+- `mamba run -n MultiCenterWSIGenerator python -m unittest discover -s tests -v`
+  - 结果：通过，`Ran 268 tests in 16.985s OK`
+- `git diff --check`
+  - 结果：通过，无 whitespace error
+- `mamba run -n MultiCenterWSIGenerator python -m pip install -e .`
+  - 结果：通过，editable 安装升级到 `multi-center-wsi-generator 0.72.6`
+- `mamba run -n MultiCenterWSIGenerator he-wsi-gen --version`
+  - 结果：`v0.72.6`
+- `mamba run -n MultiCenterWSIGenerator python - <<'PY' ... metadata/version check ... PY`
+  - 结果：包元数据 `0.72.6`，`PROJECT_VERSION` 为 `v0.72.6`，`PACKAGE_VERSION` 为 `0.72.6`
+
 ## v0.72.5 - 2026-05-25
 
 ### 用户需求

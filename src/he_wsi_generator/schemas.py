@@ -56,6 +56,8 @@ def validate_file(kind: str, path: str | Path) -> dict[str, Any]:
         "metadata": validate_metadata,
         "qc": validate_qc_report,
         "qc-report": validate_qc_report,
+        "generation-output-diagnostics": validate_generation_output_diagnostics,
+        "output-diagnostics": validate_generation_output_diagnostics,
     }
     if kind == "qc-review":
         # Keep the QC review validator import local because qc.review imports this
@@ -196,6 +198,11 @@ def validate_metadata(data: dict[str, Any]) -> dict[str, Any]:
     _require_non_empty_str(output, "wsi_path", "output.wsi_path")
     _require_non_empty_str(output, "mask_path", "output.mask_path")
     _require_non_empty_str(output, "qc_json_path", "output.qc_json_path")
+    _require_non_empty_str(
+        output,
+        "diagnostics_manifest_path",
+        "output.diagnostics_manifest_path",
+    )
 
     source = _ensure_mapping(_require(metadata, "source", "source"), "source")
     generation = _ensure_mapping(_require(metadata, "generation", "generation"), "generation")
@@ -286,6 +293,219 @@ def validate_qc_report(data: dict[str, Any]) -> dict[str, Any]:
     return deepcopy(report)
 
 
+def validate_generation_output_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = _ensure_mapping(data, "generation_output_diagnostics")
+    _require_schema_version(diagnostics)
+    manifest_type = _require_non_empty_str(diagnostics, "manifest_type", "manifest_type")
+    if manifest_type != "generation_output_diagnostics":
+        raise ValidationError("manifest_type must be generation_output_diagnostics")
+    _require_non_empty_str(diagnostics, "generated_id", "generated_id")
+    backend = _require_non_empty_str(diagnostics, "backend", "backend")
+    if backend not in {"smoke-cascade", "torch-diffusion-smoke", "production-tile-stream"}:
+        raise ValidationError(
+            "backend must be smoke-cascade, torch-diffusion-smoke, or production-tile-stream"
+        )
+    status = _require_non_empty_str(diagnostics, "status", "status")
+    if status not in {"completed", "warning", "failed"}:
+        raise ValidationError("status must be completed, warning, or failed")
+    _require_non_empty_str(diagnostics, "created_at", "created_at")
+
+    artifacts = _ensure_mapping(_require(diagnostics, "artifacts", "artifacts"), "artifacts")
+    for key in (
+        "wsi_path",
+        "mask_path",
+        "metadata_path",
+        "qc_json_path",
+        "batch_index_path",
+        "diagnostics_manifest_path",
+    ):
+        _require_non_empty_str(artifacts, key, f"artifacts.{key}")
+
+    pyramid_summary = _ensure_mapping(
+        _require(diagnostics, "pyramid_summary", "pyramid_summary"),
+        "pyramid_summary",
+    )
+    _require_non_empty_str(pyramid_summary, "write_mode", "pyramid_summary.write_mode")
+    if "level_count" in pyramid_summary and pyramid_summary["level_count"] is not None:
+        _validate_non_negative_int_value(
+            pyramid_summary["level_count"],
+            "pyramid_summary.level_count",
+        )
+    if "level_shapes" in pyramid_summary and not isinstance(pyramid_summary["level_shapes"], list):
+        raise ValidationError("pyramid_summary.level_shapes must be a list")
+
+    writer_summary = _ensure_mapping(
+        _require(diagnostics, "writer_summary", "writer_summary"),
+        "writer_summary",
+    )
+    _require_non_empty_str(writer_summary, "write_mode", "writer_summary.write_mode")
+    _require_bool(writer_summary, "production_streaming", "writer_summary.production_streaming")
+    _require_bool(writer_summary, "resume_capable", "writer_summary.resume_capable")
+    if "atomic_publish" in writer_summary and not isinstance(writer_summary["atomic_publish"], bool):
+        raise ValidationError("writer_summary.atomic_publish must be a boolean")
+    if "recovered_from_temporary" in writer_summary and not isinstance(
+        writer_summary["recovered_from_temporary"],
+        bool,
+    ):
+        raise ValidationError("writer_summary.recovered_from_temporary must be a boolean")
+    if "reused_existing_target" in writer_summary and not isinstance(
+        writer_summary["reused_existing_target"],
+        bool,
+    ):
+        raise ValidationError("writer_summary.reused_existing_target must be a boolean")
+    disk_space_preflight = writer_summary.get("disk_space_preflight")
+    if disk_space_preflight is not None:
+        disk_space_preflight = _ensure_mapping(
+            disk_space_preflight,
+            "writer_summary.disk_space_preflight",
+        )
+        status_value = _require_non_empty_str(
+            disk_space_preflight,
+            "preflight_status",
+            "writer_summary.disk_space_preflight.preflight_status",
+        )
+        if status_value not in {"sufficient_space", "insufficient_space"}:
+            raise ValidationError(
+                "writer_summary.disk_space_preflight.preflight_status must be sufficient_space or insufficient_space"
+            )
+        for key in (
+            "estimated_total_bytes",
+            "minimum_required_bytes",
+            "free_bytes",
+            "safety_margin_bytes",
+        ):
+            _validate_non_negative_int_value(
+                _require(
+                    disk_space_preflight,
+                    key,
+                    f"writer_summary.disk_space_preflight.{key}",
+                ),
+                f"writer_summary.disk_space_preflight.{key}",
+            )
+        _require_non_empty_str(
+            disk_space_preflight,
+            "target_directory",
+            "writer_summary.disk_space_preflight.target_directory",
+        )
+    transaction_path = writer_summary.get("transaction_manifest_path")
+    if transaction_path is not None and not _is_non_empty_str(transaction_path):
+        raise ValidationError("writer_summary.transaction_manifest_path must be a non-empty string or null")
+    progress_path = writer_summary.get("progress_manifest_path")
+    if progress_path is not None and not _is_non_empty_str(progress_path):
+        raise ValidationError("writer_summary.progress_manifest_path must be a non-empty string or null")
+    progress_summary = writer_summary.get("progress_summary")
+    if progress_summary is not None:
+        progress_summary = _ensure_mapping(progress_summary, "writer_summary.progress_summary")
+        status_value = _require_non_empty_str(
+            progress_summary,
+            "status",
+            "writer_summary.progress_summary.status",
+        )
+        if status_value not in {"started", "writing", "completed", "failed"}:
+            raise ValidationError(
+                "writer_summary.progress_summary.status must be started, writing, completed, or failed"
+            )
+        for key in (
+            "planned_level_count",
+            "planned_tile_count",
+            "yielded_tile_count",
+            "completed_tile_count",
+        ):
+            _validate_non_negative_int_value(
+                _require(
+                    progress_summary,
+                    key,
+                    f"writer_summary.progress_summary.{key}",
+                ),
+                f"writer_summary.progress_summary.{key}",
+            )
+        _require_bool(
+            progress_summary,
+            "resume_capable",
+            "writer_summary.progress_summary.resume_capable",
+        )
+    if "streaming_limitations" in writer_summary and not isinstance(
+        writer_summary["streaming_limitations"],
+        list,
+    ):
+        raise ValidationError("writer_summary.streaming_limitations must be a list")
+
+    tile_execution = _ensure_mapping(
+        _require(diagnostics, "tile_execution", "tile_execution"),
+        "tile_execution",
+    )
+    tile_execution_applicable = _require_bool(
+        tile_execution,
+        "applicable",
+        "tile_execution.applicable",
+    )
+    if tile_execution_applicable:
+        _require_non_empty_str(tile_execution, "manifest_path", "tile_execution.manifest_path")
+        _validate_tile_count_fields(tile_execution, "tile_execution")
+    else:
+        _require_non_empty_str(tile_execution, "reason", "tile_execution.reason")
+
+    tile_source = _ensure_mapping(
+        _require(diagnostics, "tile_source", "tile_source"),
+        "tile_source",
+    )
+    tile_source_applicable = _require_bool(tile_source, "applicable", "tile_source.applicable")
+    if tile_source_applicable:
+        _require_non_empty_str(tile_source, "manifest_path", "tile_source.manifest_path")
+        _validate_tile_count_fields(tile_source, "tile_source")
+        if "expected_tile_count" in tile_source:
+            _validate_non_negative_int_value(
+                tile_source["expected_tile_count"],
+                "tile_source.expected_tile_count",
+            )
+        if "level_count" in tile_source:
+            _validate_non_negative_int_value(tile_source["level_count"], "tile_source.level_count")
+        backend_execution_summary = tile_source.get("backend_execution_summary")
+        if backend_execution_summary is not None:
+            backend_execution_summary = _ensure_mapping(
+                backend_execution_summary,
+                "tile_source.backend_execution_summary",
+            )
+            _require_non_empty_str(
+                backend_execution_summary,
+                "contract",
+                "tile_source.backend_execution_summary.contract",
+            )
+            for key in (
+                "completed_tile_count",
+                "completed_with_request_evidence_count",
+                "completed_with_execution_evidence_count",
+                "completed_with_output_evidence_count",
+            ):
+                _validate_non_negative_int_value(
+                    _require(
+                        backend_execution_summary,
+                        key,
+                        f"tile_source.backend_execution_summary.{key}",
+                    ),
+                    f"tile_source.backend_execution_summary.{key}",
+                )
+            _require_bool(
+                backend_execution_summary,
+                "all_completed_tiles_have_evidence",
+                "tile_source.backend_execution_summary.all_completed_tiles_have_evidence",
+            )
+    else:
+        _require_non_empty_str(tile_source, "reason", "tile_source.reason")
+
+    qc_summary = _ensure_mapping(
+        _require(diagnostics, "qc_summary", "qc_summary"),
+        "qc_summary",
+    )
+    _validate_status(
+        _require_non_empty_str(qc_summary, "overall_status", "qc_summary.overall_status"),
+        "qc_summary.overall_status",
+    )
+    if "levels" in qc_summary and not isinstance(qc_summary["levels"], dict):
+        raise ValidationError("qc_summary.levels must be an object")
+    return deepcopy(diagnostics)
+
+
 def _validate_annotation_record(value: Any, path: str) -> None:
     annotation = _ensure_mapping(value, path)
     _require_non_empty_str(annotation, "annotation_id", f"{path}.annotation_id")
@@ -362,6 +582,17 @@ def _validate_canvas_size(value: Any, path: str) -> None:
 def _validate_status(value: str, path: str) -> None:
     if value not in STATUS_LEVELS:
         raise ValidationError(f"{path} must be pass, warning, or fail")
+
+
+def _validate_tile_count_fields(data: dict[str, Any], path: str) -> None:
+    for key in ("completed_tile_count", "pending_tile_count", "failed_tile_count"):
+        _validate_non_negative_int_value(_require(data, key, f"{path}.{key}"), f"{path}.{key}")
+
+
+def _validate_non_negative_int_value(value: Any, path: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValidationError(f"{path} must be a non-negative integer")
+    return int(value)
 
 
 def _require(data: dict[str, Any], key: str, path: str) -> Any:

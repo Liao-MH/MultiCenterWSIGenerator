@@ -1,5 +1,924 @@
 # DEMANDS
 
+## v0.72.32 - 2026-05-25 P4 OME streaming writer progress evidence
+
+### 用户需求
+
+- 用户要求先将当前工作区收束，整理所有未提交改动，不做后续开发；如有必要，刻意使用 multiagent 做并行审查。
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务，但不要启用 multiagent；本轮由主会话直接推进一个可独立验收的 P4 writer 功能闭环。
+- 用户要求继续开发前再次查看 `AGENTS.md`；本轮已读取并继续遵守测试节奏、环境执行和代码追踪块约束。
+- 继续减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 输出可靠性。
+- 每完成开发文档中的代码里程碑后，再围绕主功能集中测试；不增加低价值 helper 级测试。
+- 代码实现和集中验证通过后，同步 README、CHANGELOG、审计文档，以及设计文档与开发文档相关最小章节的代码追踪块。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.32`，属于向后兼容的 P4 OME streaming writer 输出可靠性增强。
+- 为 `write_pyramid_ome_tiff_streaming_from_tile_sources()` 增加写入进度证据：
+  - 正常完整写出路径应创建独立 progress sidecar，用于记录 planned level/tile 数、已 yield 给 `tifffile` 的 tile 数、当前 level/tile 位置、最近写入时间和状态；
+  - started/completed/failed transaction manifest 应引用 progress sidecar，并保留最终 progress summary；
+  - 正常完成时 progress status 应为 `completed`，完成 tile 数等于 plan tile 数；
+  - 写入失败时 progress status 应为 `failed`，保留失败前已 yield tile 数和失败原因，且不得把不完整临时 OME-TIFF 标记为可复用；
+  - completed target reuse 或完整 temporary OME 发布恢复路径不应伪造新的 tile iteration progress，只需在 transaction/report 中说明恢复动作。
+- 边界说明：
+  - 本批次补齐的是 GB 级 streaming writer 的中断诊断与进度证据，不实现同一 OME-TIFF 文件内部 partial tile 追加写入；
+  - 本批次不实现内置 production latent diffusion / ControlNet / DiT 推理模型；
+  - 本批次不改变 production tile source 物化、per-tile request manifest、failed tile retry 或 backend execution evidence 合同。
+- 验证要求：
+  - 新增/更新主功能级 writer 测试，覆盖成功 transaction/progress sidecar、失败 transaction/progress sidecar 和不伪造 resume_capable；
+  - 集中运行 outputs / generation / schema / CLI / version 相关测试；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 收束要求：
+  - 使用只读 multiagent explorer 分别审查源码/测试/版本一致性和文档/审计/report 一致性；
+  - 将未跟踪且被源码或文档引用的 `src/he_wsi_generator/generation/production_streaming.py` 与 `.agent/reports/*.md` 纳入同一收束提交；
+  - 不纳入 `.agent/logs/`、worktree 内容或临时验证产物；
+  - 收束前补跑全量单元测试、默认配置校验、CLI 版本和 `git diff --check`，并据实更新文档验证记录。
+
+### 预期落地
+
+- 当 GB 级 OME-TIFF streaming writer 在 tile iterator 过程中中断时，操作者可以从 progress sidecar 和 transaction manifest 判断写入停在第几层、第几个 tile、已完成多少 tile，以及为什么仍需要从完整 tile source 重新发布，而不是误以为支持同一 OME-TIFF 文件内部续写。
+
+## v0.72.31 - 2026-05-25 P3/P4 production tile backend execution evidence contract
+
+### 用户需求
+
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮已再次确认 `conda env list` 与 `mamba env list` 的同名环境指向同一个 prefix，因此不删除共享环境目录，后续开发和验证统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求继续开发前再次查看 `AGENTS.md`；本轮已读取并继续遵守测试节奏、环境执行和代码追踪块约束。
+- 继续减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 生成链路。
+- 每完成开发文档中的代码里程碑后，再围绕主功能集中测试；不增加低价值 helper 级测试。
+- 代码实现和集中验证通过后，同步 README、CHANGELOG、审计文档，以及设计文档与开发文档相关最小章节的代码追踪块。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.31`，属于向后兼容的 P3/P4 production tile-stream 执行证据增强。
+- 为 `production-tile-stream` 外部 tile backend 执行结果增加可审计证据：
+  - 每个完成的 production tile record 应记录 tile request 文件证据，包括相对路径、大小和 SHA-256；
+  - 每个完成的 production tile record 应记录外部 backend 命令执行摘要，包括 command、cwd、return code、timeout、耗时和有限 stdout/stderr preview；
+  - 每个完成的 production tile record 应记录 RGB tile 和 level0 mask tile 的输出文件证据，包括相对路径、大小和 SHA-256；
+  - tile source manifest 顶层应汇总执行证据覆盖情况，便于 diagnostics 和审计快速判断 production backend 是否真实执行；
+  - diagnostics `tile_source` 应保留上述执行证据摘要，作为 generation 输出诊断的一部分。
+- 边界说明：
+  - 本批次补齐的是外部 production tile backend 执行证据，不实现内置 production latent diffusion / ControlNet / DiT 模型；
+  - 本批次不实现同一 OME-TIFF 文件内部 partial tile 追加写入；
+  - 本批次不改变 per-tile request 输入合同、failed tile 显式 retry 或 OME streaming writer 恢复语义。
+- 验证要求：
+  - 新增/更新一个主功能级 production tile-stream 测试，覆盖 request、backend execution、tile/mask output evidence 和 diagnostics 摘要；
+  - 集中运行 generation / schema / CLI / version 相关测试；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+
+### 预期落地
+
+- 当系统接入真实 production tile backend 生成 GB 级 WSI 时，输出目录中的 `production_tile_source_manifest.json` 不只说明 tile 已完成，还能审计每个 tile 对应的 request、外部命令执行和产物文件哈希，降低“外部 backend 是否真正按合同执行”无法追踪的风险。
+
+## v0.72.30 - 2026-05-25 P4 OME streaming disk-space preflight
+
+### 用户需求
+
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮再次确认 `conda env list` 与 `mamba env list` 的同名环境指向同一个 prefix，因此不删除共享环境目录，后续开发和验证统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求继续开发前再次查看 `AGENTS.md`；本轮已读取并继续遵守测试节奏、环境执行和代码追踪块约束。
+- 继续减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 输出可靠性。
+- 每完成开发文档中的代码里程碑后，再围绕主功能集中测试；不增加低价值 helper 级测试。
+- 代码实现和集中验证通过后，同步 README、CHANGELOG、审计文档，以及设计文档与开发文档相关最小章节的代码追踪块。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.30`，属于向后兼容的 P4 OME streaming writer 输出可靠性增强。
+- 为 `write_pyramid_ome_tiff_streaming_from_tile_sources()` 增加写入前磁盘空间 preflight：
+  - 在打开 `TiffWriter` 和读取 tile iterator 前，根据 streaming plan 的 raw pyramid byte estimate 估算目标文件系统空间；
+  - 最小可用空间要求采用 `estimated_total_bytes + max(estimated_total_bytes, 1)`，即原始 pyramid 字节数加同等安全余量；
+  - 空间不足时显式抛出 `OutputWriteError`，写出 failed transaction，并且不得开始 tile iterator 写入；
+  - 正常写出时在 transaction、streaming write report、streaming contract 和 diagnostics `writer_summary.disk_space_preflight` 中保留 preflight 摘要；
+  - 已复用 completed target 或发布已存在完整 temporary OME-TIFF 时不重复执行新写入空间 preflight。
+- 边界说明：
+  - 本批次实现的是 OME streaming writer 写入前的保守磁盘空间预算检查，不是 TIFF 最终文件大小的精确预测；
+  - 本批次不实现同一 OME-TIFF 文件内部 partial tile 追加写入；
+  - 本批次不实现内置 production latent diffusion / ControlNet / DiT 推理模型；
+  - 本批次不改变 production per-tile request manifest、failed tile retry 或外部 backend 合同。
+- 验证要求：
+  - 新增主功能级测试覆盖磁盘空间不足时显式失败、写出 failed transaction，并确认 tile iterator 未开始；
+  - smoke tile-streaming 主流程 diagnostics 应记录 `disk_space_preflight`；
+  - diagnostics schema 接受并校验 `writer_summary.disk_space_preflight` 合同字段；
+  - 集中运行 outputs / generation / schema / CLI / version 相关测试；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+
+### 预期落地
+
+- 当 GB 级 WSI 输出目录所在文件系统明显无法容纳预估临时 OME-TIFF 写入时，系统在真正开始逐 tile 写入前失败并留下可审计 transaction，避免长时间运行后才因磁盘耗尽污染输出目录，同时继续明确当前仍不是 OME 文件内部中断续写。
+
+## v0.72.29 - 2026-05-25 P4 completed OME target validation reuse
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务，但不要启用 multiagent；本轮由主会话直接推进一个可独立验收的 P4 writer 功能闭环。
+- 继续优先减少 smoke test 级代码开发，直接推进真正 gigabyte 级 WSI 输出可靠性。
+- 每完成开发文档中的代码里程碑后，再围绕主功能集中测试；不增加低价值 helper 级测试。
+- 代码实现和集中验证通过后，同步 README、CHANGELOG、审计文档，以及设计文档与开发文档相关最小章节的代码追踪块。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.29`，属于向后兼容的 P4 OME streaming writer 恢复语义增强。
+- 为 `write_pyramid_ome_tiff_streaming_from_tile_sources()` 增加已发布目标 OME-TIFF 验证复用：
+  - 当既有 `<target>.transaction.json` 为 `completed`，且 target path、tile source manifest path 与当前计划一致时，校验现有目标 OME-TIFF 可读且 pyramid shapes 与当前 streaming plan 一致；
+  - 校验通过后不再读取 tile source iterator、不重写 OME 文件，只更新 completed transaction，记录 `recovery_action=validated_existing_target_ome_tiff`；
+  - report / diagnostics 应记录 `reused_existing_target=true`，同时与 `recovered_from_temporary` 区分；
+  - 校验失败时继续走原有完整 tile source 重写路径，不静默把坏目标标记为成功。
+- 边界说明：
+  - 本批次实现的是完整已发布 OME 文件级验证复用，不是同一 OME-TIFF 文件内部 partial tile 追加写入；
+  - 本批次不实现内置 production latent diffusion / ControlNet / DiT 推理模型；
+  - 本批次不改变 production per-tile request manifest、failed tile retry 或外部 backend 合同。
+- 验证要求：
+  - 新增主功能级测试覆盖 completed transaction + 已发布 OME target 复用，确保不会重新读取 tile iterator；
+  - 集中运行 outputs / generation / schema / CLI / version 相关测试；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+
+### 预期落地
+
+- 当 GB 级 WSI 已经成功发布但上层流程因后续步骤或重复运行再次进入 writer 时，系统可以通过 transaction manifest 和 OME pyramid shape 校验复用现有目标文件，减少重复写出成本，同时继续清楚标注当前还不是 OME 文件内部中断续写。
+
+## v0.72.28 - 2026-05-25 P4 production tile failed retry resume
+
+### 用户需求
+
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator` 并在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮再次确认 conda/mamba 显示的是同一个 prefix，因此不删除共享环境目录，后续命令统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求继续开发前再次查看 `AGENTS.md`；本轮已读取并继续遵守测试节奏、环境执行和代码追踪块约束。
+- 继续减少 smoke test 级别代码开发，优先推进真正 gigabyte 级 WSI production tile-stream 的恢复可靠性。
+- 每完成开发文档中的代码里程碑后，再围绕主功能集中测试；不增加低价值 helper 级测试。
+- 代码实现和集中验证通过后，再更新设计文档与开发文档相关最小章节的代码追踪块。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.28`，属于向后兼容的 P4 production tile-stream 恢复语义增强。
+- 为 `production-tile-stream` 增加显式 failed tile 重试开关：
+  - 默认行为保持保守：resume manifest 中存在 `failed` tile 时继续显式报错；
+  - 仅当调用方显式启用 retry 时，才允许把 failed production tile source record 在不可变契约校验通过后重置为 pending 并重新调用外部 backend；
+  - retry 应保留审计字段，记录 previous status、previous error message、retry count 和曾从 failed 状态重试；
+  - retry 语义只覆盖 OME 发布前的 production tile source 物化阶段，不宣称支持同一 OME-TIFF 文件内部 append/resume。
+- CLI 需要暴露 production tile-stream 专用 retry 开关，并避免该开关被 smoke / torch-smoke backend 误用。
+- 边界说明：
+  - 本批次不实现内置 production latent diffusion / ControlNet / DiT 推理模型；
+  - 本批次不实现 OME-TIFF 文件内部 partial tile 续写；
+  - 本批次不改变 per-tile request manifest、`.npy` RGB tile 和 level0 mask tile 的外部 backend 合同。
+- 验证要求：
+  - 新增一个主功能级测试覆盖 production tile-stream 首次失败、默认 resume 拒绝 failed tile、显式 retry 后完成输出并保留 retry 审计字段；
+  - 集中运行 production tile-stream、schema、CLI 和 version 相关测试；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+
+### 预期落地
+
+- 外部 production tile backend 在单个 tile 临时失败后，可以在操作者明确确认 retry 的情况下复用同一 tile source manifest 继续物化和发布，提升 GB 级 WSI 生成链路在外部 backend 修复后的可恢复性，同时仍清晰保留非 OME 内部续写和非内置 production 模型边界。
+
+## v0.72.27 - 2026-05-25 P4 production tile request manifest contract
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务，但不要启用 multiagent；本轮由主会话直接推进一个可独立验收的功能闭环。
+- 继续优先减少 smoke test 级别代码开发，围绕真正 gigabyte 级 WSI 生成链路推进 production-tile-stream 能力。
+- 每完成开发节点中的里程碑后，再围绕主功能集中测试；不为低价值内部 helper 增加额外测试。
+- 代码实现过关后同步设计文档与开发文档相关最小章节的代码追踪块。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.27`，属于向后兼容的 P4 production tile-stream 执行合同增强。
+- 为 `production-tile-stream` 外部 tile backend 增加 per-tile request sidecar manifest：
+  - 每个 production tile record 应有稳定的 `tile_request_path`；
+  - 执行外部 backend 命令前，应写出对应 tile request JSON；
+  - request JSON 应记录 tile 坐标、cascade level、shape、write region、RGB/mask 输出路径、generated id、random seed、condition packet path、prior/checkpoint/backend 摘要；
+  - 外部命令模板可使用 `{tile_request_path}` 占位符；
+  - resume manifest 校验必须把 `tile_request_path` 当作不可变契约字段，避免恢复时混用旧 request。
+- 边界说明：
+  - 本批次实现的是 production external backend 的可审计 tile request contract；
+  - 本批次不实现内置 production latent diffusion / ControlNet / DiT 推理模型；
+  - 本批次不实现同一 OME-TIFF 文件内部 partial tile 续写；
+  - 本批次不改变外部 backend 必须输出 `.npy` RGB tile 和 level0 mask tile 的合同。
+- 验证要求：
+  - 新增主功能测试验证外部 backend 可读取 `{tile_request_path}`，且 request JSON 与 tile source manifest / diagnostics 输出一致；
+  - 集中运行 production tile-stream、schema、CLI 和 version 相关测试；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+
+### 预期落地
+
+- 外部 production tile generator 不再只能依赖零散命令行占位符，而是能读取每个 tile 的完整请求 manifest，为后续真实 production 模型 backend 接入、审计和失败重放提供稳定输入合同。
+
+## v0.72.26 - 2026-05-25 P4 OME streaming started transaction temporary publish recovery
+
+### 用户需求
+
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator`，并在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮再次确认 `mamba env list` 与 `conda env list` 指向同一 prefix `/home/muhengliao/miniconda3/envs/MultiCenterWSIGenerator`，因此不能删除该目录，后续开发和验证统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户要求继续开发前再次查看 `AGENTS.md`；本轮已按仓库规则执行，并继续遵守“开发文档中代码里程碑完成后集中验证”的测试节奏。
+- 根据开发文档优先推进真正 gigabyte 级 WSI 生成相关 P4 输出可靠性；本轮选择补齐 OME streaming writer 在发布阶段崩溃后留下完整临时 OME-TIFF 的恢复发布能力。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.26`，属于向后兼容的 P4 输出可靠性补丁。
+- `write_pyramid_ome_tiff_streaming_from_tile_sources()` 在写入新临时 OME 前读取既有 `<target>.transaction.json`：
+  - 仅当既有 transaction 为 `started`、目标路径匹配、tile source manifest 路径匹配、临时 OME-TIFF 仍存在且 pyramid shapes 与当前 streaming plan 完全一致时，才直接原子发布该临时文件；
+  - 已恢复发布的 completed transaction 必须记录 `recovery_action="published_existing_temporary_ome_tiff"`；
+  - 返回报告必须记录 `streaming_write_report.recovered_from_temporary=true`；
+  - 临时文件不可读或 shape 不匹配时不得静默接受，应清理不可用临时文件并基于完整 tile source 重新写出。
+- 继续显式保留边界：
+  - `resume_capable=false`；
+  - 不实现同一个 OME-TIFF 文件内部的 append/resume；
+  - 不把本轮能力描述为完整 OME-TIFF 文件级中断续写；
+  - 不新增内置 production latent diffusion / ControlNet / DiT 推理模型。
+- 测试要求：
+  - 以主功能闭环测试覆盖“started transaction + 完整临时 OME-TIFF -> 直接发布”；
+  - 继续运行 P4 writer / generation / schema / CLI / version 相关集中测试；
+  - 不新增低价值 helper 级测试。
+- 文档要求：
+  - 在代码与主功能测试通过后，同步 `README.md`、`docs/CHANGELOG.md`、审计文件、开发附录和研究设计中相关最小章节的代码追踪块。
+
+### 预期落地
+
+- OME streaming writer 在发布阶段崩溃后，如果上次运行已经生成并校验可读的完整临时 OME-TIFF，可在下一次运行中复用并发布该临时文件，减少重复 tile iterator 写出；同时仍诚实保留“非 OME 内部续写”的边界。
+
+## v0.72.25 - 2026-05-25 文档追踪块同步与 conda 环境约束
+
+### 用户需求
+
+- 用户要求继续开发前再次查看 `AGENTS.md`，并把测试节奏、里程碑集中验证和代码追踪块约束作为仓库整体约束执行。
+- 用户要求删除 mamba 环境 `MultiCenterWSIGenerator`，改在 conda 环境 `MultiCenterWSIGenerator` 中开发；本轮检查确认 mamba/conda 列出的环境是同一个 prefix，因此不能删除该目录，后续验证统一使用 `conda run -n MultiCenterWSIGenerator ...`。
+- 用户最新要求在确认代码过关之后更新设计文档和开发文档的代码追踪块；本轮对已经完成的 production tile-stream 功能闭环补齐相关最小章节 trace，不再沿用“所有开发里程碑结束后统一补充”的旧节奏。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.72.25`，属于文档追踪块与当前基线同步补丁，不新增 production 生成逻辑。
+- 更新 `AGENTS.md`：
+  - 记录开发文档代码里程碑完成后集中验证；
+  - 记录每次实现、修改或重构功能后，应维护设计/开发文档相关最小级标题下的代码追踪块；
+  - 追踪块必须记录真实代码路径、函数名、测试名、验证命令和完整项目内业务依赖。
+- 更新设计文档和开发文档：
+  - 开发附录：`4.5 输出契约`、`7.4 推理与 OME-TIFF 重建`、`10. 测试与验收`；
+  - 研究设计：`9.1 输出文件结构`、`9.2 必填 metadata 字段`、`9.3 成功标准与失败信号`、`10.1 QC 定位`、`10.4 QC 结果解释`；
+  - 每个追踪块均标注 `部分实现（v0.72.25）`，说明 production tile-stream 已落地的部分和仍缺失的 OME-TIFF 文件级续写、内置 production diffusion 模型边界。
+- 同步 README、CHANGELOG、审计清单、审计决策和实施计划中的当前基线。
+- 验证要求：
+  - 使用 `conda run -n MultiCenterWSIGenerator` 执行 production tile-stream 主功能相关集中测试；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过；
+  - 本轮不新增额外 helper 级测试，不执行真实 SVS 全链路复跑。
+
+### 预期落地
+
+- 当前文档和审计基线如实反映 v0.72.24 已实现的 production tile-stream 外部 backend 执行合同，并明确 v0.72.25 是代码追踪块和文档基线同步，不冒充新增 production 模型能力。
+
+## v0.72.24 - 2026-05-25 P4 production tile-stream WSI 生成需求
+
+### 用户需求
+
+- 用户要求减少 smoke test 级别代码开发，直接着手真正 gigabyte 级别 WSI 的生成开发。
+- 继续遵守当前测试节奏：完成一个可独立验收的开发节点里程碑后，再围绕主功能集中测试，不增加无关 helper 级测试。
+- 设计文档与开发文档中的代码追踪块仍等所有开发里程碑结束后再统一补充。
+
+### 结构化需求
+
+- 新增 `production-tile-stream` generation backend：
+  - 只接受 `production_ready=true` 且 `compatible_generation_backends` 包含 `production-tile-stream` 的 checkpoint manifest；
+  - checkpoint artifact 必须是 `external_tile_generator_v1` JSON，声明外部逐 tile 命令、RGB `.npy` tile 输出格式和 level0 6 类 mask tile 输出格式；
+  - 运行时按四层 OME-TIFF pyramid tile grid 逐 tile 调用外部 backend，不构造整张 level0 canvas；
+  - 写出 `production_tile_source_manifest.json`，记录 completed/pending/failed、attempt count、resume index、GB 级未压缩字节估算和恢复语义；
+  - 支持复用已完成 tile source，失败 tile 显式记录并阻断发布；
+  - 通过现有 tiled iterator writer 原子发布 OME-TIFF，并继续显式记录 `resume_capable=false`，不伪装成 OME-TIFF 文件级续写；
+  - 以 memmap 方式写出与 level0 对齐的 6 类 mask，避免一次性持有整张 mask 数组；
+  - production streaming QC 只打开 OME 容器并采样磁盘 tile/mask 统计，不读取整张 level0 WSI 到内存。
+- 边界说明：
+  - 本批次实现的是生产 tile backend 接入合同和磁盘级 WSI 生成执行闭环；
+  - 本批次不实现内置 latent diffusion / ControlNet / DiT 模型训练或本体推理；
+  - 本批次不实现 OME-TIFF 文件级中断续写；中断恢复范围是 OME 发布前的 tile source 物化阶段；
+  - 本批次不更新设计文档或开发文档的代码追踪块。
+- 验证要求：
+  - `tests.test_generation_runner` 中 production tile-stream 主功能闭环通过；
+  - 默认 generation config CLI 校验通过；
+  - `tests.test_version` 版本断言通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.24`，属于向后兼容的 P4 WSI 输出能力增量。
+
+### 预期落地
+
+- 生成链路不再只停留在 smoke/preview 产物：真实生产 tile backend 可以通过外部命令合同接入，按 tile 生成 GB 级 WSI 所需的磁盘 tile source、mask、OME-TIFF、metadata、QC、batch index 和 diagnostics。当前仍诚实保留“外部 backend 接入合同”边界，不把它表述为内置 production diffusion 模型或可恢复 OME-TIFF 文件 writer。
+
+## v0.72.23 - 2026-05-25 P4.5 fitted texture morphology latent/codebook 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4.5 production prior 与采样策略：让 texture prior 不再只输出 cluster prototype 统计，而是写出可审计的 fitted embedding-cluster codebook、prototype texture token 和 morphology latent，并让 sampled texture policy / condition packet / generation summary 保留该条件对象。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `build_texture_prior_from_embedding_cache()` 应基于 embedding cluster centroid 写出 `fitted_embedding_cluster_codebook_v1`；
+  - `texture_prior.json` 应记录 codebook type、token type、embedding dim、token count、token schema、morphology latent schema 和 `condition_outputs=["texture_token","morphology_latent"]`；
+  - 每个 `texture_prototypes` entry 应保留 `texture_token` 与标准化 `morphology_latent`；
+  - `sample_texture_policy_from_prior()` 应校验并输出被选中 prototype 的 `texture_token`、`morphology_latent` 和 `texture_codebook_reference`；
+  - `build_generation_condition_packet()`、smoke generation summary 和 torch smoke summary 应继续保留 sampled texture policy 的 `morphology_latent` 摘要。
+- 边界说明：
+  - 本批次实现的是 fitted embedding-cluster codebook / global z-score morphology latent；
+  - 本批次不实现 trainable texture codebook、VQ-VAE、morphology token sampler 或 production morphology condition encoder；
+  - 本批次不改变 generation backend 的 condition feature vector；
+  - 本批次不把 texture prior 标记为 production-ready。
+- 里程碑执行约束同步要求：
+  - 本轮只围绕 fitted texture morphology latent/codebook 主功能闭环做集中验证；
+  - 不为内部 helper 追加额外细碎测试；
+  - 设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 验证要求：
+  - `tests.test_texture_prior` 中 texture prior / sampled policy 主功能闭环通过；
+  - `tests.test_generation_conditioning` 中 sampled texture policy condition packet 合同通过；
+  - `tests.test_generation_runner` 与 `tests.test_torch_training` 中 sampled texture policy summary 保留通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.23`，属于向后兼容的 P4.5 texture prior artifact 补丁。
+
+### 预期落地
+
+- texture prior 从“只记录 embedding cluster prototype”推进到“记录可审计 fitted embedding-cluster codebook、prototype texture token 和 morphology latent”，让后续 condition packet / production prior contract 可以引用真实 `morphology_latent` 条件对象。当前仍诚实保留轻量 fitted latent 边界，不冒充 trainable texture codebook、VQ-VAE 或 production morphology token sampler。
+
+## v0.72.22 - 2026-05-25 P4.5 fitted style latent prior 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4.5 production prior 与采样策略：让 style prior 不再只输出 RGB 均值统计，而是拟合一个可审计的 RGB-stat PCA style latent encoder，并让 sampled style policy 携带 `style_latent` 条件对象。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `build_style_prior_from_training_index()` 应在 RGB tile batch 上拟合 `fitted_rgb_stats_pca_v1` style latent encoder；
+  - style latent encoder 应记录输入 feature schema、归一化方式、latent dimension、feature mean、components、explained variance 和 condition outputs；
+  - 每条 `tile_style_records` 应保留 `mean_rgb` 和对应 `style_latent`；
+  - `sample_style_policy_from_prior()` 应校验并输出被选中 tile 的 `style_latent`；
+  - sampled style policy 应保留 `style_latent_encoder_reference`，便于 condition packet / generation summary 后续审计。
+- 边界说明：
+  - 本批次实现的是 fitted RGB-stat PCA latent，不是深度 trainable style encoder；
+  - 本批次不实现 VAE style latent、style transfer 模型或 production style conditioning backend；
+  - 本批次不改变 generation backend 的 condition feature vector；
+  - 本批次不把 style prior 标记为 production-ready。
+- 里程碑执行约束同步要求：
+  - 本轮只围绕 fitted style latent prior 主功能闭环做集中验证；
+  - 不为 PCA 内部 helper 追加额外细碎测试；
+  - 设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 验证要求：
+  - 新增 RED 测试证明旧 style prior 缺少 `style_latent_encoder`，旧 sampled style policy 缺少 `style_latent`；
+  - `tests.test_style_prior` 中 style prior / sampled policy 主功能闭环通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.22`，属于向后兼容的 P4.5 style prior artifact 补丁。
+
+### 预期落地
+
+- style prior 从“只记录 RGB 统计和 tile mean RGB”推进到“记录可审计 fitted style latent encoder 和 tile-level style latent”，让后续 condition packet / production prior contract 可以引用真实 `style_latent` 条件对象。当前仍诚实保留轻量 fitted latent 边界，不冒充深度 production style encoder。
+
+## v0.72.21 - 2026-05-25 P5 production prior component contract interface 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P5 prior 边界：加固 `prior_manifest.production_readiness.production_ready=true` 的 component contract interface，避免仅靠布尔值或非 production backend 名称冒充 production prior。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `validate_prior_manifest()` 在 `production_ready=true` 时必须要求 layout/style/texture 三个 prior component 都声明 production-ready；
+  - 每个 production prior component 必须声明 `contract_version == "production_prior_component_v1"`；
+  - 每个 production prior component 必须声明当前生成流程需要消费的 `condition_outputs`；
+  - layout/mask prior 至少输出 `layout`、`mask`；
+  - style prior 至少输出 `style_seed`、`style_latent`；
+  - texture prior 至少输出 `texture_token`、`morphology_latent`；
+  - 每个 production prior component 必须携带 `training_evidence.training_run_id`、`artifact_path` 和 `artifact_sha256`；
+  - `training_evidence.artifact_path` / `artifact_sha256` 必须与 manifest 中对应 artifact 的 path/hash 完全匹配。
+- 边界说明：
+  - 本批次只实现 production prior component 的静态契约 gate；
+  - 本批次不实现 trainable layout/mask generator；
+  - 本批次不实现 trainable style encoder、style latent model；
+  - 本批次不实现 texture codebook、VQ-VAE 或 morphology token sampler；
+  - 本批次不把统计型 prior 变成 production-ready prior。
+- 里程碑执行约束同步要求：
+  - 本轮只围绕 P5 production prior component contract interface 做集中验证；
+  - 不为内部 helper 追加额外细碎测试；
+  - 设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 验证要求：
+  - `tests.test_priors` 中 prior manifest contract 主功能闭环通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.21`，属于向后兼容的 P5 prior contract gate 补丁。
+
+### 预期落地
+
+- prior manifest 从“声明 production readiness 并阻止统计/proxy component 冒充 production”推进到“production prior component 必须声明可消费条件输出与训练证据，并与 manifest artifact path/hash 对齐”。当前仍诚实保留 contract/interface gate 边界，不冒充真实 trainable prior。
+
+## v0.72.20 - 2026-05-25 P3/M5 production training plan artifact 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 本批次继续推进 P3 / M5 训练与生成骨架：在已有 production training dataset contract、training index JSONL 证据核对和 training objective/loss/QC mapping contract 基础上，让 `init-training-run` 产出可审计的 `training_plan.json`。
+- 本轮目标要求维护设计文档与开发文档中的章节级代码追踪；追踪块必须记录真实代码路径、函数名、测试名和实际验证命令，不得伪造实现位置。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `create_training_run()` 应在训练配置、prior manifest、dataset contract 和 objective contract 校验通过后写出 `training_plan.json`；
+  - `training_plan.json` 应记录 `production_training_plan` artifact 类型、三阶段训练顺序、每阶段目标、条件输入、输出占位和 QC 映射；
+  - `training_run.json` 与 `checkpoint_manifest.json` 应引用 `training_plan_path`，形成 run / plan / checkpoint 的可审计闭环；
+  - 训练计划必须显式标注 `plan_only_no_production_training_loop`，不得暗示已经执行真实 latent diffusion loss 优化或生成可推理 production 权重。
+- 边界说明：
+  - 本批次不实现真实 production diffusion 训练 loop；
+  - 本批次不生成 inference-ready production checkpoint；
+  - 本批次不实现 production cascade sampler、ControlNet/DiT backbone 或 VAE-diffusion 联合训练；
+  - 本批次只把三阶段 production 训练协议推进为可审计 artifact。
+- 章节级代码追踪同步要求：
+  - 更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 中多分辨率生成模型训练相关小节的 `Relevant Code`；
+  - 更新 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 中模型主干与训练阶段相关小节的 `Implementation Trace`；
+  - 追踪块记录真实路径、函数名、测试名和本轮实际验证命令。
+- 验证要求：
+  - 新增 RED 测试证明旧 `init-training-run` 不会写出 `training_plan.json`；
+  - `tests.test_models_generation` 中训练 run / checkpoint / plan 主功能闭环通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.20`，属于向后兼容的 P3/M5 训练计划 artifact 补丁。
+
+### 预期落地
+
+- production 训练入口从“只写 training run 与 skeleton checkpoint”推进到“写出可审计三阶段 training plan artifact”，明确连接 dataset contract、objective contract、stage objectives 和 QC mapping；当前仍诚实保留 plan-only 边界，不冒充真实 production 训练。
+
+## v0.72.19 - 2026-05-25 P4 stain/focus QC proxy 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新目标要求：根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 自动 QC：在已有文件、颜色均值、动态范围、sharpness、seam、mask-image alignment 和 reference distribution 基础上，补充更明确的 stain / focus proxy，暴露近单色染色缺失和大面积无局部边缘对比的输出。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `build_qc_report()` 应在 WSI 级 metrics 中记录 `stain_color_separation_proxy`；
+  - `build_qc_report()` 应在 tile 级 metrics 中记录 `focus_edge_density_proxy`；
+  - 近单色 RGB 通道分离不足时，stain proxy 应进入 fail；
+  - 几乎没有局部边缘对比时，focus proxy 应进入 fail；
+  - 两个指标仍是轻量 proxy，不应表述为专家级 stain/focus 质量模型或 production 病理 QC。
+- 边界说明：
+  - 本批次不实现专家级 stain/focus 模型；
+  - 本批次不实现真实 production diffusion backend；
+  - 本批次不实现全量 patch nearest-neighbor 或人工专家审阅自动化；
+  - 本批次只补齐 QC JSON 对 stain/focus 失败信号的可审计记录。
+- 里程碑执行约束同步要求：
+  - `AGENTS.md` 需要固化优先完成功能实现、里程碑闭环后集中验证主功能、不额外增加测试的整体约束；
+  - 设计文档与开发文档中的节点代码追踪块，等所有开发里程碑结束后再统一补充；
+  - 统一补充追踪块时，必须记录真实代码路径、函数名、测试名和实际验证命令，不得伪造实现位置。
+- 验证要求：
+  - 新增 RED 测试证明旧 QC 不会把低 stain/focus proxy 暴露为 fail；
+  - `tests.test_outputs_qc_archive` 中 QC 主功能闭环通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.19`，属于向后兼容的 P4 QC 指标补丁。
+
+### 预期落地
+
+- 自动 QC 从“基础颜色均值 / 动态范围 / Laplacian / seam proxy”推进到“记录 stain color separation 和 focus edge density proxy”，能更明确地暴露近单色和局部边缘对比缺失的失败样本，但仍诚实保留轻量 proxy 和非专家级语义 QC 边界。
+
+## v0.72.18 - 2026-05-25 P4 tile-grid seam QC proxy 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新补充要求：根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 输出可靠性：让自动 QC 的 seam proxy 使用 writer tile grid / chunk plan 的真实内部边界，而不是只检查图像中线，提升对 tile 拼接突变的暴露能力。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `build_qc_report()` 的 `seam_score_proxy` 应优先读取 `pyramid_report.chunked_write_audit.levels[0].chunk_shape` 或 `pyramid_report.streaming_write_report.tile_shape`；
+  - 当 writer 报告提供 tile/chunk shape 时，应检查所有内部 tile 边界；
+  - 当 writer 报告缺少 tile/chunk shape 时，保留现有中线 fallback；
+  - 明显 tile 边界颜色突变应让 `seam_score_proxy` 进入 fail；
+  - 指标仍是轻量 proxy，不应表述为专家级 morphology seam 审计。
+- 边界说明：
+  - 本批次不实现专家级 seam model；
+  - 本批次不实现 production backend 或可恢复 OME-TIFF writer；
+  - 本批次只补齐 QC 对 writer tile grid 的可审计使用。
+- 章节级代码追踪同步要求：
+  - 本轮暂不更新设计文档和开发文档的代码追踪块；
+  - 待所有开发里程碑结束后，再统一补充 `Relevant Code` / `Implementation Trace`，并记录真实路径、函数名、测试名和验证命令。
+- 验证要求：
+  - 新增 RED 测试证明旧 seam proxy 会漏掉非中线 tile 边界突变；
+  - `tests.test_outputs_qc_archive` 中 QC 主功能闭环通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.18`，属于向后兼容的 P4 QC seam proxy 补丁。
+
+### 预期落地
+
+- 自动 QC 从“固定中线 seam proxy”推进到“使用 writer tile grid 的内部边界 seam proxy”，但仍诚实保留轻量 proxy 和非专家级语义 QC 边界。
+
+## v0.72.17 - 2026-05-25 P4 torch diffusion smoke tile-streaming writer 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新补充要求：根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 输出可靠性：让 `torch-diffusion-smoke` backend 也能选择 `--wsi-writer tile-streaming`，把已有 PyTorch smoke cascade sample previews 物化为四层磁盘 tile source，并复用受限 tiled iterator writer 写出 OME-TIFF。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `run_torch_diffusion_smoke_generation(..., wsi_writer="tile-streaming")` 应接受 `array` 与 `tile-streaming` 两种 writer；
+  - `tile-streaming` 路径应从四层 PyTorch smoke cascade sample previews 生成 `tile_source_manifest.streaming.json` 和 `streaming_tiles/*.npy`；
+  - 该 manifest 应记录 source、levels、tiles、completed/pending/failed 计数、`generation_status` 和非 production 限制；
+  - OME-TIFF 写出应调用现有 `write_pyramid_ome_tiff_streaming_from_tile_sources()`，并在 diagnostics writer/tile_source summary 中保留 streaming writer、transaction manifest、tile source level/count 状态；
+  - CLI `run-generation --backend torch-diffusion-smoke --wsi-writer tile-streaming` 不应再被拒绝；
+  - `--resume-tile-manifest` 仍只支持 `smoke-cascade`，避免把 tile execution resume 与 torch sample cascade 混淆。
+- 边界说明：
+  - 本批次不实现 production latent diffusion / ControlNet / DiT；
+  - 本批次不实现 OME-TIFF 文件级中断续写；
+  - 本批次只把 learned smoke backend 接入磁盘 tile source + tiled writer 输出链路，缩小 P4 writer 能力只绑定 deterministic smoke renderer 的缺口。
+- 章节级代码追踪同步要求：
+  - 本轮暂不更新设计文档和开发文档的代码追踪块；
+  - 待所有开发里程碑结束后，再统一补充 `Relevant Code` / `Implementation Trace`，并记录真实路径、函数名、测试名和验证命令。
+- 验证要求：
+  - 新增 RED 测试证明旧实现不接受 `torch-diffusion-smoke` tile-streaming writer；
+  - `tests.test_torch_training` 中 torch generation 主功能闭环通过；
+  - `tests.test_generation_runner` 中 CLI writer gating 覆盖通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.17`，属于向后兼容的 P4 torch smoke writer 接入补丁。
+
+### 预期落地
+
+- `torch-diffusion-smoke` 从“只能用 array writer 写出小型 pyramid”推进到“可选磁盘 tile source + tiled iterator writer 输出链路”，但仍诚实保留非 production 模型和不可恢复 OME-TIFF 文件边界。
+
+## v0.72.16 - 2026-05-25 P4 smoke direct tile source resume 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新补充要求：根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次继续推进 P4 / M6 输出可靠性：让 smoke-cascade 显式 `--wsi-writer tile-streaming` 的 direct tile source 物化过程具备可恢复 manifest，重跑时能复用已完成 streaming tile 并补齐 pending tile。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `tile_source_manifest.streaming.json` 应记录 direct tile source 物化状态，包括 completed/pending/failed 计数和整体 `generation_status`；
+  - 首次运行应先写 pending manifest，再逐 tile 生成 `.npy` 并刷新 manifest；
+  - 当 output root 内已有匹配的 partial `tile_source_manifest.streaming.json` 时，tile-streaming 路径应校验其 schema/source/level/tile/path/shape/dtype 与当前 generation plan 一致；
+  - 已完成的 streaming tile 文件存在且 shape/dtype 匹配时不得被重写；
+  - pending streaming tile 应继续生成并最终让 manifest 进入 completed 状态；
+  - 不匹配、缺失 completed 文件、shape/dtype 不一致或非法状态必须显式失败。
+- 边界说明：
+  - 本批次不实现 OME-TIFF 文件级中断续写；
+  - 本批次不实现 production diffusion backend；
+  - 本批次只让 smoke direct tile source 物化过程可恢复，降低重复运行和半成品 tile source 的风险。
+- 章节级代码追踪同步要求：
+  - 本轮暂不更新设计文档和开发文档的代码追踪块；
+  - 待所有开发里程碑结束后，再统一补充 `Relevant Code` / `Implementation Trace`，并记录真实路径、函数名、测试名和验证命令。
+- 验证要求：
+  - 新增 RED 测试证明旧实现会覆盖 partial streaming tile source manifest 中已完成的 tile；
+  - `tests.test_generation_runner` 主功能闭环通过；
+  - `tests.test_version` 版本断言通过；
+  - 默认 generation config CLI 校验通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.16`，属于向后兼容的 P4 tile source materialization resume 补丁。
+
+### 预期落地
+
+- smoke-cascade 的 tile-streaming writer 从“可直接生成四层 tile source”推进到“direct tile source 物化过程可恢复并可审计”，但仍诚实保留非 production 模型和不可恢复 OME-TIFF 文件边界。
+
+## v0.72.15 - 2026-05-25 P4 smoke tile-streaming direct tile source 需求
+
+### 用户需求
+
+- 用户要求循环使用 `project-remediation-audit` 和 `codex-worker-orchestration` 继续推进设计文档与开发附录覆盖的任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 用户最新补充要求：根据开发文档优先完成功能实现代码；每完成开发节点中的里程碑后，再对主功能集中测试；不要增加额外测试；设计文档与开发文档中的节点代码追踪块等所有开发里程碑结束后再统一补充。
+- 本批次选择 P4 / M6 输出可靠性的保守增量：让 smoke-cascade 显式 `--wsi-writer tile-streaming` 路径直接按 pyramid level 和 TIFF tile grid 写出四层磁盘 tile source，避免为了 tiled iterator writer 先构造整张 blended canvas。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `run_smoke_generation(..., wsi_writer="tile-streaming")` 不应再调用整张 canvas 的 `blend_rgb_tiles()`；
+  - tile-streaming 路径应直接生成 `tile_source_manifest.streaming.json` 和四层 `.npy` tile source，manifest source 明确标记为 direct streaming source；
+  - 默认 `array` writer 仍保留既有 tile blending、pyramid array 和输出行为；
+  - `generation_output_diagnostics.json`、`metadata.json`、`generation_run.json` 仍应引用 streaming writer 与 tile source 状态；
+  - 新实现必须继续明确边界：这是 deterministic smoke renderer 的 writer 内存改进，不是 production diffusion backend、可恢复 OME-TIFF 续写或真实 gigapixel 生产推理。
+- 边界说明：
+  - 本批次不实现 production 级 latent diffusion / ControlNet / DiT；
+  - 本批次不实现可恢复 OME-TIFF 文件续写；
+  - 本批次不提前更新设计文档和开发文档中的章节级代码追踪块。
+- 验证要求：
+  - 修改现有 M6/P4 主功能测试，使旧实现因 tile-streaming 仍触发 full canvas blending 而失败；
+  - `tests.test_generation_runner` 主功能闭环通过；
+  - `tests.test_version` 版本断言通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.15`，属于向后兼容的 P4 tile-streaming writer 内存路径补丁。
+
+### 预期落地
+
+- smoke-cascade 的 tile-streaming writer 从“先拼整张 smoke canvas，再拆成四层 streaming tile source”推进到“直接按 writer tile grid 生成四层 tile source”，但仍诚实保留非 production 模型和不可恢复 OME-TIFF 边界。
+
+## v0.72.14 - 2026-05-25 P4 generation output diagnostics manifest contract 需求
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 本批次选择 P4 / M6 输出可靠性的保守增量：为 generation run 新增输出诊断 manifest，汇总 WSI、mask、metadata、QC、batch index、tile manifest、tile source manifest、writer report 和 QC 状态，避免用户只能从多个分散 JSON 中手工判断一次生成是否完整。
+- 用户当前要求：每次实现、修改或重构功能后，必须在代码验证通过后更新设计文档与开发文档中相关最小级标题下的章节级代码追踪块。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `run_smoke_generation()` 和 `run_torch_diffusion_smoke_generation()` 应写出 `generation_output_diagnostics.json`；
+  - diagnostics manifest 必须记录 `schema_version`、`manifest_type`、`generated_id`、`backend`、整体 `status`、输出 artifact 路径、pyramid 摘要、writer 摘要、tile execution 摘要、tile source 摘要和 QC 摘要；
+  - smoke-cascade 路径必须汇总 `tile_manifest.json` 与 `tile_source_manifest.json` 的完成状态，能说明 completed/pending/failed tile 计数；
+  - tile-streaming writer 路径必须记录 transaction manifest 路径和 writer 是否 `resume_capable=false`，避免误表述为可恢复 production writer；
+  - torch-diffusion-smoke 路径没有 tile manifest 时必须显式记录 `tile_execution.applicable=false`，而不是伪造 tile 完成状态；
+  - `generation_run.json` 和 metadata output 应引用 diagnostics manifest 路径；
+  - schema validator 应能校验 diagnostics manifest 的关键字段和状态边界。
+- 边界说明：
+  - 本批次不实现 production backend 磁盘级逐 tile 生成；
+  - 本批次不实现可恢复 OME-TIFF 文件续写；
+  - 本批次只把输出完整性、writer 事务和不可恢复边界集中成可审计 manifest。
+- 章节级代码追踪同步要求：
+  - 代码与测试验证通过后，更新设计文档 `9.1 输出文件结构`、`9.2 必填 metadata 字段`、`9.3 成功标准与失败信号`、`10.1 QC 定位`、`10.2 QC 检查项目`、`10.4 QC 结果解释`；
+  - 更新开发文档 `7.4 推理与 OME-TIFF 重建`、`8. QC 与非复制报告`、`10. 测试与验收`；
+  - 追踪块必须标注“部分实现”，明确 diagnostics manifest 已实现，但 production writer/resumable OME-TIFF 仍未完成；
+  - 追踪块必须记录真实路径、函数名、测试名和实际验证命令。
+- 验证要求：
+  - 新增 RED 测试证明旧实现不会写出 diagnostics manifest；
+  - `tests.test_generation_runner` 定向测试通过；
+  - `tests.test_schemas` / `tests.test_cli` 中 diagnostics schema 或 CLI validation 覆盖通过；
+  - 全量 `unittest discover`、editable install、CLI 版本、包元数据和 `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.14`，属于向后兼容的 P4 output diagnostics contract 补丁。
+
+### 预期落地
+
+- generation run 从“输出多个分散 artifact，由用户手工拼接判断完整性”推进到“每次 run 都有集中 diagnostics manifest 汇总输出完整性、writer 状态和 QC 状态”，但仍明确不是 production 级可恢复 gigapixel OME-TIFF writer。
+
+## v0.72.13 - 2026-05-25 P3 torch diffusion smoke inference artifact 规划接通需求
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 本批次选择 `AC-MISS-04` / P3 production 级生成模型缺口的保守增量：将现有 PyTorch diffusion smoke 训练产物接入统一 generation planning 的 inference artifact 契约，避免训练出的 checkpoint 只能被 sampler 私有消费而不能进入上层推理规划。
+- 用户最新要求：整个项目开发完成之后，再统一补充或更新设计文档和开发文档中的代码追踪块；本轮不更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 或 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 的 trace 内容。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `train_torch_diffusion_smoke_model()` 生成的 checkpoint manifest 应声明 `usable_for_inference=true`；
+  - 该 manifest 必须包含统一 `inference_contract`，并显式声明只能被 `torch-diffusion-smoke` generation backend 消费；
+  - `inference_contract` 必须包含 `model_architecture_contract`，记录 `latent_diffusion_unet` 模型族、smoke latent U-Net 架构、输入空间和输出空间；
+  - `inference_contract` 必须包含 `condition_input_contract`，覆盖 `mask`、`style_seed`、`texture_token`、`coord`、`structure_anchor`、`source_condition` 和 `previous_scale`；
+  - `create_generation_plan(..., generation_backend="torch-diffusion-smoke")` 应能接受该 checkpoint，并保留 backend/architecture/condition 契约摘要；
+  - 同一个 checkpoint 仍必须拒绝被 `smoke-cascade` backend 消费。
+- 边界说明：
+  - 本批次不把 PyTorch diffusion smoke backend 表述为 production latent diffusion / ControlNet / DiT；
+  - 本批次不实现真实 production training loop、真实 production inference backend 或 production checkpoint；
+  - 本批次只把现有 smoke 训练产物接入统一推理规划契约，作为后续 production backend 替换前的可审计接口。
+- 章节级代码追踪同步要求：
+  - 本轮暂不更新设计文档和开发文档的代码追踪块；
+  - 待整个项目开发完成后，再统一补充 `Relevant Code` / `Implementation Trace`，避免中间契约补丁反复改写 trace 块；
+  - 后续补充时必须记录真实路径、函数名、测试名和验证命令，不伪造 production 实现位置。
+- 验证要求：
+  - 新增 RED 测试证明旧实现训练出的 torch diffusion smoke checkpoint 不能进入 `create_generation_plan()`；
+  - 相关 `tests.test_torch_training` 定向测试通过；
+  - `tests.test_models_generation`、`tests.test_generation_runner`、`tests.test_version` 通过；
+  - 全量 `unittest discover`、editable install、CLI 版本、包元数据和 `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.13`，属于向后兼容的 P3 inference artifact planning contract 补丁。
+
+### 预期落地
+
+- PyTorch diffusion smoke 训练产物从“只能被 sampler 私有加载的非 inference checkpoint”推进到“可被统一 generation planning 识别和约束的 smoke inference artifact”，但仍明确不是 production WSI 生成模型。
+
+## v0.72.12 - 2026-05-25 P5 prior production readiness contract 需求
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 本批次选择 `AC-MISS-05` / P5 prior 的保守增量：为 prior manifest 增加 production readiness contract gate，避免统计型 layout/style/texture prior 被误标记为 production-ready trainable prior。
+- 用户最新补充：整个项目开发完成之后，再统一补充或更新设计文档和开发文档中的代码追踪块；本轮不更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 或 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 的 trace 内容。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `build_prior_manifest_from_artifacts()` 生成的 prior manifest 应包含 `production_readiness` 摘要；
+  - 当前统计型 layout/style/texture prior 应显式标记为非 production-ready，并说明仍是 statistical/proxy prior，不是 trainable layout generator、style encoder 或 texture codebook；
+  - `validate_prior_manifest()` 应校验 `production_readiness` 字段的基础类型和生产就绪声明；
+  - 当 manifest 声明 `production_ready=true` 时，必须提供完整 component contract，且 layout/style/texture 组件均需显式 production-ready；
+  - 缺失 component contract、组件缺失、组件仍为非 production-ready，或使用统计型 proxy backend 却声明 production-ready 时，应显式抛出 `PriorArtifactError`。
+- 边界说明：
+  - 本批次不实现真实 production trainable style encoder；
+  - 本批次不实现真实 texture codebook、VQ-VAE 或 morphology token sampler；
+  - 本批次不把统计型 prior、sampled policy 或 condition packet 归档能力表述为 production prior。
+- 章节级代码追踪同步要求：
+  - 本轮暂不更新设计文档和开发文档的代码追踪块；
+  - 待整个项目开发完成后，再统一补充 `Relevant Code` / `Implementation Trace`，避免中间补丁反复改写 trace 块；
+  - 后续补充时必须记录真实路径、函数名、测试名和验证命令，不伪造 production 实现位置。
+- 验证要求：
+  - 新增 RED 测试证明旧实现不会写入 `production_readiness`，且不会拒绝缺失 component contract 的 production-ready manifest；
+  - `tests.test_priors` 通过；
+  - `tests.test_version` 通过；
+  - 全量 `unittest discover` 通过；
+  - editable install、CLI 版本、包元数据和 `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.12`，属于向后兼容的 prior manifest contract 补丁。
+
+### 预期落地
+
+- prior manifest 从“记录 artifact 文件和 hash”推进到“显式区分统计型 proxy prior 与 production-ready prior 声明”，为后续真实 trainable style/texture/layout prior 接入提供可审计契约边界。
+
+## v0.72.11 - 2026-05-25 P4 mask-image tissue alignment QC 需求
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进未完成任务；本轮不启动 multiagent，由主会话直接推进一个可独立验收的功能闭环。
+- 本批次选择 P4 / Phase 6 自动 QC 的保守增量：在已有 WSI/tile/mask-region QC、seam proxy、sampled layout mask match 和 tissue fraction reference proxy 基础上，补充 mask 与生成图像组织区域的一致性代理指标，帮助暴露“mask 区域和图像内容不匹配”的失败类型。
+- 用户最新补充：整个项目开发完成之后，再统一补充或更新设计文档和开发文档中的代码追踪块；本轮不更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 或 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 的 trace 内容。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `build_qc_report()` 应在 `levels.mask_region.metrics` 中记录 `mask_image_tissue_alignment_proxy`；
+  - 该指标基于生成 WSI 首层图像的明亮背景/组织区域 proxy 与 `.npy` mask 的 `mask > 0` 区域计算一致性分数；
+  - 当图像组织区域和 mask 组织区域高度一致时返回 `pass`；
+  - 当两者明显错位时返回 `fail`，并让 `overall_status` 随 mask-region 失败；
+  - 当 WSI 图像无法读取、mask 不可读或组织 proxy 不具备有效前景/背景区分度时，应在 metric 中保留可解释 message，不得静默伪造强判定。
+- 边界说明：
+  - 本批次不实现病理语义分类器或真实 segmentation 验证；
+  - 本批次不把该 proxy 表述为专家级语义一致性判断；
+  - 本批次不改变非复制报告策略，也不新增 patch nearest-neighbor 检索。
+- 章节级代码追踪同步要求：
+  - 本轮暂不更新设计文档和开发文档的代码追踪块；
+  - 待整个项目开发完成后，再统一补充 `Relevant Code` / `Implementation Trace`，避免中间补丁反复改写 trace 块。
+- 验证要求：
+  - 新增 RED 测试证明旧实现不会记录 `mask_image_tissue_alignment_proxy`；
+  - `tests.test_outputs_qc_archive` 通过；
+  - `tests.test_version` 通过；
+  - 全量 `unittest discover` 通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.11`，属于向后兼容的 P4 QC 指标补丁。
+
+### 预期落地
+
+- 自动 QC 从“mask 文件/类别/shape/比例可审计”推进到“mask 组织区域与生成图像组织区域的粗粒度一致性可审计”，为后续 production 模型和真实语义 QC 接入保留明确失败信号。
+
+## v0.72.10 - 2026-05-25 P3 inference architecture and condition contract 需求
+
+### 用户需求
+
+- 用户要求继续根据设计文档和开发附录推进所有未完成任务；本轮仍不启动 multiagent，只按 `project-remediation-audit` 和 `codex-worker-orchestration` 的约束进行主会话直接开发。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：在 checkpoint/backend compatibility gate 基础上，要求可推理 checkpoint 显式声明模型架构契约和每层生成所需条件输入契约，避免后续真实 backend 接入时只靠 backend 名称判断兼容性。
+- 用户最新补充：整个项目开发完成之后，再统一补充或更新设计文档和开发文档中的代码追踪块；本轮不更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 或 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 的 trace 内容。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `usable_for_inference=true` checkpoint manifest 的 `inference_contract` 必须声明 `model_architecture_contract`；
+  - `model_architecture_contract` 必须声明 `model_family`、`architecture_name`、`input_space` 和 `output_space`，且 `model_family` 必须匹配项目 `latent_diffusion_unet`；
+  - `inference_contract` 必须声明 `condition_input_contract`；
+  - `condition_input_contract.required_condition_inputs` 必须覆盖 `mask`、`style_seed`、`texture_token`、`coord`、`structure_anchor`、`source_condition` 和 `previous_scale`；
+  - `condition_input_contract.cascade_levels` 必须匹配项目四层 cascade；
+  - `condition_input_contract.condition_feature_policy` 必须显式声明；
+  - `create_generation_plan()` 必须把模型架构契约和条件输入契约摘要写入 plan，并让每层 stage 的 `condition_inputs` 包含 `source_condition` 和 `previous_scale`。
+- 边界说明：
+  - 本批次不实现真实 production latent diffusion / ControlNet / DiT 推理；
+  - 本批次不把 smoke/test checkpoint 改为 production-ready；
+  - 本批次只把 inference artifact contract 从“backend compatibility”推进到“backend + 架构 + 条件输入契约”。
+- 章节级代码追踪同步要求：
+  - 本轮暂不更新设计文档和开发文档的代码追踪块；
+  - 待整个项目开发完成后，再统一补充 `Relevant Code` / `Implementation Trace`，避免中间契约补丁反复改写 trace 块。
+- 验证要求：
+  - 新增 RED 测试先证明旧实现不会拒绝缺失 `model_architecture_contract` 的可推理 checkpoint；
+  - `tests.test_models_generation` 通过；
+  - `tests.test_generation_runner` 通过；
+  - `tests.test_version` 通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.10`，属于向后兼容的 P3 inference architecture/condition contract 补丁。
+
+### 预期落地
+
+- P3 推理入口从“checkpoint 明确允许当前 backend 消费”推进到“checkpoint 同时声明当前 backend 消费所需的模型架构、输入/输出空间和条件输入集合”，为后续真实 production backend 接入提供更明确的前置契约。
+
+## v0.72.9 - 2026-05-25 P3 checkpoint backend compatibility contract 需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`；本轮仍不启动 multiagent，由主 orchestrator 直接推进。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：在 checkpoint inference artifact contract gate 基础上，为 generation planning 增加 checkpoint 与 generation backend 的显式兼容性门禁，避免 `usable_for_inference=true` checkpoint 只凭泛化 `inference_contract` 被错误 backend 消费。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - `usable_for_inference=true` checkpoint manifest 的 `inference_contract` 必须声明非空 `compatible_generation_backends` 字符串列表；
+  - `create_generation_plan()` 必须校验当前 generation backend 是否包含在 `compatible_generation_backends` 中；
+  - generation plan 应记录 `generation_backend` 和 checkpoint inference contract 摘要，便于追踪计划为什么可被当前 backend 消费；
+  - 缺失兼容 backend 列表、列表为空、元素非法或当前 backend 不匹配时，必须显式抛出 `ModelRunError`；
+  - smoke/test fixture 只能声明 `smoke-cascade` 兼容，不得伪装为 production backend。
+- 边界说明：
+  - 本批次不实现真实 production latent diffusion / ControlNet / DiT 推理；
+  - 本批次不把 `production_ready=false` 的 checkpoint 变成 production-ready；
+  - 本批次只把 checkpoint artifact contract 从“可推理”进一步收紧到“可被哪个 generation backend 消费”。
+- 章节级代码追踪同步要求：
+  - 更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 中实际存在的 `7.4 三阶段训练协议` 和 `Phase 4：三阶段生成模型训练` 的 `Relevant Code`，并把 checkpoint/backend compatibility gate 与 generation planning 的关系写清楚；
+  - 更新 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 中 `7.2 训练阶段` 与 `7.4 推理与 OME-TIFF 重建` 的 `Implementation Trace`。
+- 验证要求：
+  - 新增 RED 测试先证明旧实现不会拒绝缺失 `compatible_generation_backends` 的可推理 checkpoint；
+  - `tests.test_models_generation` 通过；
+  - `tests.test_generation_runner` 通过；
+  - `tests.test_version` 通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.9`，属于向后兼容的 P3 checkpoint/backend compatibility 契约补丁。
+
+### 预期落地
+
+- P3 推理入口从“checkpoint 文件/hash/inference contract 存在”推进到“checkpoint 明确允许当前 generation backend 消费”，为后续真实 production backend 接入提供更清晰的 artifact 兼容边界。
+
+## v0.72.8 - 2026-05-25 P3 training objective contract 需求
+
+### 用户需求
+
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`；本轮仍不启动 multiagent，由主 orchestrator 直接推进。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：在 v0.72.7 的 production training dataset contract 与 training index JSONL 证据核对基础上，为 `init-training-run` 增加训练目标 / loss / QC 映射契约 gate，覆盖设计文档 `7.5 训练约束` 和 `7.6 训练约束与自动 QC 的对应关系`。
+
+### 结构化需求
+
+- 新增或调整最小实现能力：
+  - training config 必须显式声明 `training_objective_contract`；
+  - contract 必须声明五类训练约束：扩散生成、语义 mask 一致性、跨倍率一致性、tile seam 一致性、同 WSI 风格一致性；
+  - contract 必须为五类训练约束提供非负 `loss_weights`；
+  - contract 必须声明 `image_generator` 和 `wsi_consistency` 阶段对应的目标集合；
+  - contract 必须声明五类训练约束与 QC 指标的映射，避免训练目标和自动 QC 脱节；
+  - `create_training_run()` 应把通过校验的 `training_objective_contract` 写入 `training_run.json`，并把摘要写入 skeleton checkpoint manifest；
+  - 对缺失 contract、缺失 loss weight、缺失阶段映射、QC 映射不完整或 schema 不匹配显式抛出 `ModelRunError`。
+- 边界说明：
+  - 本批次仍不实现真实 production latent diffusion / ControlNet / DiT 训练 loop；
+  - 本批次不实现真实 loss 计算、优化器训练、production checkpoint 权重或 production inference backend；
+  - 本批次只把设计文档要求的训练目标与 QC 映射转化为可审计配置门禁。
+- 章节级代码追踪同步要求：
+  - 更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 中 `7.5 训练约束`、`7.6 训练约束与自动 QC 的对应关系` 和 `Phase 4：三阶段生成模型训练` 的 `Relevant Code`；
+  - 更新 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 中 `7.2 训练阶段` 的 `Implementation Trace`。
+- 验证要求：
+  - 新增 RED 测试先证明旧实现不会拒绝缺失 `training_objective_contract`；
+  - `tests.test_models_generation` 通过；
+  - `tests.test_version` 通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.8`，属于向后兼容的 P3 训练目标契约补丁。
+
+### 预期落地
+
+- P3 训练入口从“只校验训练数据覆盖”推进到“同时校验训练目标、loss 权重、训练阶段映射和 QC 对应关系”，为后续真实 production backend 接入提供更完整的训练配置门禁。
+
+## v0.72.7 - 2026-05-25 P3 training index evidence contract 需求
+
+### 用户需求
+
+- 用户补充测试节奏：本项目采用“功能闭环完成后集中验证”，避免为每个内部 helper 追加大量细碎测试；每完成一个可独立验收的功能单元后，再集中覆盖核心成功路径、关键数据契约、高影响边界、高概率用户错误和已知回归问题；尚未闭环的功能需记录“待验证”，不得伪造测试结果。
+- 用户要求继续根据 `docs/audit/` 中的未完成项推进开发，并循环使用 `codex-worker-orchestration` 与 `project-remediation-audit`。
+- 本批次继续选择 `AC-MISS-04` / P3 的保守契约增量：在 v0.72.6 的 production training dataset contract gate 基础上，要求 `init-training-run` 读取并核对实际 `training_index_path` JSONL，避免只靠手写 `dataset_contract` 汇总字段绕过训练数据覆盖检查。
+
+### 结构化需求
+
+- 不启动 multiagent；本轮由主 orchestrator 直接实现，必要时只保留 `.agent/reports/` 审计记录。
+- 新增或调整最小实现能力：
+  - `create_training_run()` 必须在校验 `dataset_contract` 时读取 `training_index_path` 指向的 JSONL；
+  - training index 文件必须存在、非空、每行是 JSON object，且 record `schema_version` 必须匹配当前项目版本；
+  - `dataset_contract.sample_count` 必须等于 training index 实际 record 数；
+  - `dataset_contract.records_by_split` 必须与 training index 实际 split 计数完全一致，且包含正数 `train` split；
+  - `dataset_contract.records_by_level` 必须与 training index 实际 cascade level 计数完全一致，并覆盖默认四层 cascade；
+  - training index records 必须为必需条件输入提供可审计字段：mask、style、texture、coord、source_condition、structure_anchor；
+  - mask 条件必须能从 training index record 的 label mapping 中核对到项目固定 6 类 schema；
+  - 对缺失文件、空文件、非法 JSONL、统计不一致、缺字段或 schema mismatch 显式抛出 `ModelRunError`。
+- 边界说明：
+  - 本批次仍不实现真实 production latent diffusion / ControlNet / DiT 训练 loop；
+  - 本批次不改变 `build_training_index()` 的输出格式，除非现有格式无法提供当前契约需要的证据；
+  - 本批次不把 skeleton checkpoint 标记为可推理或 production-ready。
+- 章节级代码追踪同步要求：
+  - 更新 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 中与训练样本构造、三阶段训练协议和 Phase 4 相关的 `Relevant Code`；
+  - 更新 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 中 `7.2 训练阶段` 的 `Implementation Trace`。
+- 验证要求：
+  - 新增 RED 测试先证明旧实现不会拒绝 sample_count 与实际 training index JSONL 不一致；
+  - `tests.test_models_generation` 通过；
+  - `tests.test_training_index` 通过；
+  - `tests.test_version` 通过；
+  - `git diff --check` 通过。
+- 版本号规划升级到 `v0.72.7`，属于向后兼容的 P3 训练数据证据契约补丁。
+
+### 预期落地
+
+- P3 训练入口从“校验配置声明的 dataset contract”推进到“校验 dataset contract 与实际 training index JSONL 证据一致”，为后续真实 production backend 接入提供更可靠的数据覆盖门禁。
+
 ## v0.72.6 - 2026-05-25 P3 production training dataset contract 需求
 
 ### 用户需求
@@ -17,6 +936,10 @@
   - `create_training_run()` 应把通过校验的 `training_backend` 与 `dataset_contract` 写入 `training_run.json` 和 skeleton checkpoint manifest；
   - 对缺失 `dataset_contract`、样本数不足、缺少必需 split、缺少 cascade level、mask class schema 不完整、production readiness 未声明或声明不合理等情况显式抛出 `ModelRunError`；
   - 当前仍不训练真实 production 模型，不写 production-ready checkpoint，不把 smoke/test fixture 描述为 production backend。
+- 章节级代码追踪同步要求：
+  - 在 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 的 `7.4 三阶段训练协议`、`7.4.1 训练样本构造` 和 `Phase 4：三阶段生成模型训练` 下补充 `Relevant Code`；
+  - 在 `docs/dev/2026-05-23-he-wsi-generator-development-appendix.md` 的 `7.2 训练阶段` 下补充 `Implementation Trace`；
+  - 追踪块必须标注“部分实现”，清楚区分 training dataset contract gate 与尚未实现的真实 production diffusion training loop。
 - 验证要求：
   - 新增 RED 测试先证明旧实现不会拒绝缺失 `dataset_contract` 的 training config；
   - `tests.test_models_generation` 通过；
