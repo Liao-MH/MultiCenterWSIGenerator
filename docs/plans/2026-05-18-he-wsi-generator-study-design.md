@@ -382,41 +382,7 @@ p_theta(X | C)
 
 从因果角度看，latent diffusion / DiT 的作用不是简单生成漂亮 tile，而是把多个条件变量整合成像素结果。mask 决定局部语义，坐标决定空间位置，上一层图像决定跨倍率结构，style seed 决定同一 WSI 的成像风格，`structure_anchor` 决定源 WSI 内容继承程度。一个合适的生成模型必须能同时接收这些条件，并在推理时连续调整条件强度。普通无条件生成模型无法承担这一任务。
 
-Relevant Code:
-- 状态：部分实现（v0.72.31）。`latent_diffusion_unet` 已作为 production training backend / target contract 和 training plan artifact 的模型族落地，`training_plan.json` 会记录模型族、条件输入和 plan-only 边界；`production-tile-stream` 可接入外部 `external_tile_generator_v1` production-ready checkpoint artifact，并在 v0.72.31 对每个新完成 tile 记录 request/backend execution/output evidence。该能力证明外部 backend 执行合同可审计，尚未实现内置 production latent diffusion / ControlNet / DiT 训练或推理 backend。
-- 主实现：
-  - src/he_wsi_generator/models/training.py::create_training_run，校验 production training config 后写出 run / training plan / skeleton checkpoint。
-  - src/he_wsi_generator/models/training.py::_training_plan_manifest，生成 `production_training_plan` artifact，记录 `latent_diffusion_unet` target、条件输入和三阶段计划。
-- 完整依赖：
-  - 入口与编排：
-    - src/he_wsi_generator/cli.py::build_parser，提供 `init-training-run` CLI 入口。
-    - src/he_wsi_generator/cli_commands.py::run_cli，读取训练配置并调用 `create_training_run()`。
-    - src/he_wsi_generator/generation/executor.py::run_production_tile_stream_generation，编排外部 production tile backend 推理执行合同。
-  - 数据契约：
-    - src/he_wsi_generator/models/training.py::_validate_training_config，要求 `model_family` / `training_backend` 为 `latent_diffusion_unet`。
-    - src/he_wsi_generator/models/training.py::REQUIRED_INFERENCE_CONDITION_INPUTS，定义 mask、style seed、texture token、coord、structure anchor、source condition、previous scale 条件集合。
-    - src/he_wsi_generator/generation/production_streaming.py::load_external_tile_backend_contract，校验外部 production tile generator artifact。
-  - 核心逻辑：
-    - src/he_wsi_generator/models/training.py::_training_plan_stages，按阶段记录模型计划中的条件输入和输出占位。
-    - src/he_wsi_generator/generation/production_streaming.py::_execute_tile_backend_command，执行外部 tile backend 并记录 command/cwd/return code/timeout/duration/stdout/stderr preview。
-  - 配置与默认值：
-    - src/he_wsi_generator/constants.py::MODEL_FAMILY，统一当前 production 模型族默认值。
-    - src/he_wsi_generator/constants.py::CASCADE_LEVELS，统一四层级联顺序。
-  - 错误处理：
-    - src/he_wsi_generator/models/training.py::ModelRunError，暴露非法模型族、backend 或缺失契约。
-  - 输出与持久化：
-    - src/he_wsi_generator/models/training.py::_checkpoint_manifest，生成仍不可推理的 skeleton checkpoint，并引用 `training_plan_path`。
-  - 测试覆盖：
-    - tests/test_models_generation.py::ModelGenerationSkeletonTests.test_create_training_run_writes_manifest_and_untrained_checkpoint，验证 run / plan / checkpoint 共同记录模型族、计划状态和 training plan 路径。
-    - tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles，验证外部 production tile backend 执行证据与输出 evidence。
-- 外部关键依赖：
-  - 无。
-- 参考行号：
-  - src/he_wsi_generator/models/training.py 75-128，训练入口写出 training plan、checkpoint 和 run。
-  - src/he_wsi_generator/models/training.py 549-638，构造 production training plan artifact 和三阶段模型计划。
-  - src/he_wsi_generator/generation/production_streaming.py 77-167，production tile source 物化与 request/backend/output evidence 写入。
-  - src/he_wsi_generator/generation/production_streaming.py 477-568，外部 tile backend 命令执行与 execution evidence 构造。
-- 更新时间：2026-05-25
+
 
 ### 7.1.1 Backbone 选择原则
 
@@ -480,33 +446,7 @@ Relevant Code:
 
 训练样本不应只从随机 tile 抽取。对于第二、三阶段，采样策略应覆盖不同 mask 类别、不同组织区域、不同 WSI、不同 style seed 和不同 `structure_anchor` 区间。否则模型可能在常见组织上表现很好，但在 `necrosis_debris`、`artifact` 或低 anchor de novo 模式下失稳。
 
-Relevant Code:
-- 状态：部分实现（v0.72.20）。三阶段训练协议已进入 `training_plan.json`，包含 `prior_ready -> image_generator -> wsi_consistency`、每阶段 objectives、condition inputs、outputs 和 plan-only 状态；尚未执行真实三阶段训练、WSI 一致性微调或 production checkpoint 产出。
-- 主实现：
-  - src/he_wsi_generator/models/training.py::_training_plan_stages，生成三阶段训练计划并标记后两阶段为 `planned_not_executed`。
-- 完整依赖：
-  - 入口与编排：
-    - src/he_wsi_generator/models/training.py::create_training_run，负责在训练配置验证后持久化 `training_plan.json`。
-  - 数据契约：
-    - src/he_wsi_generator/models/training.py::_validate_dataset_contract，核对 training index 的样本数、split、level、条件输入和 6 类 mask schema。
-    - src/he_wsi_generator/models/training.py::_summarize_training_index，读取 JSONL 训练索引作为阶段计划的数据证据。
-  - 核心逻辑：
-    - src/he_wsi_generator/models/training.py::_training_plan_manifest，组合 prior、dataset contract、objective contract 和 stage plan。
-  - 配置与默认值：
-    - src/he_wsi_generator/models/training.py::TRAINING_STAGES，定义三阶段顺序。
-    - src/he_wsi_generator/constants.py::CASCADE_LEVELS，要求四层 cascade 不被省略。
-  - 错误处理：
-    - src/he_wsi_generator/models/training.py::_validate_training_index_record，拒绝缺失 tile、mask mapping 或 conditioning 证据的训练记录。
-  - 输出与持久化：
-    - src/he_wsi_generator/models/training.py::create_training_run，写出 `training_plan.json` 并在 `training_run.json` 中记录 `training_plan_path`。
-  - 测试覆盖：
-    - tests/test_models_generation.py::ModelGenerationSkeletonTests.test_create_training_run_writes_manifest_and_untrained_checkpoint，验证 training plan 三阶段顺序和 stage objectives。
-- 外部关键依赖：
-  - 无。
-- 参考行号：
-  - src/he_wsi_generator/models/training.py 75-128，训练 run 初始化和 artifact 写出。
-  - src/he_wsi_generator/models/training.py 588-638，三阶段训练计划内容。
-- 更新时间：2026-05-25
+
 
 ### 7.4.1 训练样本构造
 
@@ -528,33 +468,7 @@ Relevant Code:
 
 Tile seam 一致性可以通过 overlap 区域比较、边界 latent 对齐或邻域条件实现。同 WSI 风格一致性可以通过 slide-level style seed、style encoder embedding 或颜色/清晰度统计约束实现。它们不要求整张 WSI 每个区域完全同质，因为真实切片也存在组织厚薄、局部污渍和焦平面变化；它们要求的是整体扫描和染色风格不发生无解释跳变。
 
-Relevant Code:
-- 状态：部分实现（v0.72.20）。五类训练约束已作为 `training_objective_contract` gate 校验，并被写入 `training_plan.json` 的阶段 objectives；尚未实现真实 diffusion loss、mask consistency loss、cross-scale loss、seam loss 或 style consistency loss 计算。
-- 主实现：
-  - src/he_wsi_generator/models/training.py::_validate_training_objective_contract，校验五类训练约束、非负权重、阶段目标映射和 QC 映射。
-- 完整依赖：
-  - 入口与编排：
-    - src/he_wsi_generator/models/training.py::create_training_run，只有 objective contract 校验通过后才写出计划。
-  - 数据契约：
-    - src/he_wsi_generator/models/training.py::REQUIRED_TRAINING_OBJECTIVES，定义五类必备训练约束。
-    - src/he_wsi_generator/models/training.py::REQUIRED_OBJECTIVES_BY_STAGE，定义 image generator 与 WSI consistency 阶段目标。
-  - 核心逻辑：
-    - src/he_wsi_generator/models/training.py::_training_objective_contract_summary，生成 run / plan / checkpoint 共用的目标摘要。
-  - 配置与默认值：
-    - src/he_wsi_generator/models/training.py::TRAINING_OBJECTIVE_SCHEMA，固定训练目标契约版本。
-  - 错误处理：
-    - src/he_wsi_generator/models/training.py::_require_non_negative_number，拒绝非法 loss weight。
-  - 输出与持久化：
-    - src/he_wsi_generator/models/training.py::_training_plan_manifest，将 objective contract summary 写入 `training_plan.json`。
-  - 测试覆盖：
-    - tests/test_models_generation.py::ModelGenerationSkeletonTests.test_create_training_run_rejects_training_objective_missing_loss_weight，验证缺失 loss weight 显式失败。
-    - tests/test_models_generation.py::ModelGenerationSkeletonTests.test_create_training_run_writes_manifest_and_untrained_checkpoint，验证 objectives 被写入 training plan。
-- 外部关键依赖：
-  - 无。
-- 参考行号：
-  - src/he_wsi_generator/models/training.py 484-546，训练目标契约校验。
-  - src/he_wsi_generator/models/training.py 682-692，训练目标摘要写入 artifact。
-- 更新时间：2026-05-25
+
 
 ### 7.6 训练约束与自动 QC 的对应关系
 
@@ -570,33 +484,6 @@ Relevant Code:
 
 这种映射很重要，因为它让 QC 不只是“最后打分”，而是成为训练失败诊断工具。当前系统不做自动闭环重训，但 QC JSON 可以用于离线分析和下一轮配置调整。
 
-Relevant Code:
-- 状态：部分实现（v0.72.20）。训练约束到 QC metric 的映射已通过 `training_objective_contract.qc_mapping` 校验，并按阶段写入 `training_plan.json`；尚未实现训练失败后的自动重训或真实 QC 驱动优化。
-- 主实现：
-  - src/he_wsi_generator/models/training.py::REQUIRED_QC_MAPPING，定义五类训练目标对应的 QC metric 契约。
-  - src/he_wsi_generator/models/training.py::_training_plan_stages，将 image generator 与 WSI consistency 阶段的 QC mapping 写入 training plan。
-- 完整依赖：
-  - 入口与编排：
-    - src/he_wsi_generator/models/training.py::create_training_run，生成带 QC mapping 的 training plan。
-  - 数据契约：
-    - src/he_wsi_generator/models/training.py::_validate_training_objective_contract，拒绝缺失或不匹配的 QC mapping。
-  - 核心逻辑：
-    - src/he_wsi_generator/models/training.py::_training_plan_stages，按阶段提取各 objective 对应 QC metrics。
-  - 配置与默认值：
-    - src/he_wsi_generator/models/training.py::REQUIRED_OBJECTIVES_BY_STAGE，决定每个阶段需要保留哪些 QC mapping。
-  - 错误处理：
-    - src/he_wsi_generator/models/training.py::ModelRunError，报告 `training_objective_contract.qc_mapping.*` 不一致。
-  - 输出与持久化：
-    - src/he_wsi_generator/models/training.py::_training_plan_manifest，持久化含 QC mapping 的 `production_training_plan`。
-  - 测试覆盖：
-    - tests/test_models_generation.py::ModelGenerationSkeletonTests.test_create_training_run_rejects_training_objective_qc_mapping_mismatch，验证 QC mapping 不匹配时失败。
-    - tests/test_models_generation.py::ModelGenerationSkeletonTests.test_create_training_run_writes_manifest_and_untrained_checkpoint，验证 `tile_seam_consistency` 的 QC mapping 写入 WSI consistency 阶段。
-- 外部关键依赖：
-  - 无。
-- 参考行号：
-  - src/he_wsi_generator/models/training.py 55-62，训练目标到 QC metric 的契约映射。
-  - src/he_wsi_generator/models/training.py 613-636，按阶段写入 QC mapping。
-- 更新时间：2026-05-25
 
 ## 8. 本地桌面工具与用户交互
 
@@ -673,86 +560,6 @@ LLM 不应直接决定像素真实性。它不替代真实 WSI 分布、生成�
 
 每个 WSI 一个 JSON 的设计比单一 CSV 更适合本项目，因为 metadata 具有层级结构。它需要记录 source 关系、mask 映射、pyramid 规格、QC 详情和模型版本。批量 JSONL 则用于快速索引整个生成任务。
 
-Relevant Code:
-- 状态：部分实现（v0.72.32）。已实现 smoke / torch-smoke / `production-tile-stream` 的 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`batch.jsonl`、`generation_run.json` 和 `generation_output_diagnostics.json`；production backend 磁盘级逐 tile 生成已通过外部 tile generator contract 落地。v0.72.26 新增 OME streaming writer 对上次 `started` transaction 完整临时 OME-TIFF 的验证发布恢复；v0.72.27 新增 `production_tile_requests/*.request.json` per-tile request manifest，作为外部 backend 的稳定输入合同；v0.72.28 新增 failed tile 显式 retry/resume；v0.72.29 新增 completed transaction 已发布目标 OME-TIFF 验证复用；v0.72.30 新增 OME streaming 写入前磁盘空间 preflight；v0.72.31 新增 production tile backend execution evidence，记录 request JSON、外部命令执行摘要和 RGB/mask 输出文件哈希，并在 tile source manifest 与 diagnostics 汇总覆盖统计；v0.72.32 新增 OME streaming writer progress sidecar，记录 planned/yielded/completed tile 数、当前 level/tile grid、last tile 和失败原因，并在 transaction/report/diagnostics 汇总 `progress_summary`；仍未实现同一 OME-TIFF 文件内部中断追加写入、精确 TIFF 文件大小预测或内置 production diffusion 模型。
-- 主实现：
-  - `src/he_wsi_generator/generation/executor.py::run_production_tile_stream_generation`，落实外部 production tile backend 到完整 per-sample 输出对象的编排。
-- 完整依赖：
-  - 入口与编排：
-    - `src/he_wsi_generator/cli.py::build_parser`，暴露 `production-tile-stream` backend 和 `tile-streaming` writer 参数。
-    - `src/he_wsi_generator/cli_commands.py::run_command`，分发 production tile-stream 并强制 `--wsi-writer tile-streaming`。
-  - 数据契约：
-    - `src/he_wsi_generator/generation/production_streaming.py::load_external_tile_backend_contract`，校验外部 tile generator artifact。
-    - `src/he_wsi_generator/schemas.py::validate_metadata`，校验 per-WSI metadata。
-    - `src/he_wsi_generator/schemas.py::validate_generation_output_diagnostics`，校验 diagnostics manifest，并接受/校验 writer 恢复复用布尔字段、`disk_space_preflight`、`progress_summary` 和 `tile_source.backend_execution_summary`。
-  - 核心逻辑：
-    - `src/he_wsi_generator/generation/production_streaming.py::materialize_production_tile_sources`，生成并恢复磁盘 RGB/mask tile source，并在每个 tile 执行前写出 request manifest，完成后记录 request/backend execution/output evidence。
-    - `src/he_wsi_generator/generation/production_streaming.py::_execute_tile_backend_command`，支持 `{tile_request_path}` 命令占位符并执行外部 backend，返回 command/cwd/return code/timeout/duration/stdout/stderr preview。
-    - `src/he_wsi_generator/generation/production_streaming.py::_tile_request_manifest`，构造 `production_tile_request_v1`，记录 tile、输出路径、prior、checkpoint、backend 和 condition packet 摘要。
-    - `src/he_wsi_generator/generation/production_streaming.py::_ensure_completed_record`，校验 RGB/mask tile 并生成输出文件大小与 SHA-256 证据。
-    - `src/he_wsi_generator/generation/production_streaming.py::_backend_execution_summary`，汇总 completed tile 的 evidence 覆盖。
-    - `src/he_wsi_generator/generation/production_streaming.py::write_streaming_mask_from_tile_sources`，从 level0 mask tile 写出对齐 mask。
-    - `src/he_wsi_generator/generation/production_streaming.py::build_streaming_tile_source_qc_report`，对 production tile source 输出做 streaming QC。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_recover_completed_streaming_target`，在 completed transaction 与当前 target/manifest/plan 匹配时验证并复用已发布目标 OME-TIFF。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_recover_started_streaming_temporary`，在 started transaction 留下完整临时 OME-TIFF 时验证 target、manifest 和 pyramid shape 后直接发布。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_streaming_disk_space_report`，在正常完整写出前按 raw pyramid byte estimate 加同等安全余量生成磁盘空间 preflight 报告。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_build_streaming_progress_manifest`，构造 `<target>.progress.json` 初始进度 sidecar，记录 planned level/tile 数和 `progress_semantics`。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_record_streaming_progress_tile`，在 tile iterator yield 前更新 yielded/completed tile count、current level/tile grid 和 last tile。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_finish_streaming_progress_manifest`，把 progress sidecar 标记为 completed 或 failed，并记录 failure reason。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_streaming_progress_summary`，为 transaction/report/diagnostics 生成 writer 进度摘要。
-  - 配置与默认值：
-    - `configs/generation.default.json`，保存默认 cascade/tile/seed/anchor 配置。
-    - `src/he_wsi_generator/constants.py`，保存项目版本、cascade levels 和 mask class 常量。
-  - 错误处理：
-    - `src/he_wsi_generator/generation/production_streaming.py::ProductionTileStreamError`，暴露外部 backend、tile source、mask tile 和 resume manifest 错误。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::OutputWriteError`，暴露 OME-TIFF 写出和 tile source contract 错误。
-  - 输出与持久化：
-    - `src/he_wsi_generator/outputs/ome_tiff.py::write_pyramid_ome_tiff_streaming_from_tile_sources`，写出 OME-TIFF 和 transaction manifest，并在恢复/复用时记录 `recovery_action`、`recovered_from_temporary` 与 `reused_existing_target`；正常完整写出前执行磁盘空间 preflight，空间不足时不启动 tile iterator。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_tile_iterator_streaming_report`，把 `disk_space_preflight` 写入 streaming write report。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_write_streaming_progress_manifest`，持久化 writer progress sidecar。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_build_streaming_transaction_manifest`，把 `disk_space_preflight`、`progress_manifest_path` 和 `progress_summary` 写入 completed 或 failed transaction。
-    - `src/he_wsi_generator/generation/executor.py::_writer_summary`，把 writer transaction、atomic publish、恢复复用字段、`disk_space_preflight`、`progress_manifest_path` 和 `progress_summary` 写入 diagnostics。
-    - `src/he_wsi_generator/generation/executor.py::_tile_source_summary`，把 tile source `backend_execution_summary` 写入 diagnostics。
-    - `src/he_wsi_generator/metadata/archive.py::archive_sample`，写出 metadata、QC 和 batch JSONL。
-  - 测试覆盖：
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles`，验证 production tile-stream 完整输出对象、request/backend execution/output evidence 和 diagnostics summary。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_tile_request_manifests`，验证 request manifest 被外部 backend 读取并保持关键字段一致。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_retries_failed_tile_source_manifest_when_requested`，验证 failed tile 默认拒绝、显式 retry 后完成输出并保留 retry 审计字段。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_rejects_non_production_checkpoint`，验证非 production checkpoint 拒绝。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_publishes_recovered_temporary_ome`，验证完整临时 OME-TIFF 的恢复发布。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_reuses_completed_target_ome`，验证 completed transaction 目标 OME 验证复用。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space`，验证磁盘空间不足时不进入 tile iterator，并写出 failed transaction。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_records_transaction_manifest`，验证成功 transaction 引用 progress sidecar，progress status/counts/last tile 与 streaming report summary 一致。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_failed_transaction_preserves_target`，验证 writer 失败保留原目标文件，并在 failed transaction/progress sidecar 中记录失败前进度和 failure reason。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_cli_runs_smoke_generation_with_tile_streaming_writer`，验证 diagnostics writer 恢复复用字段默认值。
-    - `tests/test_schemas.py::SchemaValidationTests.test_generation_output_diagnostics_accepts_required_contract`，验证 diagnostics schema 接受 `writer_summary.disk_space_preflight`。
-    - `tests/test_cli.py::CliValidationTests.test_cli_validates_generation_output_diagnostics_file`，验证 diagnostics validator。
-- 外部关键依赖：
-  - `numpy`，用于 `.npy` tile/mask、memmap mask 和 QC 抽样统计。
-  - `tifffile`，用于 OME-TIFF 写出和读取校验。
-- 参考行号：
-  - `src/he_wsi_generator/generation/executor.py` 420-592，production tile-stream 输出编排。
-  - `src/he_wsi_generator/generation/executor.py` 831-863，diagnostics tile source summary 透传 backend execution summary。
-  - `src/he_wsi_generator/generation/production_streaming.py` 21-249，外部 backend contract、tile source、mask 和 QC。
-  - `src/he_wsi_generator/generation/production_streaming.py` 77-167，production tile source 物化与 request/backend/output evidence 写入。
-  - `src/he_wsi_generator/generation/production_streaming.py` 263-365，tile source manifest、`tile_request_path` 和 `request_manifest_type` 构造。
-  - `src/he_wsi_generator/generation/production_streaming.py` 380-474，resume manifest 对 `request_manifest_type` 和 `tile_request_path` 的不可变校验。
-  - `src/he_wsi_generator/generation/production_streaming.py` 477-568，request JSON 写出、命令占位符、外部命令执行和 execution evidence 构造。
-  - `src/he_wsi_generator/generation/production_streaming.py` 648-725，output evidence 校验与 backend execution summary 汇总。
-  - `src/he_wsi_generator/generation/production_streaming.py` 914-926，文件大小与 SHA-256 evidence 构造。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 124-318，streaming writer 正常写出、复用 completed target OME、恢复发布完整临时 OME-TIFF，以及写入前磁盘空间 preflight。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 380-404，`_streaming_disk_space_report` 的 raw byte estimate + safety margin preflight。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 857-980，completed/started transaction 读取、恢复判断、target/manifest 匹配和 OME shape 校验。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 1049-1086，transaction manifest 中 `recovery_action` 与 `disk_space_preflight` 字段。
-  - `src/he_wsi_generator/generation/executor.py` 769-804，diagnostics writer summary 恢复复用字段和 `disk_space_preflight`。
-  - `src/he_wsi_generator/schemas.py` 429-458，diagnostics `tile_source.backend_execution_summary` 校验。
-  - `tests/test_outputs_qc_archive.py` 538-619，started transaction 完整临时 OME 发布恢复测试。
-  - `tests/test_outputs_qc_archive.py` 621-701，completed transaction 已发布目标 OME 验证复用测试。
-  - `tests/test_outputs_qc_archive.py` 703-755，磁盘空间不足 preflight 阻断测试。
-  - `tests/test_generation_runner.py` 1068-1105，production tile backend execution evidence 输出测试。
-  - `tests/test_generation_runner.py` 1101-1155，production failed tile retry/resume 测试。
-- 验证：`conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v` 通过，`Ran 84 tests in 3.295s OK`；`conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/outputs/ome_tiff.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/schemas.py` 通过，无输出；`conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json` 通过，输出 `generation-config valid: configs/generation.default.json`；`git diff --check` 通过，无输出。
-- 更新时间：2026-05-25
 
 ### 9.2 必填 metadata 字段
 
@@ -836,58 +643,6 @@ metadata 至少应包含以下字段。实际实现可以扩展，但不应少�
 
 这个双层 manifest 设计可以避免 per-WSI JSON 过度臃肿。模型环境、QC 策略和默认生成设置属于 run-level；source 关系、style seed、随机种子和单样本 QC 属于 per-WSI。
 
-Relevant Code:
-- 状态：部分实现（v0.72.32）。`metadata.json` 要求 `output.diagnostics_manifest_path`，`generation_run.json` 记录 `outputs.diagnostics_manifest_path`，production tile-stream 还会把 `production_tile_backend`、tile source manifest 和 writer summary 写入 run / diagnostics；v0.72.27 的 `production_tile_source_manifest.json` 记录 `request_manifest_type` 和每条 `tile_request_path`，request JSON 记录 tile/output/prior/checkpoint/backend 摘要；v0.72.28 的 `tile_traversal_plan.retry_failed_tiles` 记录调用方是否显式重试 failed tile，tile source record 保留 retry 审计字段；OME streaming recovery / reuse 会在 pyramid report 中分别保留 `streaming_write_report.recovered_from_temporary` 与 `streaming_write_report.reused_existing_target`；v0.72.30 的正常完整写出路径会在 diagnostics `writer_summary.disk_space_preflight` 中记录 preflight status、target directory、estimated bytes、minimum required bytes、free bytes 和 safety margin；v0.72.31 的 production tile source manifest 记录 per-record `request_evidence`、`backend_execution`、`output_evidence` 和顶层 `backend_execution_summary`，diagnostics `tile_source.backend_execution_summary` 透传覆盖统计；v0.72.32 的 normal streaming writer path 记录 `<target>.progress.json`，并在 diagnostics `writer_summary.progress_manifest_path` / `writer_summary.progress_summary` 中保留 planned/yielded/completed tile 数和失败原因。run-level manifest 目前仍落在 `generation_run.json` 和 `generation_output_diagnostics.json`，不是完整后台批量生产调度 manifest。
-- 主实现：
-  - `src/he_wsi_generator/generation/executor.py::_metadata_payload`，生成 per-WSI metadata。
-  - `src/he_wsi_generator/generation/executor.py::_run_summary`，生成 run-level summary。
-- 完整依赖：
-  - 入口与编排：
-    - `src/he_wsi_generator/generation/executor.py::run_production_tile_stream_generation`，为 production tile-stream 输出 metadata/run/diagnostics。
-  - 数据契约：
-    - `src/he_wsi_generator/schemas.py::validate_metadata`，校验 metadata 必填字段。
-    - `src/he_wsi_generator/schemas.py::validate_generation_output_diagnostics`，校验 diagnostics manifest、writer 恢复复用布尔字段、`writer_summary.disk_space_preflight`、`writer_summary.progress_summary` 和 `tile_source.backend_execution_summary`。
-    - `src/he_wsi_generator/schemas.py::validate_file`，提供 CLI 统一校验入口。
-  - 核心逻辑：
-    - `src/he_wsi_generator/generation/executor.py::_generation_output_diagnostics`，生成集中 diagnostics。
-    - `src/he_wsi_generator/generation/executor.py::_writer_summary`，记录 writer、atomic publish、transaction manifest、resume capability、`recovered_from_temporary`、`reused_existing_target`、`disk_space_preflight`、`progress_manifest_path` 和 `progress_summary`。
-    - `src/he_wsi_generator/generation/executor.py::_tile_source_summary`，记录 tile source count、level count 和 manifest status。
-    - `src/he_wsi_generator/generation/executor.py::_tile_source_summary`，透传 tile source manifest 中的 `backend_execution_summary`。
-    - `src/he_wsi_generator/generation/production_streaming.py::_backend_execution_summary`，统计 completed tile 的 request/execution/output evidence 覆盖。
-    - `src/he_wsi_generator/generation/production_streaming.py::_tile_request_manifest`，为外部 backend 写出 per-tile request sidecar JSON。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_streaming_progress_summary`，为 run-level diagnostics 提供 OME streaming writer progress 摘要。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::write_pyramid_ome_tiff_streaming_from_tile_sources`，在完整临时 OME 发布恢复后把 `recovered_from_temporary` 留在 pyramid report 中，在 completed target OME 验证复用后把 `reused_existing_target` 留在 pyramid report 中，并在正常完整写出路径记录 `disk_space_preflight`。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_streaming_disk_space_report`，生成 preflight 字节预算字段。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_recover_completed_streaming_target`，验证已发布目标 OME-TIFF 可读且 pyramid shapes 与当前 plan 一致后允许复用。
-  - 配置与默认值：
-    - `configs/generation.default.json`，提供生成配置默认值和 schema version。
-  - 错误处理：
-    - `src/he_wsi_generator/generation/executor.py::_write_validated_generation_output_diagnostics`，写出前校验 diagnostics，不满足契约时显式失败。
-  - 输出与持久化：
-    - `src/he_wsi_generator/metadata/archive.py::archive_sample`，持久化 metadata、QC 和 batch JSONL。
-    - `src/he_wsi_generator/generation/executor.py::run_production_tile_stream_generation`，写出 `generation_run.json` 和 `generation_output_diagnostics.json`。
-  - 测试覆盖：
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles`，验证 metadata/run/diagnostics 引用 production tile source，并验证 backend execution evidence 进入 manifest/diagnostics。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_tile_request_manifests`，验证 request manifest 的 generated id、seed、condition、tile shape、输出路径、prior/checkpoint/backend 摘要。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_retries_failed_tile_source_manifest_when_requested`，验证 retry audit 字段进入 production tile source manifest。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_publishes_recovered_temporary_ome`，验证 recovery report/transaction 字段。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_reuses_completed_target_ome`，验证 completed target reuse report/transaction 字段。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space`，验证空间不足 transaction 字段和失败语义。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_cli_runs_smoke_generation_with_tile_streaming_writer`，验证 diagnostics 默认 writer 恢复复用字段和 `disk_space_preflight`。
-    - `tests/test_schemas.py::SchemaValidationTests.test_generation_output_diagnostics_accepts_required_contract`，验证 diagnostics schema。
-    - `tests/test_cli.py::CliValidationTests.test_cli_validates_generation_output_diagnostics_file`，验证 CLI validator。
-- 外部关键依赖：
-  - 不适用。
-- 参考行号：
-  - `src/he_wsi_generator/generation/executor.py` 595-650，metadata payload 生成。
-  - `src/he_wsi_generator/generation/executor.py` 560-589，production tile-stream diagnostics/run summary/return payload。
-  - `src/he_wsi_generator/generation/executor.py` 831-863，tile source summary 透传 backend execution summary。
-  - `src/he_wsi_generator/generation/executor.py` 769-804，writer summary 从 pyramid report 提取 transaction manifest、atomic publish、resume capability、`recovered_from_temporary`、`reused_existing_target` 和 `disk_space_preflight`。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 281-303，streaming write report 返回 `disk_space_preflight`、`recovered_from_temporary`、`reused_existing_target`、transaction manifest path 和 `resume_capable=false`。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 380-404，`_streaming_disk_space_report` 字节预算字段。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 898-980，completed target OME 复用和 transaction plan 匹配判断。
-  - `src/he_wsi_generator/schemas.py` 429-458，diagnostics backend execution summary 校验。
-- 更新时间：2026-05-25
 
 ### 9.3 成功标准与失败信号
 
@@ -895,66 +650,7 @@ metadata 模块的成功标准是任意生成 WSI 都可以通过 JSON 追溯到
 
 metadata 的失败不只是文档问题，而是系统可信度问题。若无法追溯 source 和 seed，重扫描模拟无法复现；若无法追溯 mask 映射，输出标签无法解释；若无法追溯 QC 策略，pass/warning/fail 的含义无法复查。因此 metadata 应被视为核心输出，而不是附加说明。
 
-Relevant Code:
-- 状态：部分实现（v0.72.32）。输出完整性失败信号集中到 diagnostics manifest、production tile source manifest、per-tile request manifest、backend execution evidence、OME streaming transaction manifest 和 progress sidecar：缺失、损坏、failed/pending tile、manifest mismatch、request path mismatch、坏 tile shape/dtype、writer contract 不满足、磁盘空间不足、不可读临时/目标 OME、pyramid shape 不匹配或 tile iterator 中断都会显式失败或触发重新写出。v0.72.28 保持 failed tile 默认阻断，仅在显式 retry 时重试并记录 previous status/error 与 retry count；已实现 started transaction 完整临时 OME-TIFF 验证发布恢复；v0.72.29 新增 completed transaction 已发布目标 OME-TIFF 验证复用；v0.72.30 新增正常完整写出前磁盘空间 preflight；v0.72.31 新增 request/backend execution/output evidence，用于暴露外部 backend 执行合同是否有审计证据；v0.72.32 新增 writer progress evidence，用于暴露 streaming writer 中断前已 yield 到第几层/第几个 tile；仍未实现同一 OME-TIFF 文件内部 partial tile 续写、精确 TIFF 文件大小预测和真实 SVS 本轮复跑。
-  - 主实现：
-    - `src/he_wsi_generator/generation/production_streaming.py::_load_resumable_tile_source_manifest`，校验 production tile source resume manifest 与当前 plan 一致。
-    - `src/he_wsi_generator/generation/production_streaming.py::_execute_tile_backend_command`，在外部 backend 执行前写出 request manifest，并在未知命令占位符时显式失败。
-    - `src/he_wsi_generator/generation/production_streaming.py::_file_evidence`，为 request/RGB/mask 文件生成大小和 SHA-256 证据。
-    - `src/he_wsi_generator/generation/production_streaming.py::_backend_execution_summary`，统计 completed tile 的 evidence 覆盖，便于 diagnostics 暴露执行证据缺口。
-    - `src/he_wsi_generator/generation/executor.py::_write_validated_generation_output_diagnostics`，写出前校验 diagnostics。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_recover_completed_streaming_target`，只在 completed transaction、target/manifest 和已发布 OME pyramid shapes 均匹配时复用目标文件。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_recover_started_streaming_temporary`，只接受 target、tile source manifest 和 pyramid shapes 与当前 plan 一致的 started transaction 临时 OME。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_streaming_disk_space_report`，只在正常完整写出前提供磁盘空间预算，空间不足时由 writer 显式失败。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_record_streaming_progress_tile`，记录 tile iterator 已 yield 进度，不把 progress sidecar 解释为 OME 内部续写。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_finish_streaming_progress_manifest`，在 writer 成功或失败时写出 progress status 和 failure reason。
-- 完整依赖：
-  - 入口与编排：
-    - `src/he_wsi_generator/generation/executor.py::run_production_tile_stream_generation`，在 tile source、writer、mask、QC 或 archive 失败时阻断完成状态。
-  - 数据契约：
-    - `src/he_wsi_generator/schemas.py::validate_generation_output_diagnostics`，拒绝非法 diagnostics status、backend、artifact、summary、非布尔 writer 恢复复用字段、不符合契约的 `disk_space_preflight`、`progress_summary` 和非法 `tile_source.backend_execution_summary`。
-  - 核心逻辑：
-    - `src/he_wsi_generator/generation/production_streaming.py::_ensure_completed_record`，校验 RGB tile 和 mask tile 的 dtype、shape 和 class id。
-    - `src/he_wsi_generator/generation/production_streaming.py::_tile_request_manifest`，将 request sidecar 中的 tile/output/backend 合同固化为 JSON。
-    - `src/he_wsi_generator/generation/production_streaming.py::_refresh_tile_source_manifest`，维护 completed/pending/failed、resume index 和 next tile。
-    - `src/he_wsi_generator/generation/executor.py::_tile_source_summary`，把 tile source manifest 状态写入 diagnostics。
-    - `src/he_wsi_generator/generation/executor.py::_writer_summary`，把 `reused_existing_target` / `recovered_from_temporary` / `disk_space_preflight` / `progress_summary` 写入 diagnostics 解释入口。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_is_recoverable_completed_transaction`，拒绝非 completed、失败状态、target 缺失或当前 plan 不匹配的目标复用候选。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_is_recoverable_started_transaction`，拒绝非 started、target 不匹配、manifest 不匹配或临时文件缺失的恢复候选。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_streaming_transaction_matches_current_plan`，统一校验 transaction manifest 类型、writer 类型、target path 和 tile source manifest path。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_read_validated_streaming_ome_level_shapes`，拒绝不可读或 shape 不匹配的临时 OME-TIFF。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::_build_streaming_transaction_manifest`，在磁盘空间不足或 tile iterator 失败时保留 `disk_space_preflight`、`progress_summary` 和 `failure_reason`。
-  - 配置与默认值：
-    - `src/he_wsi_generator/constants.py`，提供 schema version 和 mask class 上界。
-  - 错误处理：
-    - `src/he_wsi_generator/generation/production_streaming.py::ProductionTileStreamError`，暴露 tile source 和外部 backend 失败。
-    - `src/he_wsi_generator/outputs/ome_tiff.py::OutputWriteError`，暴露 writer transaction、临时 OME 可读性和 pyramid shape 错误。
-  - 输出与持久化：
-    - `src/he_wsi_generator/generation/production_streaming.py::_write_json`，在每个 tile 状态变化后写回 manifest。
-  - 测试覆盖：
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_rejects_non_production_checkpoint`，验证 checkpoint/backend 契约失败。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles`，验证 completed/pending/failed count 与 diagnostics 一致。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_tile_request_manifests`，验证 request manifest 合同和 `{tile_request_path}` backend 消费路径。
-    - `tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_retries_failed_tile_source_manifest_when_requested`，验证 failed tile 默认阻断和显式 retry 后完成。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_publishes_recovered_temporary_ome`，验证 started transaction 完整临时 OME 的恢复发布。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_reuses_completed_target_ome`，验证 completed transaction 目标 OME 复用且不重新读取 tile iterator。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space`，验证空间不足失败不会进入 tile iterator。
-    - `tests/test_schemas.py::SchemaValidationTests.test_generation_output_diagnostics_rejects_invalid_status`，验证 diagnostics 非法状态失败。
-- 外部关键依赖：
-  - `numpy`，用于 `.npy` tile/mask contract 校验。
-- 参考行号：
-  - `src/he_wsi_generator/generation/production_streaming.py` 380-474，resume manifest 与 immutable tile record 校验，包含 `tile_request_path`。
-  - `src/he_wsi_generator/generation/production_streaming.py` 477-590，request manifest 写出和 `{tile_request_path}` 命令占位符。
-  - `src/he_wsi_generator/generation/production_streaming.py` 113-149，逐 tile 状态写回与失败阻断。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 203-212，空间不足 preflight 在 `TiffWriter` 与 tile iterator 前失败。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 260-270，failed transaction 记录 `disk_space_preflight`。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 898-980，completed target 复用候选、started 临时 OME 恢复候选和 plan 匹配校验。
-  - `src/he_wsi_generator/outputs/ome_tiff.py` 983-998，OME pyramid shape 校验。
-  - `src/he_wsi_generator/generation/executor.py` 769-804，diagnostics writer summary 恢复复用字段和 `disk_space_preflight`。
-  - `src/he_wsi_generator/schemas.py` 337-385，diagnostics writer summary 恢复复用布尔校验与 `disk_space_preflight` 校验。
-  - `tests/test_generation_runner.py` 1101-1155，验证 completed/pending/failed count、mask、QC 和 diagnostics。
-- 验证：`conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v` 通过，`Ran 84 tests in 3.295s OK`；`conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/outputs/ome_tiff.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/schemas.py` 通过，无输出；`git diff --check` 通过，无输出。
-- 更新时间：2026-05-25
+
 
 ## 10. 自动质量控制体系
 
@@ -964,11 +660,6 @@ Relevant Code:
 
 QC 采用三层粒度：WSI 级、tile 级和 mask 区域级。WSI 级负责整张切片是否可用；tile 级负责定位局部 seam、模糊、颜色和伪影问题；mask 区域级负责判断某类语义区域是否比例异常、位置异常或生成质量异常。QC 状态采用三级：`pass`、`warning`、`fail`。
 
-Relevant Code:
-- 状态：部分实现（v0.72.32）。QC 仍由 `qc.json` 承载，diagnostics manifest 增加 `qc_summary`；production tile-stream 使用 streaming tile source QC，避免为 QC 读取整张 level0 WSI。per-tile request manifest、backend execution evidence、failed tile retry 审计字段、OME writer 恢复/复用字段、`disk_space_preflight` 和 `progress_summary` 是外部 backend 输入、执行、恢复、资源预算、writer 进度和发布审计合同，不替代 QC JSON；OME streaming recovery/reuse/preflight/progress evidence 发生在 writer 发布阶段，只改变 writer transaction/report/diagnostics 的恢复、资源和进度审计，也不是专家级病理评估。
-- 代码：`src/he_wsi_generator/qc/engine.py` 的 `build_qc_report()`；`src/he_wsi_generator/generation/production_streaming.py::build_streaming_tile_source_qc_report`、`_backend_execution_summary`；`src/he_wsi_generator/generation/executor.py` 的 `_qc_summary()`、`_writer_summary()`、`_tile_source_summary()`、`_generation_output_diagnostics()`；`src/he_wsi_generator/outputs/ome_tiff.py::write_pyramid_ome_tiff_streaming_from_tile_sources`、`_recover_completed_streaming_target`、`_streaming_disk_space_report`；`src/he_wsi_generator/schemas.py` 的 `validate_qc_report()`、`validate_generation_output_diagnostics()`。
-- 测试：`tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles` 断言 streaming QC、diagnostics 和 backend execution summary；`tests/test_generation_runner.py::GenerationRunnerTests.test_run_smoke_generation_writes_complete_output_object` 断言 diagnostics `qc_summary.overall_status` 与 `qc.json` 一致；`tests/test_generation_runner.py::GenerationRunnerTests.test_cli_runs_smoke_generation_with_tile_streaming_writer` 断言 writer 恢复复用字段默认值、`disk_space_preflight` 和 `progress_summary`；`tests/test_outputs_qc_archive.py` 覆盖 QC report 构建、mask-image alignment proxy、started transaction 临时 OME 恢复、completed target OME 验证复用、磁盘空间不足 preflight 和 writer progress sidecar。
-- 验证：`conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v` 通过，`Ran 84 tests in 3.295s OK`；`conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json` 通过，输出 `generation-config valid: configs/generation.default.json`。
 
 ### 10.2 QC 检查项目
 
@@ -988,45 +679,6 @@ Relevant Code:
 
 需要强调的是，非复制检测是强制报告项，但第一版不做 patch 近邻检索，也不把相似性自动作为 fail 条件。这个决定有两个理由。第一，约 50 张 WSI 展开为高倍 patch 后计算和存储压力很大。第二，`structure_anchor=1` 或高 anchor 模式本来就应与源 WSI 高度相似，如果简单把“接近训练 WSI”判为 fail，会误伤设计上合理的重扫描模拟输出。
 
-Relevant Code:
-- 状态：部分实现。已实现文件/OME 层级、mask shape/组织占比、writer tile-grid seam proxy、stain/focus QC proxy、mask-image tissue alignment proxy、reference distribution 阈值、non-copy report 摘要和 diagnostics `qc_summary`；专家级语义一致性、production stain/focus/seam 模型和全量 patch nearest-neighbor 仍未完成。
-- 主实现：
-  - `src/he_wsi_generator/qc/engine.py::build_qc_report`，汇总 WSI/tile/mask-region 三级 QC metrics，并把 stain/focus/seam/mask-image proxy 纳入 overall status。
-  - `src/he_wsi_generator/qc/engine.py::_image_quality_metrics`，读取 OME-TIFF 首层图像并生成颜色、动态范围、style、stain、focus、sharpness 和 seam 相关指标。
-- 完整依赖：
-  - 入口与编排：
-    - `src/he_wsi_generator/generation/executor.py::_generation_output_diagnostics`，把 QC summary 与 writer/tile 输出状态放入 run-level diagnostics。
-    - `src/he_wsi_generator/generation/executor.py::_qc_summary`，从 `qc.json` 摘要 overall、各层 status 和 non-copy report。
-  - 数据契约：
-    - `src/he_wsi_generator/schemas.py::validate_qc_report`，校验 QC report 必须包含 WSI/tile/mask_region 三层、status 和 metrics 列表。
-    - `src/he_wsi_generator/schemas.py::validate_generation_output_diagnostics`，校验 diagnostics 中的 `qc_summary` status。
-  - 核心逻辑：
-    - `src/he_wsi_generator/qc/engine.py::_stain_color_separation_proxy`，计算 RGB 通道平均分离度，用于暴露近单色 stain 失败。
-    - `src/he_wsi_generator/qc/engine.py::_focus_edge_density_proxy`，计算局部边缘对比，用于暴露大面积无焦点/无纹理输出。
-    - `src/he_wsi_generator/qc/engine.py::_seam_score_proxy`，按 writer chunk/tile grid 或中线 fallback 计算 seam proxy。
-    - `src/he_wsi_generator/qc/engine.py::_mask_image_tissue_alignment_metric`，比较生成图像组织 proxy 与 `mask > 0` 区域。
-  - 配置与默认值：
-    - `src/he_wsi_generator/qc/engine.py::_stain_color_separation_metric`，定义 stain proxy 的 fail/warning/pass 默认阈值。
-    - `src/he_wsi_generator/qc/engine.py::_focus_edge_density_metric`，定义 focus proxy 的 fail/warning/pass 默认阈值。
-  - 错误处理：
-    - `src/he_wsi_generator/qc/engine.py::_image_quality_metrics`，在 WSI 不可读、无 series 或图像 shape 不支持时返回 fail metric。
-    - `src/he_wsi_generator/qc/engine.py::QCReferenceError`，暴露 QC reference、sampled mask 和 tissue overview 契约错误。
-  - 输出与持久化：
-    - `src/he_wsi_generator/qc/engine.py::write_qc_report`，写出经 schema 校验的 `qc.json`。
-    - `src/he_wsi_generator/metadata/archive.py::archive_sample`，将 `qc.json` 与 metadata、batch index 归档到样本输出目录。
-  - 测试覆盖：
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_build_qc_report_reads_outputs_and_records_quality_metrics`，验证正常输出包含 stain/focus/seam/mask-image 等 QC metrics。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_build_qc_report_flags_low_stain_and_focus_proxy`，验证近单色和无局部边缘对比输出触发 fail。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_build_qc_report_uses_writer_tile_grid_for_seam_proxy`，验证 writer tile grid seam proxy。
-- 外部关键依赖：
-  - `numpy`，用于 RGB 数组、mask 和 proxy 指标计算。
-  - `tifffile`，用于读取生成 OME-TIFF 首层图像。
-- 参考行号：
-  - `src/he_wsi_generator/qc/engine.py` 13-83，构建 QC report、合并三级 status 并调用 schema 校验。
-  - `src/he_wsi_generator/qc/engine.py` 260-311，读取 OME-TIFF 首层并生成 WSI/tile 质量 metrics。
-  - `src/he_wsi_generator/qc/engine.py` 642-691，计算 stain/focus proxy 并映射为 pass/warning/fail。
-  - `tests/test_outputs_qc_archive.py` 1063-1147，覆盖正常 QC metrics 和低 stain/focus fail。
-- 更新时间：2026-05-25
 
 ### 10.3 阈值策略
 
@@ -1044,40 +696,7 @@ QC 阈值采用训练分布自适应策略。文件损坏、pyramid 缺层、坐
 
 训练分布自适应阈值的好处是适配多中心、多疾病数据。固定阈值在某些中心可能过严，在另一些中心可能过松；自适应阈值可以把“异常”定义为偏离当前项目真实数据分布，而不是偏离某个外部假设。
 
-Relevant Code:
-- 状态：部分实现。已支持全局和 exact-match stratified QC reference distribution，并可覆盖包括 `stain_color_separation_proxy`、`focus_edge_density_proxy`、`seam_score_proxy` 在内的数值 QC metrics；尚未实现自动最佳 stratum 选择或真实训练集批量 QC 采集闭环。
-- 主实现：
-  - `src/he_wsi_generator/qc/engine.py::_select_qc_reference_thresholds`，根据运行时 context 选择全局或分层 reference thresholds。
-  - `src/he_wsi_generator/qc/engine.py::_apply_reference_thresholds`，对 QC metrics 应用 warning/fail 区间并写入 reference 审计字段。
-- 完整依赖：
-  - 入口与编排：
-    - `src/he_wsi_generator/qc/engine.py::build_qc_report`，在生成 WSI/tile/mask metrics 后统一应用 reference thresholds。
-  - 数据契约：
-    - `src/he_wsi_generator/qc/reference.py::build_qc_reference_distribution`，从多个 QC JSON 构建全局或分层 reference artifact。
-    - `src/he_wsi_generator/schemas.py::validate_qc_report`，保持 metric/status/reference 可被下游读取。
-  - 核心逻辑：
-    - `src/he_wsi_generator/qc/engine.py::_validate_qc_reference_metrics`，校验 warning/fail 阈值顺序和数值类型。
-    - `src/he_wsi_generator/qc/engine.py::_reference_context_key`，构造 exact-match stratum key 或记录 fallback reason。
-  - 配置与默认值：
-    - `src/he_wsi_generator/qc/engine.py::_stain_color_separation_metric`，在没有 reference artifact 时提供 stain proxy 默认阈值。
-    - `src/he_wsi_generator/qc/engine.py::_focus_edge_density_metric`，在没有 reference artifact 时提供 focus proxy 默认阈值。
-  - 错误处理：
-    - `src/he_wsi_generator/qc/engine.py::QCReferenceError`，在 reference distribution、context 或 sampled artifact 不满足契约时显式失败。
-  - 输出与持久化：
-    - `src/he_wsi_generator/qc/reference.py::write_qc_reference_distribution`，写出可审计 reference artifact。
-    - `src/he_wsi_generator/qc/engine.py::write_qc_report`，把 reference selection、stratum 和 fallback reason 写入 QC metrics。
-  - 测试覆盖：
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_build_qc_report_applies_reference_distribution_thresholds`，验证 reference thresholds 可覆盖 metric status。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_build_qc_report_uses_matching_stratified_reference_distribution`，验证 exact-match 分层阈值。
-    - `tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_build_qc_report_records_global_fallback_when_stratified_context_missing`，验证 fallback 审计。
-    - `tests/test_qc_reference.py`，验证 QC reference artifact 构建。
-- 外部关键依赖：
-  - `numpy`，用于数值 metrics 和 reference 统计。
-- 参考行号：
-  - `src/he_wsi_generator/qc/engine.py` 26-57，选择 reference 并应用到 WSI/tile/mask metrics。
-  - `src/he_wsi_generator/qc/engine.py` 223-250，按 warning/fail 区间更新 metric status 并写入 reference 字段。
-  - `src/he_wsi_generator/qc/engine.py` 642-691，新增 stain/focus 默认阈值，reference artifact 可按 metric name 覆盖。
-- 更新时间：2026-05-25
+
 
 ### 10.4 QC 结果解释
 
@@ -1087,11 +706,7 @@ QC 只提供离线反馈，不自动重训模型，也不做强化学习式闭�
 
 QC JSON 应尽量记录“为什么”而不是只记录状态。例如一个样本的 overall status 是 warning，JSON 中应列出 warning 来自哪个层级、哪个指标、哪个区域、参考范围是什么、实际值是多少。这样用户才能区分是模型失败、输入 mask 问题、参数过激，还是训练分布本身很窄。
 
-Relevant Code:
-- 状态：部分实现（v0.72.32）。`qc.json` 保留详细 metric、reference、message；`generation_output_diagnostics.json` 提供 run-level 解释入口，集中显示 QC summary、writer limitation、tile execution/source 状态。production tile-stream 额外记录 external backend、tile source count、per-tile request manifest type/path、backend execution summary、retry audit、GB 估算、atomic publish、`resume_capable=false`、`recovered_from_temporary`、`reused_existing_target`、`disk_space_preflight` 和 `progress_summary`，帮助区分外部 backend 输入合同、外部 backend 执行证据、tile source 阶段恢复、完整临时 OME 发布恢复、已发布目标 OME 验证复用、写入前磁盘空间预算失败、tile iterator 中断进度与同一 OME 文件内部续写缺失。
-- 代码：`src/he_wsi_generator/qc/engine.py` 的 QC metric message/reference 输出；`src/he_wsi_generator/generation/production_streaming.py::build_streaming_tile_source_qc_report`、`_backend_execution_summary`；`src/he_wsi_generator/generation/executor.py` 的 `_writer_summary()`、`_tile_execution_summary()`、`_tile_source_summary()`、`_qc_summary()`；`src/he_wsi_generator/outputs/ome_tiff.py::write_pyramid_ome_tiff_streaming_from_tile_sources` 的 transaction `recovery_action` 与 streaming report `recovered_from_temporary` / `reused_existing_target` / `disk_space_preflight` / `progress_summary`；`src/he_wsi_generator/outputs/ome_tiff.py::_recover_completed_streaming_target` 的已发布目标 OME 验证复用；`src/he_wsi_generator/outputs/ome_tiff.py::_streaming_disk_space_report` 的写入前磁盘空间预算；`src/he_wsi_generator/outputs/ome_tiff.py::_build_streaming_progress_manifest`、`_record_streaming_progress_tile`、`_finish_streaming_progress_manifest`、`_streaming_progress_summary`、`_write_streaming_progress_manifest` 的 writer progress sidecar。
-- 测试：`tests/test_generation_runner.py::GenerationRunnerTests.test_run_production_tile_stream_generation_writes_external_backend_tiles`、`tests/test_generation_runner.py::GenerationRunnerTests.test_run_smoke_generation_writes_complete_output_object`、`tests/test_generation_runner.py::GenerationRunnerTests.test_cli_runs_smoke_generation_with_tile_streaming_writer`、`tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_publishes_recovered_temporary_ome`、`tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_reuses_completed_target_ome`、`tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_rejects_insufficient_disk_space`、`tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_records_transaction_manifest`、`tests/test_outputs_qc_archive.py::OutputQCArchiveTests.test_write_pyramid_ome_tiff_streaming_from_tile_sources_failed_transaction_preserves_target`、`tests/test_schemas.py::SchemaValidationTests.test_generation_output_diagnostics_accepts_required_contract`。
-- 验证：`conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_schemas tests.test_cli tests.test_version -v` 通过，`Ran 84 tests in 3.295s OK`；`conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/outputs/ome_tiff.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/schemas.py` 通过，无输出；`git diff --check` 通过，无输出。
+
 
 ## 11. 质量、隐私与非复制边界
 
