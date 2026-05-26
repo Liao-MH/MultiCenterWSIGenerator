@@ -11,7 +11,7 @@
 
 ## 1. 文档目的
 
-本文档把现有研究设计与开发附录重组为“Module + Stage”的开发版本。它不重新定义系统目标，也不引入源文档之外的新功能，只把已有设计整理成更便于实施的开发顺序。
+针对于完成一个科研级别工具而非商业产品的开发。本文档把现有研究设计重组为“Module + Stage”的开发版本。它不重新定义系统目标，也不引入源文档之外的新功能，只把已有设计整理成更便于实施的开发顺序。
 
 本版采用“主体功能优先”的开发取向：先打通 H&E WSI 数据生成器的核心链路，再补充更细的错误兜底、复杂 QC、非复制分析和诊断报告。换句话说，第一轮开发应优先回答“系统能否从输入 WSI 走到生成 OME-TIFF WSI、mask、metadata 和基础 QC”，而不是把大量精力提前放在所有边界失败情况上。
 
@@ -209,23 +209,10 @@ Stage Gate：
 | Stage 6 | metadata JSON test、QC JSON test、batch JSONL test |
 | Stage 7 | UI config test、job runner smoke test、end-to-end smoke test |
 
-## 8. 后置增强项
 
-以下内容来自源文档，但在主体功能优先的开发版本中不作为早期独立 Stage 或核心 Module。它们可以在主体链路跑通后逐步补充：
+## 9. 完成标准
 
-- 更细粒度的 seam/style consistency 定位。
-- 更完整的 non-copy report 和相似性解释矩阵。
-- 复杂 QC 自适应阈值与失败归因。
-- generation diagnostics 的详细 writer/tile/source 状态。
-- 更完整的 checkpoint registry、artifact registry 和审计报告。
-- 高级 UI 错误解释、报告生成和 LLM 交互编排。
-- DiT 主干、文本 embedding、全量 patch nearest-neighbor 检索。
-
-这些增强项有价值，但不应抢占第一轮开发的主体节奏。
-
-## 9. 第一轮完成标准
-
-第一轮模块化分阶段开发可视为完成，当且仅当：
+模块化分阶段开发可视为完成，当且仅当：
 
 1. Stage 1 到 Stage 7 按顺序完成。
 2. 输入 WSI 能进入 manifest，并产生 thumbnail、pyramid metadata 和 6 类 mask。
@@ -235,4 +222,3 @@ Stage Gate：
 6. 系统能写出 `generated.ome.tiff`、`generated_mask/`、`metadata.json`、`qc.json` 和 `batch.jsonl`。
 7. PySide6 控制台能调度一次生成任务，并显示任务状态和输出路径。
 
-如果这些主体能力已经成立，即使复杂 QC、非复制报告、详细诊断和高级错误解释尚未完善，也可以进入下一轮增强开发。
