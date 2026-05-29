@@ -77,7 +77,9 @@ def create_main_window(config: dict | None = None):
             self.style_seed_input = _line_edit("style_seed_input")
             self.backend_select = QComboBox()
             self.backend_select.setObjectName("backend_select")
-            self.backend_select.addItems(["smoke-cascade", "torch-diffusion-smoke"])
+            self.backend_select.addItems(
+                ["smoke-cascade", "torch-diffusion-smoke", "production-tile-stream"]
+            )
             self.condition_packet_input = _line_edit("condition_packet_input")
             self.training_index_input = _line_edit("training_index_input")
             run_layout.addRow("Prior manifest", self.prior_manifest_input)

@@ -37,9 +37,9 @@ from he_wsi_generator.schemas import validate_metadata, validate_qc_report
 class OutputQCArchiveTests(unittest.TestCase):
     def metadata_payload(self, root: Path, qc_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "generated_id": "gen-001",
-            "version": "v0.72.32",
+            "version": "v0.80.0",
             "created_at": "2026-05-23T12:00:00",
             "output": {
                 "wsi_path": str(root / "generated.ome.tiff"),

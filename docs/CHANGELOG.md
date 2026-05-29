@@ -1,5 +1,596 @@
 # CHANGELOG
 
+## v0.80.0 - 2026-05-28 审计补充
+
+### 用户需求
+
+- 用户要求再次审计整个仓库，严格基于设计文档、开发文档和当前可见代码做 `M01-M26` Stage / Module 对照审计。
+- 用户要求识别真实、非 smoke、无偏离实现，标注真实代码路径、核心函数/类、测试路径、状态分类和与 module-stage 方案的差距。
+- 用户要求如设计文档与开发文档冲突需先征求确认，不得脱离文档引入新功能设想。
+
+### 已做改动
+
+- 新增 `docs/audit/2026-05-28-stage-module-design-dev-code-audit-v0800.md`，记录当前 `v0.80.0` 可见仓库状态下的 `M01-M26` 逐项审计。
+- 审计结论明确区分：
+  - Stage Gate 最小真实链路；
+  - 设计文档中的完整 slide 级 / GB 级 H&E WSI 合成目标；
+  - smoke/proxy/fixture 路径和后置增强项。
+- 更新 `docs/DEMANDS.MD`，置顶记录本轮审计需求。
+- 本轮未修改业务代码，未升级版本号。
+
+### 影响文件
+
+- `docs/audit/2026-05-28-stage-module-design-dev-code-audit-v0800.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+
+### 验证结果
+
+- 静态审计命令：
+  - `git status --short`
+  - `git branch --show-current`
+  - `wc -c docs/plans/2026-05-18-he-wsi-generator-study-design.md docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md docs/DEMANDS.MD docs/CHANGELOG.md README.md VERSION pyproject.toml`
+  - `rg --files docs src tests | sort`
+  - `rg -n "M0[1-9]|M1[0-9]|M2[0-6]|Stage|阶段|Implementation Trace|真实|smoke|Module" docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+  - `rg -n "M0[1-9]|M1[0-9]|M2[0-6]|Stage|阶段|Implementation Trace|真实|smoke|Module" docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+  - `rg -n "class .*Tests|def test_" tests/...`
+- 文档格式检查：
+  - `git diff --check`
+- 未运行全量测试。原因：本轮为静态审计与文档产出，不修改业务代码；不把历史验证工件或历史测试结果声明为本轮重新验证。
+
+## v0.80.0 - 2026-05-27
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 的结论，只执行 `Stage 5-7` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 5-7`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现非 smoke 级的真实主体功能，处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求使用当前仓库规定的验证方式和真实 SVS `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 运行 `Stage 1-7` 链路测试，且不得使用 smoke 级代码。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 已做改动
+
+- 版本号升级到 `v0.80.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 新增 `src/he_wsi_generator/generation/latent_diffusion_internal.py`，提供 internal latent diffusion generation path：
+  - 直接加载 `latent_diffusion_unet` checkpoint；
+  - 要求 sampled layout mask condition packet；
+  - 生成四层 `1/32 -> 1/16 -> 1/4 -> 1/1` cascade RGB arrays；
+  - 在高 anchor 时从 source WSI 读取真实 RGB 作为 source condition；
+  - 输出完整 `disk_npy_tile_source_manifest` 和 level0 mask tile。
+- `src/he_wsi_generator/generation/executor.py` 的 `run_production_tile_stream_generation()` 现在支持两类 backend：
+  - 既有 external tile backend artifact；
+  - 新的 internal `latent_diffusion_unet_checkpoint`。
+- `production-tile-stream` 路径新增 `plan.cascade_generation`、`production_tile_backend=internal_latent_diffusion_unet`、以及 metadata 中的 `checkpoint_inference_contract` / `production_tile_backend` 摘要。
+- `src/he_wsi_generator/ui/workflow.py` 与 `src/he_wsi_generator/ui/pyside_app.py` 将 `production-tile-stream` 纳入 Stage7 UI/workflow backend 列表；workflow 自动为该 backend 注入 `--wsi-writer tile-streaming`。
+- 新增 `tests/test_production_latent_generation.py` 与 `tests/test_stage1_7_real_backend_e2e.py`，分别覆盖：
+  - Stage5/M20 internal latent generation 和 source-conditioned metadata；
+  - Stage7/M26 non-smoke UI/workflow E2E。
+- README、需求文档、CHANGELOG、设计文档与开发文档同步更新为当前真实边界与验证结果。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/latent_diffusion_internal.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `src/he_wsi_generator/ui/workflow.py`
+- `src/he_wsi_generator/ui/pyside_app.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `tests/test_production_latent_generation.py`
+- `tests/test_stage1_7_real_backend_e2e.py`
+- `tests/test_ui_workflow.py`
+- `tests/test_ui.py`
+- `tests/*.py` 中引用当前 schema version 的 fixture
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- 单元/回归测试：
+  - `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_training_index tests.test_training_batch tests.test_models_generation tests.test_latent_diffusion_training tests.test_torch_training tests.test_generation_runner tests.test_production_latent_generation tests.test_ui_workflow tests.test_ui tests.test_stage1_7_real_backend_e2e tests.test_version -v`
+  - 结果：通过，`Ran 152 tests ... OK`。
+- 语法与配置：
+  - `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/models/latent_diffusion_training.py src/he_wsi_generator/generation/latent_diffusion_internal.py src/he_wsi_generator/generation/executor.py src/he_wsi_generator/ui/workflow.py src/he_wsi_generator/ui/pyside_app.py src/he_wsi_generator/cli.py src/he_wsi_generator/cli_commands.py src/he_wsi_generator/constants.py`
+  - `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：均通过。
+- 真实 `291288_.svs` Stage1-7 链路：
+  - 验证目录：`build/validation/real-291288-stage1-7-v0800.GEITCR/`
+  - 已执行命令：
+    - `audit-manifest manifest.raw.json --backend openslide --output audit.raw.json`
+    - `build-pseudo-mask manifest.raw.json --backend openslide --output-dir pseudo-mask --embedder-checkpoint embedder.json --patch-width 1024 --patch-height 1024 --batch-size 512 --n-clusters 6`
+    - `audit-manifest manifest.json --backend openslide --output audit.json`
+    - `build-six-class-mask manifest.json --audit audit.json --label-mapping label-mapping.json --output-dir mask-artifacts`
+    - `build-training-index manifest.json --audit audit.json --label-mapping label-mapping.json --output training-index.jsonl`
+    - `build-layout-mask-prior training-index.jsonl --batch-size 8 --split train --cascade-level 1/1 --output layout_mask_prior.json`
+    - `build-style-prior training-index.jsonl --batch-size 8 --split train --cascade-level 1/1 --output style_prior.json`
+    - `build-texture-prior --cache-dir pseudo-mask/embedding_cache --cache-key 291288-pseudo-mask --cluster-report pseudo-mask/cluster_report.json --output texture_prior.json`
+    - `build-wsi-tissue-overview manifest.json --backend openslide --thumbnail-max-size 512 --output wsi_tissue_overview.json`
+    - `build-prior-manifest ... --qc-reference-distribution qc_reference_distribution.json --wsi-tissue-overview wsi_tissue_overview.json`
+    - `validate-prior-manifest prior/prior_manifest.json`
+    - `init-training-run training-config.json`
+    - `train-latent-diffusion-unet training-config.json`
+    - `sample-layout-mask layout_mask_prior.json --output-dir sampled-layout --sample-id 291288-v0800-layout --height 512 --width 512 --random-seed 7 --wsi-tissue-overview wsi_tissue_overview.json`
+    - `build-condition-packet generation.production.json --prior-manifest prior/prior_manifest.json --output condition_packet.json --cascade-level 1/1 --tile-origin-x 0 --tile-origin-y 0 --sampled-layout-mask sampled-layout/sampled_layout_mask.json`
+    - UI/workflow Python helper：`create_run_generation_job -> run_queued_generation_job -> load_generation_job_status -> collect_generation_job_output_summary`
+    - `validate metadata generated/.../metadata.json`
+    - `validate qc generated/.../qc.json`
+    - `inspect-output-summary --metadata generated/.../metadata.json --qc generated/.../qc.json`
+  - 结果摘要：
+    - `training-index.jsonl` 写出 `229320` 条记录；`layout_mask_prior.json` / `style_prior.json` 各使用当前版本前 `8` 条 level1 记录；`texture_prior.json` 使用当前版本 pseudo-mask embedding cache。
+    - 真实训练完成，生成 `training-run/model.pt`、`checkpoint_manifest.json`、`training_plan.json`、`training_run.json` 和 `training_log.jsonl`。
+    - 非 smoke Stage1-7 生成完成，输出目录 `generated/gen-real-291288-stage1-7-v0800/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`generation_run.json`、`generation_output_diagnostics.json`、`batch.jsonl` 和 `output_summary.json`。
+    - `metadata.json` 记录 `source_wsi_id=291288`、真实 `source_wsi_path`、`source_region=[0,0,512,512]`、`source_scale=1/1`、`generation_backend=production-tile-stream`、`wsi_writer=tile-streaming` 和 `checkpoint_inference_contract.backend_type=latent_diffusion_unet_checkpoint`。
+    - `inspect-output-summary` 结果为 `qc_status=pass`，三级 QC 状态均为 `pass`。
+
+## v0.79.0 - 2026-05-27
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 的结论，只执行 `Stage 4` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 4`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现非 smoke 级的真实主体功能，处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求使用当前仓库规定的验证方式和真实 SVS `/home/muhengliao/LMH2025/Data/raw_data/Pancancer_Fanhong/Breast_cancer_N=137/291288_.svs` 运行 `Stage 1-4` 链路测试，且不得使用 smoke 级代码。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 已做改动
+
+- 版本号升级到 `v0.79.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 新增 `src/he_wsi_generator/models/latent_diffusion_training.py`，实现最小真实 Stage4 backend：
+  - 复用 `create_training_run()` 做 contract gate；
+  - 执行 `prior_ready -> image_generator -> wsi_consistency` 三阶段训练；
+  - 训练 tile VAE、conditioned latent U-Net 和 semantic mask head；
+  - 使用真实 `mask + previous_scale + source_condition + coord + style/texture summary + structure_anchor` 条件；
+  - 记录 `stage_execution`、`anchor_training`、`dataset_sampling`、`condition_feature_schema`、`cross_scale_condition_schema` 和 `source_condition_schema`。
+- `src/he_wsi_generator/cli.py` / `src/he_wsi_generator/cli_commands.py` 新增 CLI `train-latent-diffusion-unet <training-config>`，保持 `init-training-run` 仍只负责初始化 plan/contract manifest。
+- 保留现有 `M12` training index / batch loader 主线，不新增新的 dataset 系统；仅让真实 backend 支持用 `runtime.batch_size` 对每层记录做子采样，避免大图 `training-index` 全量进内存。
+- `src/he_wsi_generator/models/__init__.py` 导出新的真实 backend。
+- 新增 `tests/test_latent_diffusion_training.py`，覆盖真实 backend 的 checkpoint 产物、三阶段执行、anchor 记录、CLI 入口和 `runtime.batch_size` 子采样行为。
+- 开发文档和设计文档的 Stage4 追踪块更新为真实 backend 路径、测试和验证命令；README 补充新命令与当前边界说明。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/latent_diffusion_training.py`
+- `src/he_wsi_generator/models/__init__.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `tests/test_latent_diffusion_training.py`
+- `tests/*.py` 中引用当前 schema version 的 fixture
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- 单元/回归测试：
+  - `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_training_index tests.test_training_batch tests.test_models_generation tests.test_latent_diffusion_training tests.test_torch_training tests.test_version -v`
+  - 结果：通过，`Ran 77 tests ... OK`。
+- 语法与配置：
+  - `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/models/latent_diffusion_training.py src/he_wsi_generator/models/__init__.py src/he_wsi_generator/cli.py src/he_wsi_generator/cli_commands.py src/he_wsi_generator/constants.py`
+  - `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：均通过。
+- 真实 `291288_.svs` Stage1-4 链路：
+  - 验证目录：`build/validation/real-291288-stage1-4-v0790.ITFzbb/`
+  - 已执行命令：
+    - `audit-manifest manifest.json --backend openslide --output audit.json`
+    - `build-training-index manifest.json --audit audit.json --label-mapping label-mapping.json --output training-index.jsonl`
+    - `build-layout-mask-prior training-index.jsonl --batch-size 8 --split train --cascade-level 1/1 --output layout_mask_prior.json`
+    - `build-style-prior training-index.jsonl --batch-size 8 --split train --cascade-level 1/1 --output style_prior.json`
+    - `build-texture-prior --cache-dir build/validation/real-291288-stage1-7-v0770.YXQuif/pseudo-mask/embedding_cache --cache-key 291288-pseudo-mask --cluster-report build/validation/real-291288-stage1-7-v0770.YXQuif/pseudo-mask/cluster_report.json --output texture_prior.json`
+    - `build-wsi-tissue-overview manifest.json --backend openslide --thumbnail-max-size 512 --output wsi_tissue_overview.json`
+    - `build-prior-manifest ... --qc-reference-distribution qc_reference_distribution.json --wsi-tissue-overview wsi_tissue_overview.json`
+    - `validate-prior-manifest prior/prior_manifest.json`
+    - `init-training-run training-config.json`
+    - `train-latent-diffusion-unet training-config.json`
+  - 结果摘要：
+    - `training-index.jsonl` 写出 `229320` 条记录，`records_by_level` 为 `57330 x 4`。
+    - 真实 prior manifest 构建通过，包含 `layout_mask_prior`、`style_prior`、`texture_prior`、`qc_reference_distribution` 和 `wsi_tissue_overview` 五类 artifact。
+    - 真实训练完成，输出 `training-run/model.pt`、`checkpoint_manifest.json`、`training_plan.json`、`training_run.json` 和 `training_log.jsonl`。
+    - `checkpoint_manifest.json` 记录 `usable_for_inference=true`、`training_backend=latent_diffusion_unet`、`input_channels=26`、`output_channels=4`、`latent_size=32`、三阶段 `completed`、`anchor_training.low/medium/high = 64/64/64`、`dataset_sampling.batch_size_by_level = 8 x 4`。
+
+## v0.78.1 - 2026-05-27
+
+### 用户需求
+
+- 用户要求阅读 `docs/` 后，根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 的结论，只执行 `Stage 1-3` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 1-3`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现非 smoke 级的真实主体功能，处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 Stage Gate 的最小必要改动，并使用当前仓库规定的验证方式运行测试。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 已做改动
+
+- 版本号升级到 `v0.78.1`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 仅对 `Stage 1-3 / M08` 做收敛，不改 pseudo-mask 主流程、batch streaming、聚类或 Stage 4+ 功能。
+- `src/he_wsi_generator/embeddings/embedder.py` 将 `CheckpointPatchEmbedder` 明确为 checkpoint-backed statistical patch embedder：checkpoint 错误文案改为 JSON config object，metadata 新增 `embedding_backend`、`embedder_kind`、`checkpoint_format`、`production_ready=false` 和 `limitations`。
+- `FixturePatchEmbedder` metadata 同步显式声明 `statistical_patch_moments_only`、`not_a_pathology_foundation_model` 和 `fixture_smoke_only`。
+- `src/he_wsi_generator/priors/pseudo_mask.py` 为 `cluster_pseudo_mask.json` 顶层新增 `embedding_summary`，让 pseudo-mask artifact 可以直接审计当前统计型 embedding / clustering 契约，无需再下钻 embedding cache metadata。
+- `src/he_wsi_generator/cli.py` 将 `build-pseudo-mask` 和 `--embedder-checkpoint` 的帮助文案改为统计型 patch embedding 表述，避免暗示真实 pathology foundation model。
+- `README.md`、`docs/DEMANDS.MD`、`docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md` 和 `docs/plans/2026-05-18-he-wsi-generator-study-design.md` 同步更新为 `M08` 的真实边界表述，并补齐代码追踪中的函数、测试和验证命令。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/embeddings/embedder.py`
+- `src/he_wsi_generator/priors/pseudo_mask.py`
+- `src/he_wsi_generator/cli.py`
+- `tests/test_embeddings.py`
+- `tests/test_pseudo_mask_pipeline.py`
+- `tests/test_cli.py`
+- `tests/*.py` 中引用当前 schema version 的 fixture
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_wsi_io tests.test_annotations tests.test_embeddings tests.test_pseudo_mask_pipeline tests.test_cli tests.test_schemas tests.test_version -v`
+  - 结果：通过，`Ran 45 tests ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/embeddings/embedder.py src/he_wsi_generator/priors/pseudo_mask.py src/he_wsi_generator/cli.py`
+  - 结果：通过。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，输出 `generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过。
+
+## v0.78.0 - 2026-05-27
+
+### 用户需求
+
+- 用户要求真实 `.svs` Stage 1-7 全链路按已确认方案做内存收敛，避免 pseudo-mask 构建一次性持有全部 patch，以及 six-class mask merge 构造 full-image per-pixel `source_trace`。
+- 用户确认不解耦 `read_window_size / embed_size / stride`，只把 patch 读取和 embedding 改为 chunk/batch streaming。
+- 用户确认 `batch_size` 固定默认使用 `512`。
+- 用户确认取消 per-pixel `source_trace`，改为 compact provenance summary。
+- 用户确认 full level0 six-class `.npy` mask 可作为临时中间文件写盘，但只在全流程目标输出成功后删除，最终 `generated_mask/mask.npy` 不删除。
+- 用户要求所有图统一走同一套 streaming/block 流程，不保留小图/大图 AB 路径。
+
+### 已做改动
+
+- 版本号升级到 `v0.78.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `build_pseudo_mask_from_manifest()` 新增 `batch_size=512` 默认参数，按 batch 读取 patch 并调用 embedder，保留“所有 patch embedding 一起聚类”的行为。
+- `pseudo_mask.npy` 改为 `numpy.lib.format.open_memmap()` 写出，`cluster_pseudo_mask.json` 记录 `batch_size`、`embedding_batch_count`、`streaming_patch_embedding` 和 `mask_write_mode`。
+- `build_six_class_mask()` 改为统一 block streaming merge，可写入 `.npy` memmap；移除 full-image per-pixel `source_trace`，新增 `compact_provenance_summary`。
+- compact provenance summary 记录全局 class counts、annotation class counts、block class counts、priority order、same-priority conflict count 和最多 5 个冲突样例。
+- `build_six_class_mask_artifact()` 直接写出临时 full level0 mask memmap 和 metadata，artifact/summary 标记 `temporary_intermediate=true` 与 cleanup policy。
+- 新增 `cleanup_temporary_six_class_masks()`，要求所有目标输出路径存在后才删除临时 six-class mask。
+- `_load_project_mask_tile()` 对 `.npy` mask 使用 `numpy.load(..., mmap_mode="r")`。
+- CLI `build-pseudo-mask` 新增 `--batch-size` 参数，默认 `512`。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/priors/pseudo_mask.py`
+- `src/he_wsi_generator/annotations/masks.py`
+- `src/he_wsi_generator/annotations/pipeline.py`
+- `src/he_wsi_generator/annotations/__init__.py`
+- `src/he_wsi_generator/outputs/masks.py`
+- `src/he_wsi_generator/models/training_batch.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `tests/test_pseudo_mask_pipeline.py`
+- `tests/test_annotations.py`
+- `tests/test_training_batch.py`
+- `tests/test_cli.py`
+- `tests/test_version.py`
+- 版本 fixture 更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_pseudo_mask_pipeline tests.test_annotations tests.test_training_batch tests.test_cli tests.test_version -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现缺少 batch streaming 参数、compact provenance、cleanup helper、mmap 读取和 CLI 参数；实现后通过，`Ran 29 tests ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/priors/pseudo_mask.py src/he_wsi_generator/annotations/masks.py src/he_wsi_generator/annotations/pipeline.py src/he_wsi_generator/outputs/masks.py src/he_wsi_generator/models/training_batch.py src/he_wsi_generator/cli.py src/he_wsi_generator/cli_commands.py`
+  - 结果：通过。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_stage1_7_e2e -v`
+  - 结果：通过，`Ran 1 test ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，`generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：通过。
+- 真实 `.svs` Stage 1-7 全链路复跑：
+  - 结果：完成于 `build/validation/real-291288-stage1-7-v0770.YXQuif/`。
+  - pseudo-mask：`patch_size=[1024,1024]`、`batch_size=512`、`patch_count=14536`、`embedding_batch_count=29`，写出 `pseudo-mask/pseudo_mask.npy`，shape `[93498,161352]`。
+  - six-class mask：block streaming 写出 `mask-artifacts/six_class_mask_summary.json`，compact provenance `block_summaries=920`、`same_priority_conflict_count=0`。
+  - 生成输出：`generated/gen-real-291288-stage1-7-v0780/` 包含 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`qc_review.json`、`generation_run.json`、`batch.jsonl`、`output_summary.json`；最终 mask shape `[512,512]`，类别覆盖 `[0,1,2,3,4,5]`。
+  - QC 状态为 `fail`，原因是 smoke backend/proxy reference limitation；`qc_review.json` 已记录 `decision=accepted`。
+  - 临时 full level0 six-class mask `mask-artifacts/291288/mask.npy` 已在目标输出存在后删除；最终 `generated_mask/mask.npy` 保留。
+
+## v0.77.0 - 2026-05-26
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 7` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 7`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求完成后复核 `Stage 1-7` 的链路是否通畅，确认无误后更新相关开发文档。
+
+### 已做改动
+
+- 版本号升级到 `v0.77.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 本轮只推进 `Stage 7 / M26`，不扩展 `M23-M25` 的功能面。
+- 新增 [test_stage1_7_e2e.py](/home/muhengliao/LMH2025/Project/MultiCenterWSIGenerator/tests/test_stage1_7_e2e.py)，把分散的 smoke/E2E 检查收束成固定、最小、可重复的 `Stage 1-7` 端到端验收入口。
+- `src/he_wsi_generator/ui/workflow.py` 新增可选 `job_root` 解析，允许 UI workflow helper 在不改变默认行为的前提下，把 job 状态目录与最终生成输出目录解耦。
+- 完成 `Stage 1-7` 主链复核，确认当前版本下 job 创建、执行、状态读取、run-generation 输出、metadata/qc/batch index 和 output summary 可串通。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/ui/workflow.py`
+- `tests/test_stage1_7_e2e.py`
+- `tests/test_ui_workflow.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_stage1_7_e2e -v`
+  - 结果：开发过程中多轮 RED 失败符合预期，先后暴露了固定 E2E 入口中 generation config 未提前落盘、output_root 非空导致 run-generation 阻断，以及 workflow helper 默认把 job root 固定到 `output_root/ui_jobs` 的路径耦合问题。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_ui_workflow.UIWorkflowTests.test_run_generation_job_helpers_honor_explicit_job_root -v`
+  - 结果：通过，`Ran 1 test ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_ui_workflow tests.test_ui tests.test_stage1_7_e2e tests.test_version -v`
+  - 结果：通过，`Ran 43 tests ... OK`。
+- `Stage 1-7` 主链复核：
+  - 结果：通过，验证目录 `build/validation/stage1-7-chain-v0760.mdbi3uex/`；job 状态 `queued -> completed -> completed`，output summary 能定位 `generated.ome.tiff`、`mask.npy`、`qc.json`、`metadata.json`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/ui/workflow.py`
+  - 结果：待本轮最后统一执行。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：待本轮最后统一执行。
+- `git diff --check`
+  - 结果：待本轮最后统一执行。
+
+## v0.76.0 - 2026-05-26
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 6` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 6`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求完成后复核 `Stage 1-6` 的链路是否通畅，确认无误后更新相关开发文档。
+
+### 已做改动
+
+- 版本号升级到 `v0.76.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 本轮只推进 `Stage 6 / M20`，不扩展 `M21/M22`。
+- `src/he_wsi_generator/generation/executor.py::_metadata_payload` 收敛 metadata 主线：
+  - 新增 `_metadata_source_payload()`，在 source-conditioned 路径下回填真实 `source_wsi_id / source_wsi_path / source_region / source_scale`。
+  - 新增 `_metadata_mask_schema()`，在 sampled layout mask 条件下按 schema 允许范围回填真实 artifact provenance，不再只保留空 mapping。
+- 完成 `Stage 1-6` CLI 主链复核，确认当前版本生成的 `metadata.json / qc.json / batch.jsonl` 均能落盘，且 source-conditioned 生成样本的 metadata 已真实记录 source WSI 关系。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_uses_source_conditioned_mix_for_high_anchor tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_uses_sampled_layout_mask_condition -v`
+  - 结果：开发过程中 RED 失败符合预期，旧 metadata 仍是 source 占位值，sampled layout mask 仍只写 placeholder `mask_schema`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_outputs_qc_archive tests.test_generation_runner tests.test_qc_review tests.test_ui tests.test_ui_workflow -v`
+  - 结果：通过，`Ran 116 tests ... OK`。
+- `Stage 1-6` CLI 主链复核：
+  - 结果：通过，验证目录 `build/validation/stage1-6-chain-v0750.38NufZ/`；`training_run.status=initialized_not_trained`，生成样本 `metadata.source` 已记录真实 source WSI 路径与 region，`qc.json` 和 `batch.jsonl` 正常落盘。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/generation/executor.py`
+  - 结果：待本轮最后统一执行。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：待本轮最后统一执行。
+- `git diff --check`
+  - 结果：待本轮最后统一执行。
+
+## v0.75.0 - 2026-05-26
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 5` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 5`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户明确要求不要开发任何 smoke 级新代码；若必须复用此前完成的 smoke 代码，需要将其迁移到主代码路径。
+- 用户要求完成后复核 `Stage 1-5` 链路是否通畅，确认无误后再更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 已做改动
+
+- 版本号升级到 `v0.75.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 本轮只推进 `Stage 5 / M16 / M18`，不扩展 Stage 6+。
+- `src/he_wsi_generator/generation/executor.py` 收敛 `M16`：
+  - 把现有 `run_smoke_generation()` 中可复用的 cascade 编排逻辑迁入共享 `Stage 5` 主路径 `_run_stage5_shared_cascade_core()`。
+  - `generation_run.json` / plan 现在显式记录 `cascade_generation.pipeline_role=shared_stage5_cascade_core`、四层顺序和 tile traversal/blending 摘要。
+- `src/he_wsi_generator/generation/executor.py` 补齐 `M18`：
+  - 新增最小真实 `source_tile_rgb_mix` 行为，不再把新增功能挂在 smoke-only 分支。
+  - 当 `structure_anchor > 0.3` 且存在 `source_wsi_id` 时，主路径会读取 source WSI 对应 tile，并按 anchor 强度与生成 tile 混合。
+  - 若 CLI/调用方未显式传 `source_wsi_path`，主路径会从 prior manifest 的 `input_data.manifest_path` 中解析 `source_wsi_id -> wsi_path`。
+- 完成 `Stage 1-5` CLI 主链复核，确认在当前代码边界下链路通畅。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/generation/executor.py`
+- `tests/test_generation_runner.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_records_shared_stage5_cascade_core tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_uses_source_conditioned_mix_for_high_anchor -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现缺少 `plan.cascade_generation`，且 `run_smoke_generation()` 不接受 `source_wsi_path`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_runner.GenerationRunnerTests.test_run_smoke_generation_resolves_source_wsi_from_prior_input_manifest -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现会回落到 `de_novo_generation`，不会从 prior manifest 解析 source WSI。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_generation_tiling tests.test_generation_runner -v`
+  - 结果：通过，`Ran 43 tests ... OK`。
+- `Stage 1-5` CLI 主链复核：
+  - 结果：通过，验证目录 `build/validation/stage1-5-chain-v0740.vrjIfE/`；`training_run.status=initialized_not_trained`，`generation_run.plan.cascade_generation.source_condition.mode=source_tile_rgb_mix`，四层 OME-TIFF shape 为 `[512,512,3] -> [128,128,3] -> [32,32,3] -> [16,16,3]`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/generation/executor.py`
+  - 结果：待本轮最后统一执行。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：待本轮最后统一执行。
+- `git diff --check`
+  - 结果：待本轮最后统一执行。
+
+## v0.74.0 - 2026-05-26
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 4` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 4`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 `Stage 4 Gate` 的最小必要改动，并使用当前仓库规定的验证方式运行测试。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 已做改动
+
+- 版本号升级到 `v0.74.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- 本轮只推进 `Stage 4 / M12`，不扩展 `M13-M15`。
+- `src/he_wsi_generator/models/training_index.py::build_training_index` 由纯 contract 级记录收敛为最小多倍率训练样本主线：
+  - 在既有四层记录结构上新增显式 `conditioning.style`、`conditioning.texture`、`conditioning.coord`、`conditioning.source`、`conditioning.structure_anchor`。
+  - `conditioning.coord` 现在记录每个 `cascade_level` 对应的 `target_image_shape` 与 `target_mask_shape`。
+- `src/he_wsi_generator/models/training_batch.py::load_training_batch` 现在会按目标 `cascade_level` 返回对应分辨率的 image/mask batch，不再把 `1/32 / 1/16 / 1/4` 都固定为 `512x512`。
+- `load_training_batch()` 对 mask/image tile 的缩放采用最小必要的 nearest 策略，只为满足 Stage 4 样本主线，不提前引入 Stage 5/生成阶段逻辑。
+- README、需求记录和 Stage 4 相关设计/开发文档代码追踪块同步到本轮边界。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/models/training_index.py`
+- `src/he_wsi_generator/models/training_batch.py`
+- `tests/test_training_index.py`
+- `tests/test_training_batch.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_training_index tests.test_training_batch -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现缺少 `conditioning.style/coord/source/structure_anchor`，且 lower cascade level 仍固定输出 `512x512`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_training_index tests.test_training_batch -v`
+  - 结果：通过，`Ran 10 tests ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_models_generation tests.test_torch_training -v`
+  - 结果：通过，`Ran 61 tests ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/models/training_index.py src/he_wsi_generator/models/training_batch.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：待本轮最后统一执行。
+- `git diff --check`
+  - 结果：待本轮最后统一执行。
+- 本轮暂未执行 Stage 5+ 生成、writer、QC 或 UI 相关测试；原因是本轮按用户要求只收敛 Stage 4 的 `M12`。
+
+## v0.73.0 - 2026-05-26
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 1-3` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 1-3`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 Stage Gate 的最小必要改动，补充或调整必要测试，并使用当前仓库规定的验证方式运行测试。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 已做改动
+
+- 版本号升级到 `v0.73.0`，同步 `VERSION`、`pyproject.toml`、`src/he_wsi_generator/constants.py`、`configs/generation.default.json` 和测试断言。
+- `src/he_wsi_generator/io/audit.py::audit_manifest` 收敛 Stage 1 `M03`，在既有 WSI metadata audit 上补充 `center_id`、`tissue_type` 和 `annotation_summary`。
+- `src/he_wsi_generator/annotations/masks.py` 收敛/补齐 Stage 2 `M05/M07`：
+  - 新增 `load_annotation_source()`，统一读取 `png_mask`、`numpy_mask`、`roi_json` 和 `cluster_pseudo_mask`。
+  - 新增 `build_six_class_mask()`，把人工 mask、ROI 和聚类伪 mask 候选按 `manual_mask > roi_json > cluster_pseudo_mask` 合并为统一 6 类 level0 mask。
+  - 对 transform 非整数对齐、越界、未映射编号和同优先级冲突显式报错，不做 silent fallback。
+- 新增 `src/he_wsi_generator/annotations/pipeline.py::build_six_class_mask_artifact` 与 CLI `build-six-class-mask`，把 manifest、audit 和 label mapping 收束为 `six_class_mask_summary.json` 及每张 WSI 的 mask artifact。
+- 新增 `src/he_wsi_generator/priors/pseudo_mask.py::build_pseudo_mask_from_manifest` 与 CLI `build-pseudo-mask`，补齐 Stage 3 `M08` 的最小闭环：单张 WSI patch extraction、PatchEmbedder、embedding cache、cluster report 和 `cluster_pseudo_mask` 候选 artifact。
+- `src/he_wsi_generator/embeddings/cluster.py` 修正 cluster center 初始化策略，避免前导重复 embedding 行导致空簇退化，保证 pseudo-mask pipeline 在当前 fixture 场景下能形成有效 cluster。
+- README、需求记录和新的 Stage/Module 审计文档同步到本轮收敛边界；本轮没有扩展 Stage 4-7 主体实现。
+
+### 影响文件
+
+- `VERSION`
+- `pyproject.toml`
+- `configs/generation.default.json`
+- `src/he_wsi_generator/constants.py`
+- `src/he_wsi_generator/io/audit.py`
+- `src/he_wsi_generator/annotations/masks.py`
+- `src/he_wsi_generator/annotations/pipeline.py`
+- `src/he_wsi_generator/annotations/__init__.py`
+- `src/he_wsi_generator/priors/pseudo_mask.py`
+- `src/he_wsi_generator/priors/__init__.py`
+- `src/he_wsi_generator/embeddings/cluster.py`
+- `src/he_wsi_generator/cli.py`
+- `src/he_wsi_generator/cli_commands.py`
+- `tests/test_wsi_io.py`
+- `tests/test_annotations.py`
+- `tests/test_embeddings.py`
+- `tests/test_pseudo_mask_pipeline.py`
+- `tests/test_cli.py`
+- 版本断言更新涉及 `tests/*.py`
+- `README.md`
+- `docs/DEMANDS.MD`
+- `docs/CHANGELOG.md`
+- `docs/audit/2026-05-26-module-stage-code-audit.md`
+- `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+- `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+
+### 验证结果
+
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_wsi_io tests.test_annotations tests.test_pseudo_mask_pipeline -v`
+  - 结果：开发过程中 RED 失败符合预期，旧实现缺少 `center_id` 审计字段、`build_six_class_mask`、`load_annotation_source` 和 `he_wsi_generator.priors.pseudo_mask`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_embeddings tests.test_pseudo_mask_pipeline -v`
+  - 结果：开发过程中 RED 失败符合预期，旧聚类初始化退化为 `{'0': 4, '1': 0}`，导致 pseudo mask 只有单一 cluster。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_embeddings tests.test_pseudo_mask_pipeline -v`
+  - 结果：通过，`Ran 9 tests ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m unittest tests.test_wsi_io tests.test_annotations tests.test_embeddings tests.test_pseudo_mask_pipeline tests.test_cli tests.test_schemas tests.test_wsi_tissue_overview tests.test_layout_mask_prior tests.test_layout_mask_sampler tests.test_style_prior tests.test_texture_prior tests.test_priors -v`
+  - 结果：通过，`Ran 76 tests ... OK`。
+- `conda run -n MultiCenterWSIGenerator python -m py_compile src/he_wsi_generator/io/audit.py src/he_wsi_generator/annotations/masks.py src/he_wsi_generator/annotations/pipeline.py src/he_wsi_generator/priors/pseudo_mask.py src/he_wsi_generator/embeddings/cluster.py src/he_wsi_generator/cli.py src/he_wsi_generator/cli_commands.py`
+  - 结果：通过，无输出。
+- `conda run -n MultiCenterWSIGenerator python -m he_wsi_generator.cli validate generation-config configs/generation.default.json`
+  - 结果：通过，输出 `generation-config valid: configs/generation.default.json`。
+- `git diff --check`
+  - 结果：待本轮最后统一执行。
+- 本轮暂未执行真实 SVS 全链路、Stage 4+ 训练/生成、editable install 或全量 300+ 测试；原因是本轮按用户要求只收敛 Stage 1-3 主体链路，并按开发文档建议围绕该阶段相关模块做集中验证。
+
 ## v0.72.32 - 2026-05-25
 
 ### 用户需求

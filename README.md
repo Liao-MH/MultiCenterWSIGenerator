@@ -1,12 +1,30 @@
 # MultiCenterWSIGenerator
 
-- 当前版本：v0.72.32
-- 当前状态：训练索引、production training dataset contract、training index JSONL 证据核对、training objective/loss/QC mapping contract、production training plan artifact、RGB/mask training batch loader、WSI tissue overview、统计型 layout/mask、fitted style latent prior、fitted texture morphology latent/codebook 契约、style/texture prior、prior manifest builder、prior production readiness contract gate、production prior component contract interface、generation condition packet 与 smoke/PyTorch diffusion smoke 条件包记录、sampled style/texture policy condition packet 条件摘要接入、sampled style/texture policy generation 输出摘要保留、PyTorch diffusion smoke 条件通道注入、PyTorch diffusion smoke cross-scale condition、PyTorch VAE smoke latent autoencoder、smoke latent U-Net denoiser、VAE latent diffusion smoke training/sampling、PyTorch diffusion smoke generation、PyTorch diffusion smoke checkpoint inference planning contract、checkpoint inference artifact contract gate、generation backend compatibility gate、inference architecture/condition contract gate、generation tile traversal / overlap blending 基础设施、`blend_rgb_tiles` 的 channel-wise 累积内存优化、可恢复 tile manifest contract、smoke tile resume execution、OME-TIFF chunked write audit、磁盘 `.npy` tile source contract 校验、磁盘 tile source 内存组装写出、磁盘 tile source tiled iterator streaming 写出、smoke 四层 tile source streaming 写出、smoke tile-streaming 直接生成四层磁盘 tile source（不再先构造整张 blended canvas）、direct tile source 物化 resume manifest、torch-diffusion-smoke tile-streaming writer 接入、streaming writer pyramid level contract、tile iterator streaming writer 原子发布事务 manifest、OME streaming writer progress sidecar、OME streaming started transaction temporary publish recovery、已发布目标 OME-TIFF 验证复用、OME streaming 写入前磁盘空间 preflight、`production_tile_requests/*.request.json` per-tile request manifest、production failed tile 显式 retry/resume、production tile backend execution evidence、`generation_output_diagnostics.json` 输出诊断 manifest、可审计 sampled style/texture policy artifact、QC reference robust IQR/MAD z-score estimator、outlier audit、显式分层阈值 artifact 与运行时 exact-match stratum QC 消费、自动 QC、writer tile-grid seam QC proxy、stain/focus QC proxy、mask-image tissue alignment QC proxy、文件级 `qc_review` 审阅工作流、`qc-review` 与 `generation-output-diagnostics` 通用校验入口、本地 job runner/CLI 任务取消/查看/列表/cwd/输出摘要 metadata/QC/review 契约校验、可交互 PySide6 单页配置页、GUI 内同步执行/刷新 queued job 与输出摘要查看阶段；v0.72.24 新增 production-tile-stream 外部 tile generator backend，支持 production-ready checkpoint 合同、逐 tile 磁盘生成、可恢复 tile source manifest、memmap mask 写出、streaming QC 和原子 OME-TIFF 发布；v0.72.26 新增 OME streaming writer 对上次 started transaction 完整临时 OME-TIFF 的验证发布恢复；v0.72.27 新增 production per-tile request sidecar manifest 和 `{tile_request_path}` 外部 backend 输入合同；v0.72.28 新增 production tile source failed tile 显式重试恢复；v0.72.29 新增 completed transaction 对已发布目标 OME-TIFF 的验证复用；v0.72.30 新增 OME streaming writer 磁盘空间 preflight；v0.72.31 新增 production tile backend 执行证据摘要；v0.72.32 新增 OME streaming writer progress sidecar/transaction 证据；仍不实现内置 production latent diffusion/ControlNet/DiT 训练、本体推理模型或同一 OME-TIFF 文件的中断追加写入
+- 当前版本：v0.80.0
+- 当前状态：在既有 Stage 1-7 主链基础上，已把 Stage 5-7 收敛到非 smoke 的最小真实主线：`production-tile-stream` 现在可以直接消费 `latent_diffusion_unet_checkpoint`，内部用真实 Stage4 checkpoint 生成四层 cascade tile source，再写出 OME-TIFF、mask、metadata、QC 和 batch index；UI/workflow 已暴露 `production-tile-stream`，并新增 non-smoke Stage1-7 E2E 入口。当前 `291288_.svs` 验证链已经在 `v0.80.0` 下跑通 source-conditioned `Stage 1-7`。
 - GitHub 仓库：[Liao-MH/MultiCenterWSIGenerator](https://github.com/Liao-MH/MultiCenterWSIGenerator)
 
 本项目用于开发一个面向 H&E 染色 Whole Slide Image（WSI）的本地化数据生成器。最终系统目标是从真实 WSI 学习组织 layout、疾病无关区域 mask、成像风格和多倍率纹理分布，生成新的 OME-TIFF pyramid WSI，并同步输出 mask、metadata、QC JSON 与 batch JSONL index。
 
 ## 当前已实现
+
+v0.80.0 根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 对 Stage 5-7 的结论，补齐并收敛了 `M16 / M18 / M20 / M23 / M26`：新增 internal latent diffusion generation path，把 `latent_diffusion_unet` checkpoint 接进 `production-tile-stream`，不再要求只能是外部 tile backend artifact；该路径会读取 condition packet 中的 sampled layout mask、style/texture summary，并在高 anchor 时真实读取 source WSI RGB 作为模型条件。与此同时，metadata 现在会显式记录 `checkpoint_inference_contract`、`production_tile_backend` 和真实 `source_wsi_path / source_region / source_scale`；`ui.workflow` 与 PySide6 UI 已开放 `production-tile-stream` 选择；新增 `tests/test_production_latent_generation.py` 与 `tests/test_stage1_7_real_backend_e2e.py` 作为 non-smoke Stage5-7 / Stage1-7 验收入口。真实 `291288_.svs` 链路已在 `build/validation/real-291288-stage1-7-v0800.GEITCR/` 生成 `generated.ome.tiff`、`generated_mask/mask.npy`、`metadata.json`、`qc.json`、`generation_run.json`、`generation_output_diagnostics.json`、`batch.jsonl` 和 `output_summary.json`。
+
+v0.79.0 根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 对 Stage 4 的结论，补齐了 `M13-M15` 的最小真实主体实现，并保持 `M12` 不继续膨胀：新增独立 `latent_diffusion_training` backend 和 CLI `train-latent-diffusion-unet`，在不改变 `init-training-run` contract gate 语义的前提下执行真实三阶段训练。该 backend 会从 Stage3 prior 中读取 style/texture 摘要，使用真实 image/mask tile、observed previous-scale RGB、observed source RGB 和 `structure_anchor` preset 训练一个最小 `latent_diffusion_unet` checkpoint，并把 `stage_execution`、`dataset_sampling`、`anchor_training`、`condition_feature_schema`、`cross_scale_condition_schema` 和 `source_condition_schema` 显式写入 `checkpoint_manifest.json`。真实 `291288_.svs` 验证链中，本轮已在 `229320` 条 training-index 记录上通过 `runtime.batch_size=8` 做每层子采样训练，避免大图全量记录直接进内存。
+
+v0.78.1 根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 对 Stage 1-3 的结论，只对 `M08` 做了最小收敛：`CheckpointPatchEmbedder` 现在明确是“checkpoint-backed statistical patch embedder”，其 metadata 会显式记录 `embedding_backend=statistical_patch_moments`、`embedder_kind`、`production_ready=false` 和 `limitations=["statistical_patch_moments_only","not_a_pathology_foundation_model"]`；`cluster_pseudo_mask.json` 顶层新增 `embedding_summary`，让下游在不读取 embedding cache metadata 的情况下也能直接审计当前 pseudo-mask 路径的统计型边界。CLI `build-pseudo-mask` 的帮助文案也同步改为统计型 patch embedding 表述，不再暗示真实 pathology foundation model。
+
+v0.78.0 针对真实 `.svs` Stage 1-7 全链路的内存风险做了收敛式补齐：pseudo-mask 构建保持“所有 patch embedding 参与聚类”的行为，但 patch 读取与 embedder 调用改为 batch streaming，默认 `batch_size=512` 并在 artifact manifest 中记录 batch 元数据；six-class mask 合并统一走 block streaming 路径，写盘时使用 `.npy` memmap，不再构造 per-pixel `source_trace`，改为记录全局/annotation/block class counts、priority order 和冲突摘要；training batch 对 `.npy` mask 使用 mmap 读取 tile；annotation pipeline 新增临时 six-class mask cleanup helper，要求目标输出文件存在后才删除中间 full level0 mask。
+
+v0.77.0 针对 `docs/audit/2026-05-26-module-stage-code-audit.md` 中 Stage 7 的 `M26` 做了收敛式补齐：新增固定 `tests/test_stage1_7_e2e.py` 作为最小、可重复的端到端验收入口，不再只依赖分散 smoke 用例。该入口会复用真实 Stage 1-6 工件构造，并通过 `ui.workflow` 的 job 创建、执行、状态读取和 output summary 收集串起完整 Stage 7 路径。与此同时，`ui.workflow` 新增可选 `job_root` 解析，使 job 状态目录可以与最终生成输出目录解耦，避免 E2E 验收时出现“job root 必须塞进 output_root 才能被 helper 找到，但 output_root 非空又会阻断 run-generation”的结构性冲突。
+
+v0.76.0 针对 `docs/audit/2026-05-26-module-stage-code-audit.md` 中 Stage 6 的 `M20` 做了收敛式补齐：`_metadata_payload()` 不再统一把 source 关系写成占位值。对于 source-conditioned 生成，metadata 会真实记录 `source_wsi_id`、`source_wsi_path`、`source_region` 和 `source_scale=1/1`；对于 sampled layout mask 条件，`mask_schema` 会在现有 schema 允许的 `mapping_source` 枚举内回填真实 artifact provenance。基于当前版本重新复核的 `Stage 1-6` CLI 主链中，生成样本的 `metadata.json` 已能正确回填 source 路径并与 `qc.json / batch.jsonl` 一起落盘。
+
+v0.75.0 针对 `docs/audit/2026-05-26-module-stage-code-audit.md` 中 Stage 5 的 `M16 / M18` 做了收敛式补齐：`run_smoke_generation()` 中原本承担 Stage 5 主体职责的 tile 物化、四层顺序、tile traversal/blending 和 writer handoff 逻辑已收束到共享 `Stage 5 cascade core`；`generation_run.json` 和 plan 中新增 `cascade_generation` 摘要。与此同时，source-conditioned 行为不再只停留在 condition packet 契约：当 `structure_anchor` 足够高且能解析到 `source_wsi_id -> wsi_path` 时，主路径会读取 source tile 并做真实 RGB 混合，输出 `source_tile_rgb_mix` 模式的生成结果。CLI 主链下若未显式传 `source_wsi_path`，会从 prior manifest 的 `input_data.manifest_path` 解析 source WSI。
+
+v0.74.0 针对 `docs/audit/2026-05-26-module-stage-code-audit.md` 中 Stage 4 的 `M12` 做了收敛式补齐：`build_training_index()` 现在会在保留现有记录结构的同时，显式写出 `conditioning.style`、`conditioning.texture`、`conditioning.coord`、`conditioning.source` 和 `conditioning.structure_anchor`，其中 `conditioning.coord` 记录每个 cascade level 对应的 `target_image_shape / target_mask_shape`；`load_training_batch()` 会按目标 cascade level 对 mask 和 image tile 做最小必要的 nearest resize，使 `1/32`、`1/16`、`1/4`、`1/1` 四层样本真正对应到不同训练尺度，而不是都落回 level0 大小。
+
+v0.73.0 针对 `docs/audit/2026-05-26-module-stage-code-audit.md` 中 Stage 1-3 的真实缺口做了收敛式补齐：`audit_manifest()` 现在除 WSI 尺寸、倍率和 backend 外，还记录 `center_id`、`tissue_type` 和每个 annotation 的最小摘要；annotation 主线新增统一 loader，可读取 raster mask 和 ROI JSON；`build-six-class-mask` 会把 manifest annotation、audit 尺寸信息和 label mapping 收束成对齐的 6 类 mask artifact，并在来源冲突时严格按 `manual mask > ROI > cluster pseudo mask` 处理；`build-pseudo-mask` 会从 manifest 中的单张 WSI 抽 patch、调用现有 `PatchEmbedder`、落 embedding cache、聚类并回写 `cluster_pseudo_mask` 候选 artifact，作为 Stage 3 的最小 pseudo-mask 条件对象。
 
 v0.72.32 在 OME streaming writer 的 GB 级写入诊断中新增 progress sidecar：正常完整写出会生成 `<target>.progress.json`，记录计划 level/tile 数、已 yield 给 `tifffile` 的 tile 数、当前 level/tile 位置、最后更新时间和 `progress_semantics=tiles_yielded_to_tifffile_iterator_not_ome_internal_resume`；started/completed/failed transaction 与 diagnostics `writer_summary.progress_summary` 会引用该进度摘要。失败时 progress sidecar 保留失败前进度和失败原因，便于判断中断停在第几层/第几个 tile；该能力仍不表示同一 OME-TIFF 文件内部 partial tile 续写可用。
 
@@ -42,11 +60,16 @@ v0.72.24 已把生成链路从 smoke/preview 层推进到 production tile-stream
 - Manifest audit：读取 manifest 后输出 WSI 尺寸、level、MPP、倍率、backend 和错误状态
 - Mask utilities：读取 PNG/TIFF/numpy mask 编号，应用 6 类 label mapping，并拒绝未映射编号
 - Mask alignment：基于 `transform_to_level0` 的 scale/offset 校验 mask 是否落在 WSI level0 范围内
+- Annotation pipeline：
+  - `load_annotation_source`：统一读取 `png_mask`、`numpy_mask`、`roi_json`、`cluster_pseudo_mask`
+  - `build_six_class_mask`：按统一 block streaming 路径把多来源 annotation 收束成 6 类 level0 mask，并输出 compact provenance summary
+  - `build-six-class-mask`：从 manifest、audit、label mapping 写出 `six_class_mask_summary.json` 和每张 WSI 的临时 full level0 mask artifact
 - Patch embedding：
-  - `CheckpointPatchEmbedder`：要求用户提供 JSON checkpoint，缺失或损坏时显式报错
-  - `FixturePatchEmbedder`：仅用于 smoke test，metadata 标记 `embedding_confidence=low`
+  - `CheckpointPatchEmbedder`：要求用户提供 JSON config checkpoint；当前实现输出的是统计型 patch moment embedding，不是 pathology foundation model
+  - `FixturePatchEmbedder`：仅用于 smoke test，metadata 标记 `embedding_confidence=low`，并显式声明 `fixture_smoke_only`
   - embedding cache：保存/读取 `.npy` embedding array 与 JSON metadata
-  - cluster report：输出 labels、cluster counts、inertia、embedding count 和 embedding dim
+  - cluster report：输出 labels、cluster counts、inertia、embedding count 和 embedding dim；聚类初始化不再因前导重复样本退化成空簇
+  - `build-pseudo-mask`：从 manifest 单张 WSI 按 batch streaming 生成 `embedding cache`、`cluster_report.json`、`pseudo_mask.npy` 和 `cluster_pseudo_mask.json`；后者顶层会写出 `embedding_summary`，显式说明当前是统计型 embedding / clustering pseudo-mask 路径
 - Prior artifact：
   - prior manifest 记录 `prior_id`、版本、创建时间、训练输入、随机种子和 artifact 清单
   - artifact 清单覆盖 `layout_mask_prior`、`style_prior`、`texture_prior`、`qc_reference_distribution`
@@ -63,10 +86,10 @@ v0.72.24 已把生成链路从 smoke/preview 层推进到 production tile-stream
 - Training / generation skeleton：
   - `init-training-run` 校验训练配置、`training_backend=latent_diffusion_unet`、production training `dataset_contract`、实际 training index JSONL 证据、training objective/loss/QC mapping contract 和 prior manifest，并写出 training run manifest
   - `build-training-index` 从 manifest audit 和 label mapping 写出四层 cascade 训练样本 JSONL
-  - training index 记录 40x tile 坐标、cascade level、mask annotation、6 类 mapping、source metadata 和 conditioning 约定
+  - training index 记录 40x tile 坐标、cascade level、mask annotation、6 类 mapping、source metadata，以及显式 `style / texture / coord / source / structure_anchor` 条件对象
   - `build-condition-packet` 从 generation config 与 prior manifest 构建 `layout`、`mask`、`style_seed`、`texture_token`、`coord`、`source_condition` 和 `structure_anchor` 条件对象；若 prior manifest 包含 `wsi_tissue_overview`，会把低倍组织轮廓 proxy 摘要写入 `conditions.layout`；若传入 `--sampled-layout-mask`，会把 sampled mask 写入 `conditions.mask`；若传入 `--sampled-style-policy` / `--sampled-texture-policy`，会把 sampled policy artifact 写入 `artifact_inputs` 并覆盖对应 style/texture 条件摘要
-  - `inspect-training-batch` 从 training-index JSONL 读取 batch，裁剪 `.npy` mask tile，并按 label mapping 转成项目 6 类 id
-  - `inspect-training-batch --include-image` 可同步读取 `fixture-image` 或 `openslide` backend 的 RGB image tile
+  - `inspect-training-batch` 从 training-index JSONL 读取 batch，裁剪 `.npy` mask tile，并按目标 cascade level 下采样到 `target_mask_shape`
+  - `inspect-training-batch --include-image` 可同步读取 `fixture-image` 或 `openslide` backend 的 RGB image tile，并按目标 cascade level 下采样到 `target_image_shape`
   - training batch summary 记录 sample ids、cascade levels、WSI ids、tile records、mask/image batch shape、mask class ids、conditioning 和 source records
   - `train-torch-smoke` 执行真实 PyTorch smoke training loop，以 6 类 mask one-hot 为条件输入、RGB tile 为重建目标，包含 `torch.nn.Module`、loss、optimizer、反向传播和 `.pt` checkpoint 写出
   - `train-torch-vae-smoke` 执行真实 PyTorch VAE smoke training loop，从 RGB tile 训练 encoder/reparameterization/decoder，写出 latent/reconstruction preview、checkpoint 和 manifest
@@ -394,6 +417,8 @@ he-wsi-gen run-generation path/to/generation-config.json \
 
 该命令会校验条件包版本、类型、`prior_id` 和必要条件对象，并把条件包路径、cascade level、tile origin、style seed、texture cluster、source condition、structure anchor 和 WSI overview manifest 摘要写入 `metadata.json` 与 `generation_run.json`。若 prior manifest 中的 `qc_reference_distribution` 启用了分层阈值，QC 会使用这些 manifest 摘要字段构造运行时 context；命中 stratum 时使用分层阈值，缺失或未命中时保留全局阈值 fallback 审计。当前 smoke backend 仍只验证工程链路，不代表真实 diffusion 条件采样。
 
+当 `--backend production-tile-stream --wsi-writer tile-streaming` 且 checkpoint manifest 的 `inference_contract.backend_type=latent_diffusion_unet_checkpoint` 时，命令会走 internal latent diffusion generation path：直接加载 Stage4 训练得到的 `model.pt`，生成 `1/32 -> 1/16 -> 1/4 -> 1/1` 四层 cascade tile source，然后交给现有 streaming OME writer。当前最小真实路径要求提供 sampled layout mask condition packet，并会把 `checkpoint_inference_contract`、`production_tile_backend` 和 source-conditioned provenance 诚实写入 `metadata.json`。
+
 初始化训练 run manifest：
 
 ```bash
@@ -401,6 +426,14 @@ he-wsi-gen init-training-run path/to/training-config.json
 ```
 
 训练配置必须显式包含 `training_backend=latent_diffusion_unet`、`dataset_contract` 和 `training_objective_contract`。`dataset_contract` 至少需要匹配顶层 `training_index_path`，声明 `production_readiness_declared=true`、正整数 `minimum_sample_count` / `sample_count`、包含 `train` 的 `records_by_split`、覆盖 `1/32`、`1/16`、`1/4`、`1/1` 的 `records_by_level`、必需条件输入 `mask`、`style`、`texture`、`coord`、`source_condition`、`structure_anchor`，以及 6 类 `integer_index` mask schema。命令会读取实际 training index JSONL，核对 record 数、split/level 计数、tile 坐标、conditioning 证据和 mask class mapping；`training_objective_contract` 还必须声明五类训练约束、非负 loss weights、训练阶段目标映射和 QC 指标映射。缺失或不一致会显式失败。该命令会写出 `training_run.json`、`training_plan.json` 和 skeleton `checkpoint_manifest.json`；`training_plan.json` 是可审计的三阶段 production training plan artifact，但仍不执行真实模型训练。
+
+执行真实 Stage4 `latent_diffusion_unet` 训练：
+
+```bash
+he-wsi-gen train-latent-diffusion-unet path/to/training-config.json
+```
+
+该命令会先复用 `init-training-run` 的 config/dataset/objective/prior contract gate，再执行最小真实三阶段训练：`prior_ready` 读取并冻结 prior 摘要，`image_generator` 先做 tile VAE 预热再做 mask/source/previous-scale/conditioned latent diffusion 训练，`wsi_consistency` 继续加入 cross-scale、tile seam 和 slide-style consistency loss。输出目录会写出真实 `model.pt`、`training_log.jsonl`、更新后的 `training_plan.json`、`training_run.json` 和 `checkpoint_manifest.json`。当前 checkpoint 会显式声明 `usable_for_inference=true` 但 `production_ready=false`，表示它已是可加载的 Stage4 训练产物，但 Stage5 的生成后端集成仍待后续完成。
 
 构建训练样本索引：
 

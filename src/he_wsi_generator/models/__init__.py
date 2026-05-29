@@ -3,6 +3,10 @@ from .training import (
     create_training_run,
     load_checkpoint_manifest,
 )
+from .latent_diffusion_training import (
+    LatentDiffusionTrainingError,
+    train_latent_diffusion_unet,
+)
 from .training_batch import (
     TrainingBatchError,
     load_training_batch,
@@ -18,6 +22,7 @@ from .torch_training import (
 
 __all__ = [
     "ModelRunError",
+    "LatentDiffusionTrainingError",
     "TrainingBatchError",
     "TrainingIndexError",
     "TorchTrainingError",
@@ -25,6 +30,7 @@ __all__ = [
     "create_training_run",
     "load_checkpoint_manifest",
     "load_training_batch",
+    "train_latent_diffusion_unet",
     "train_torch_smoke_model",
     "train_torch_vae_smoke_model",
     "training_batch_summary",

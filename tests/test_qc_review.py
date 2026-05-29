@@ -32,9 +32,9 @@ class QCReviewTests(unittest.TestCase):
 
     def metadata(self, generated_id: str = "gen-001") -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "generated_id": generated_id,
-            "version": "v0.72.32",
+            "version": "v0.80.0",
             "created_at": "2026-05-23T09:00:00+00:00",
             "output": {
                 "wsi_path": "generated.ome.tiff",
@@ -48,7 +48,7 @@ class QCReviewTests(unittest.TestCase):
                 "style_seed": "auto",
                 "random_seed": 7,
                 "model_checkpoint": "checkpoint.json",
-                "model_version": "v0.72.32",
+                "model_version": "v0.80.0",
                 "cascade_levels": ["1/32", "1/16", "1/4", "1/1"],
                 "max_magnification": "40x",
                 "tile_size_40x": [512, 512],
@@ -75,7 +75,7 @@ class QCReviewTests(unittest.TestCase):
 
     def qc_report(self, overall_status: str = "warning") -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "generated_id": "gen-001",
             "overall_status": overall_status,
             "levels": {
@@ -133,7 +133,7 @@ class QCReviewTests(unittest.TestCase):
             review = build_qc_review(metadata_path, qc_path, output_path=output_path)
             written = json.loads(output_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(review["schema_version"], "v0.72.32")
+        self.assertEqual(review["schema_version"], "v0.80.0")
         self.assertEqual(review["artifact_type"], "qc_review")
         self.assertEqual(review["generated_id"], "gen-001")
         self.assertEqual(review["inputs"]["metadata_path"], str(metadata_path))

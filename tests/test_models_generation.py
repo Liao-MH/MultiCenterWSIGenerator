@@ -32,7 +32,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             path.write_text(json.dumps({"name": name}), encoding="utf-8")
             artifacts[name] = create_prior_artifact_entry(path, kind="json", metadata={})
         manifest = {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "prior_id": "prior-demo",
             "created_at": "2026-05-23T11:00:00Z",
             "random_seed": 11,
@@ -69,7 +69,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             lines.append(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.32",
+                        "schema_version": "v0.80.0",
                         "sample_id": f"sample-{index}",
                         "dataset_id": "unit-test",
                         "wsi_id": "slide-001",
@@ -102,7 +102,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
     def training_config(self, prior_manifest_path: Path, output_dir: Path) -> dict:
         training_index_path = self.write_training_index(output_dir.parent)
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "run_id": "train-demo",
             "random_seed": 11,
             "model_family": "latent_diffusion_unet",
@@ -192,7 +192,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
 
     def generation_config(self) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "random_seed": 0,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -261,7 +261,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.32",
+                    "schema_version": "v0.80.0",
                     "model_family": "latent_diffusion_unet",
                     "status": status,
                     "usable_for_inference": True,
@@ -289,7 +289,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             checkpoint = load_checkpoint_manifest(run["checkpoint_manifest_path"])
             training_plan = json.loads(Path(run["training_plan_path"]).read_text(encoding="utf-8"))
 
-        self.assertEqual(run["schema_version"], "v0.72.32")
+        self.assertEqual(run["schema_version"], "v0.80.0")
         self.assertEqual(run["model_family"], "latent_diffusion_unet")
         self.assertEqual(run["training_backend"], "latent_diffusion_unet")
         self.assertEqual(training_plan["artifact_type"], "production_training_plan")
@@ -543,7 +543,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
             checkpoint_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.32",
+                        "schema_version": "v0.80.0",
                         "model_family": "latent_diffusion_unet",
                         "status": "trained",
                         "usable_for_inference": True,
@@ -739,7 +739,7 @@ class ModelGenerationSkeletonTests(unittest.TestCase):
                 checkpoint_manifest_path=checkpoint_path,
             )
 
-        self.assertEqual(plan["schema_version"], "v0.72.32")
+        self.assertEqual(plan["schema_version"], "v0.80.0")
         self.assertEqual([stage["level"] for stage in plan["stages"]], ["1/32", "1/16", "1/4", "1/1"])
         self.assertEqual(plan["tile_traversal"], "row_major_with_resume_index")
         self.assertEqual(plan["tile_traversal_plan"]["tile_count"], 1)

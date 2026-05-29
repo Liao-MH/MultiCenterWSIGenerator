@@ -32,6 +32,35 @@ def write_mask_array(mask_array, output_dir: str | Path, stem: str = "mask") -> 
     return {**metadata, "metadata_path": str(metadata_path)}
 
 
+def write_mask_metadata(
+    *,
+    mask_path: str | Path,
+    output_dir: str | Path | None = None,
+    stem: str = "mask",
+    shape: list[int] | tuple[int, int],
+    dtype: str = "uint8",
+) -> dict:
+    if (
+        not isinstance(shape, (list, tuple))
+        or len(shape) != 2
+        or not all(isinstance(value, int) and value > 0 for value in shape)
+    ):
+        raise ValueError("mask shape must contain two positive integers")
+    root = Path(output_dir) if output_dir is not None else Path(mask_path).parent
+    root.mkdir(parents=True, exist_ok=True)
+    metadata_path = root / f"{stem}.metadata.json"
+    metadata = {
+        "status": "written",
+        "path": str(mask_path),
+        "shape": [int(shape[0]), int(shape[1])],
+        "dtype": str(dtype),
+        "classes": len(MASK_CLASSES),
+        "class_names": list(MASK_CLASSES),
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    return {**metadata, "metadata_path": str(metadata_path)}
+
+
 def _import_numpy():
     try:
         import numpy

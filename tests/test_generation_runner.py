@@ -59,7 +59,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.32",
+                "schema_version": "v0.80.0",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -114,7 +114,7 @@ class GenerationRunnerTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.32",
+                "schema_version": "v0.80.0",
                 "prior_id": "prior-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -136,7 +136,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.32",
+                    "schema_version": "v0.80.0",
                     "model_family": "latent_diffusion_unet",
                     "status": "trained",
                     "usable_for_inference": True,
@@ -214,7 +214,7 @@ class GenerationRunnerTests(unittest.TestCase):
         )
         backend_artifact = root / "external_tile_backend.json"
         backend_payload = {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "artifact_type": "external_tile_generator_v1",
             "backend_name": "unit-test-production-tile-backend",
             "command": [
@@ -245,7 +245,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.32",
+                    "schema_version": "v0.80.0",
                     "model_family": "latent_diffusion_unet",
                     "status": "trained",
                     "usable_for_inference": True,
@@ -321,7 +321,7 @@ class GenerationRunnerTests(unittest.TestCase):
         )
         backend_artifact = root / "external_tile_request_backend.json"
         backend_payload = {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "artifact_type": "external_tile_generator_v1",
             "backend_name": "unit-test-production-tile-request-backend",
             "command": [
@@ -386,7 +386,7 @@ class GenerationRunnerTests(unittest.TestCase):
         )
         backend_artifact = root / "external_tile_retry_backend.json"
         backend_payload = {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "artifact_type": "external_tile_generator_v1",
             "backend_name": "unit-test-production-tile-retry-backend",
             "command": [
@@ -416,7 +416,7 @@ class GenerationRunnerTests(unittest.TestCase):
 
     def generation_config(self, canvas_size_40x: list[int] | None = None) -> dict:
         config = {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -432,6 +432,27 @@ class GenerationRunnerTests(unittest.TestCase):
             "non_copy_patch_nearest_neighbor_search": False,
         }
         return config
+
+    def create_source_slide(self, root: Path) -> Path:
+        from PIL import Image
+
+        slide_path = root / "source-slide.png"
+        image = np.zeros((512, 512, 3), dtype=np.uint8)
+        image[:, :, 0] = 30
+        image[:, :, 1] = 210
+        image[:, :, 2] = 90
+        Image.fromarray(image).save(slide_path)
+        slide_path.with_suffix(slide_path.suffix + ".json").write_text(
+            json.dumps(
+                {
+                    "mpp_x": 0.25,
+                    "mpp_y": 0.25,
+                    "max_magnification": "40x",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return slide_path
 
     def write_partial_tile_manifest(
         self,
@@ -520,7 +541,7 @@ class GenerationRunnerTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.32",
+                    "schema_version": "v0.80.0",
                     "manifest_type": "disk_npy_tile_source_manifest",
                     "source": "smoke_direct_pyramid_tile_streaming_manifest",
                     "expected_tile_count": len(records),
@@ -657,7 +678,7 @@ class GenerationRunnerTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.32",
+                    "schema_version": "v0.80.0",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T15:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -701,7 +722,7 @@ class GenerationRunnerTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.32",
+                    "schema_version": "v0.80.0",
                     "artifact_type": "sampled_layout_mask",
                     "created_at": "2026-05-23T16:00:00Z",
                     "sample_id": "layout-smoke-001",
@@ -815,6 +836,149 @@ class GenerationRunnerTests(unittest.TestCase):
         mask_metrics = {metric["name"]: metric for metric in qc["levels"]["mask_region"]["metrics"]}
         self.assertEqual(mask_metrics["mask_tissue_fraction"]["status"], "fail")
         self.assertEqual(mask_metrics["mask_tissue_fraction"]["reference"]["warning_min"], 0.95)
+
+    def test_run_smoke_generation_records_shared_stage5_cascade_core(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            output_root = root / "generated" / "gen-shared-stage5"
+
+            result = run_smoke_generation(
+                self.generation_config(canvas_size_40x=[768, 512]),
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-shared-stage5",
+            )
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            run_summary["plan"]["cascade_generation"]["pipeline_role"],
+            "shared_stage5_cascade_core",
+        )
+        self.assertEqual(
+            [stage["level"] for stage in run_summary["plan"]["cascade_generation"]["stages"]],
+            ["1/32", "1/16", "1/4", "1/1"],
+        )
+        self.assertEqual(
+            run_summary["plan"]["cascade_generation"]["tile_traversal"]["blending"],
+            "overlap_weighted_average",
+        )
+
+    def test_run_smoke_generation_uses_source_conditioned_mix_for_high_anchor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            prior_manifest_path = self.create_prior_manifest(root)
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            source_slide_path = self.create_source_slide(root)
+            conditioned_root = root / "generated" / "gen-source-conditioned"
+            de_novo_root = root / "generated" / "gen-de-novo"
+
+            conditioned_config = self.generation_config()
+            conditioned_config["structure_anchor"] = 0.8
+            conditioned_config["anchor_preset"] = "structure_preserving"
+            conditioned_config["source_wsi_id"] = "source-slide"
+
+            de_novo_config = self.generation_config()
+
+            conditioned = run_smoke_generation(
+                conditioned_config,
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=conditioned_root,
+                generated_id="gen-source-conditioned",
+                source_wsi_path=source_slide_path,
+            )
+            de_novo = run_smoke_generation(
+                de_novo_config,
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=de_novo_root,
+                generated_id="gen-de-novo",
+            )
+
+            conditioned_run = json.loads(
+                Path(conditioned["generation_run_path"]).read_text(encoding="utf-8")
+            )
+            conditioned_metadata = json.loads(
+                Path(conditioned["metadata_path"]).read_text(encoding="utf-8")
+            )
+            conditioned_mask = np.load(Path(conditioned["metadata_path"]).parent / "generated_mask" / "mask.npy")
+            de_novo_mask = np.load(Path(de_novo["metadata_path"]).parent / "generated_mask" / "mask.npy")
+            with tifffile.TiffFile(Path(conditioned["metadata_path"]).parent / "generated.ome.tiff") as tiff:
+                conditioned_image = tiff.series[0].levels[0].asarray()
+            with tifffile.TiffFile(Path(de_novo["metadata_path"]).parent / "generated.ome.tiff") as tiff:
+                de_novo_image = tiff.series[0].levels[0].asarray()
+
+        self.assertEqual(
+            conditioned_run["plan"]["cascade_generation"]["source_condition"]["mode"],
+            "source_tile_rgb_mix",
+        )
+        self.assertEqual(
+            conditioned_run["plan"]["cascade_generation"]["source_condition"]["source_wsi_path"],
+            str(source_slide_path),
+        )
+        self.assertEqual(conditioned_metadata["source"]["source_wsi_id"], "source-slide")
+        self.assertEqual(conditioned_metadata["source"]["source_wsi_path"], str(source_slide_path))
+        self.assertEqual(conditioned_metadata["source"]["source_region"], [0, 0, 512, 512])
+        self.assertEqual(conditioned_metadata["source"]["source_scale"], "1/1")
+        self.assertFalse(np.array_equal(conditioned_image, de_novo_image))
+        self.assertTrue(np.array_equal(conditioned_mask, de_novo_mask))
+
+    def test_run_smoke_generation_resolves_source_wsi_from_prior_input_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest_path = root / "input-manifest.json"
+            source_slide_path = self.create_source_slide(root)
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "v0.80.0",
+                        "dataset_id": "demo",
+                        "created_at": "2026-05-26T22:00:00Z",
+                        "records": [
+                            {
+                                "wsi_id": "source-slide",
+                                "wsi_path": str(source_slide_path),
+                                "cancer_type": "breast",
+                                "split": "train",
+                                "annotations": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            prior_manifest_path = self.create_prior_manifest(root)
+            prior = json.loads(prior_manifest_path.read_text(encoding="utf-8"))
+            prior["input_data"]["manifest_path"] = str(manifest_path)
+            prior["input_data"]["wsi_ids"] = ["source-slide"]
+            prior_manifest_path.write_text(json.dumps(prior), encoding="utf-8")
+            checkpoint_manifest_path = self.checkpoint_manifest(root)
+            output_root = root / "generated" / "gen-resolved-source"
+            config = self.generation_config()
+            config["structure_anchor"] = 0.8
+            config["anchor_preset"] = "structure_preserving"
+            config["source_wsi_id"] = "source-slide"
+
+            result = run_smoke_generation(
+                config,
+                prior_manifest_path=prior_manifest_path,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=output_root,
+                generated_id="gen-resolved-source",
+            )
+            run_summary = json.loads(Path(result["generation_run_path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            run_summary["plan"]["cascade_generation"]["source_condition"]["mode"],
+            "source_tile_rgb_mix",
+        )
+        self.assertEqual(
+            run_summary["plan"]["cascade_generation"]["source_condition"]["source_wsi_path"],
+            str(source_slide_path),
+        )
 
     def test_run_smoke_generation_writes_tile_manifests_and_disk_tiles(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1535,6 +1699,15 @@ class GenerationRunnerTests(unittest.TestCase):
             metadata["generation"]["condition_summary"]["sampled_layout_mask"]["sample_id"],
             "layout-smoke-001",
         )
+        self.assertEqual(metadata["mask_schema"]["mapping_source"], "mixed")
+        self.assertEqual(
+            metadata["mask_schema"]["input_label_mapping"]["artifact_path"],
+            str(sampled_layout_mask_path),
+        )
+        self.assertEqual(
+            metadata["mask_schema"]["confidence"]["provenance"],
+            "sampled_layout_mask_condition",
+        )
         self.assertEqual(
             run_summary["condition_packet"]["summary"]["sampled_layout_mask"]["mask_shape"],
             [512, 512],
@@ -1688,7 +1861,7 @@ class GenerationRunnerTests(unittest.TestCase):
             checkpoint_manifest_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "v0.72.32",
+                        "schema_version": "v0.80.0",
                         "model_family": "latent_diffusion_unet",
                         "status": "not_trained",
                         "usable_for_inference": False,

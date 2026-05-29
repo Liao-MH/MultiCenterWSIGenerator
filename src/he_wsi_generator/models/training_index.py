@@ -125,6 +125,29 @@ def _records_for_slide(
                             "confidence": label_mapping["confidence"],
                         },
                         "conditioning": {
+                            "style": {
+                                "source": "training_or_generation_config",
+                                "style_seed_source": "training_or_generation_config",
+                            },
+                            "texture": {
+                                "source": "training_or_generation_config",
+                                "texture_token_source": "training_or_generation_config",
+                            },
+                            "coord": _coord_condition(
+                                cascade_level=level,
+                                tile_x=x,
+                                tile_y=y,
+                                tile_width=tile_width,
+                                tile_height=tile_height,
+                            ),
+                            "source": {
+                                "required_when_anchor_gt_0": True,
+                                "source_condition_policy": "required_when_anchor_gt_0",
+                            },
+                            "structure_anchor": {
+                                "policy": "source_condition_required_when_anchor_gt_0",
+                                "supported_range": [0.0, 1.0],
+                            },
                             "structure_anchor_policy": "source_condition_required_when_anchor_gt_0",
                             "style_seed_source": "training_or_generation_config",
                             "texture_token_source": "training_or_generation_config",
@@ -213,6 +236,34 @@ def _require_existing_mask(path: str) -> None:
         raise TrainingIndexError(f"mask annotation does not exist: {source}")
     if not source.is_file():
         raise TrainingIndexError(f"mask annotation is not a file: {source}")
+
+
+def _coord_condition(
+    *,
+    cascade_level: str,
+    tile_x: int,
+    tile_y: int,
+    tile_width: int,
+    tile_height: int,
+) -> dict[str, Any]:
+    divisor = _cascade_divisor(cascade_level)
+    return {
+        "cascade_level": cascade_level,
+        "tile_origin_40x": [int(tile_x), int(tile_y)],
+        "target_image_shape": [int(tile_height // divisor), int(tile_width // divisor)],
+        "target_mask_shape": [int(tile_height // divisor), int(tile_width // divisor)],
+        "max_magnification": MAX_MAGNIFICATION,
+    }
+
+
+def _cascade_divisor(cascade_level: str) -> int:
+    mapping = {
+        "1/32": 32,
+        "1/16": 16,
+        "1/4": 4,
+        "1/1": 1,
+    }
+    return mapping[cascade_level]
 
 
 def _now_iso() -> str:

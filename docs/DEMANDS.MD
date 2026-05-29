@@ -1,5 +1,305 @@
 # DEMANDS
 
+## 2026-05-28 Stage/Module 真实实现再审计
+
+### 用户需求
+
+- 用户指出脱离设计文档和开发文档的伪实现属于“投机取巧”和“非真实实现”。
+- 用户要求再次审计整个仓库，严格基于设计文档、开发文档和仓库可见代码，做 Stage / Module 对照审计。
+- 用户要求逐项检查 `M01-M26`，并为每个 Module 标注：
+  - 当前仓库中是否已有真实的、非 smoke 级、无偏离的对应实现；
+  - 对应真实代码路径、核心函数/类、现有测试路径；
+  - 状态分类：已有可直接保留、已有但需要简化/收敛/修改、属于后置增强项暂时冻结不继续扩展、缺失需要后续新写；
+  - 与当前 module-stage 开发方案的差距。
+- 用户要求如果设计文档与开发文档有冲突，先征求用户确认再推进。
+- 用户要求不要引入新功能设想，不要把商业产品级兜底能力提前加入主体开发。
+- 用户要求将审计结果写入新的 `docs/audit/` 开发审计文档，并说明哪些 Stage 已基本具备、哪些 Stage 需要收敛、哪些 Stage 是真正缺口。
+
+### 结构化需求
+
+- 本轮不做业务代码实现，只做对照审计和审计文档产出。
+- 审计依据限定为：
+  - `docs/plans/2026-05-18-he-wsi-generator-study-design.md`
+  - `docs/dev/2026-05-26-he-wsi-generator-module-stage-development-plan.md`
+  - 当前仓库可见代码与测试
+- 审计文档新增到 `docs/audit/2026-05-28-stage-module-design-dev-code-audit-v0800.md`。
+- 本轮不升级版本号，因为没有功能或代码行为变更。
+
+## v0.80.0 - 2026-05-27 Stage 5-7 internal production-tile-stream convergence
+
+### 用户需求
+
+- 用户要求阅读 `docs/` 后，根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 的结论，只执行 `Stage 5-7` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户明确本轮只完成 `Stage 5-7`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现非 smoke 级的真实主体功能，处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 Stage Gate 的最小必要改动。
+- 用户要求使用当前仓库规定的验证方式和真实 SVS 测试样本运行 `Stage 1-7` 链路测试，但不要用任何 smoke 级代码。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.80.0`，属于向后兼容的 Stage 5-7 新功能版本。
+- 本轮处理的 Module：
+  - `M16`：把非 smoke 的 Stage4 checkpoint 接进 Stage5 主路径，避免 `production-tile-stream` 仍只等价于外部 tile backend contract。
+  - `M18`：最小真实 source-conditioned generation 行为必须从 source WSI 读取真实 RGB 作为模型条件，而不是继续停留在 smoke RGB mix 或 request contract 摘要。
+  - `M20`：metadata 必须继续诚实记录 backend / production status / source / mask provenance，不能把最小真实 backend 包装成 fully production-ready。
+  - `M23`：UI/workflow 与 PySide6 页面必须暴露 `production-tile-stream`，使真实 backend 可从 Stage7 路径调用。
+  - `M26`：新增 non-smoke Stage1-7 E2E 验收入口，并用真实 `291288_.svs` 跑通一条当前版本链路。
+- 本轮明确不做：
+  - Stage 8+ 不存在的新功能；
+  - 外部第三方 tile backend 的进一步扩展；
+  - 复杂多 slide batching、distributed training 或 gigapixel full-canvas internal generation。
+
+### 预期落地
+
+- `production-tile-stream` 可直接消费 `latent_diffusion_unet_checkpoint`，内部完成四层 cascade tile source 生成，再交给现有 OME writer / mask writer / QC / metadata / archive。
+- source-conditioned 路径会真实记录 `source_wsi_path / source_region / source_scale`，并在图像输出上体现差异。
+- UI/workflow 可调度 `production-tile-stream`；新增 non-smoke E2E 测试和真实 `291288_.svs` Stage1-7 验证工件。
+
+## v0.79.0 - 2026-05-27 Stage 4 real latent_diffusion_unet backend
+
+### 用户需求
+
+- 用户要求阅读 `docs/` 后，根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 的结论，只执行 `Stage 4` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户明确本轮只完成 `Stage 4`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现非 smoke 级的真实主体功能，处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 Stage Gate 的最小必要改动。
+- 用户要求使用当前仓库规定的验证方式和真实 SVS 测试样本运行 `Stage 1-4` 链路测试，但不要用任何 smoke 级代码。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.79.0`，属于向后兼容的 `Stage 4` 新功能版本。
+- 本轮处理的 Stage4 Module：
+  - `M12`：保持现有 training index / batch loader 主线，不把它继续膨胀为新数据系统；仅允许增加支撑真实大图训练的最小收敛能力。
+  - `M13`：新增最小真实 `latent_diffusion_unet` 训练 backend，模型必须能接收 `mask`、`previous_scale`、`style`、`coord`、`source_condition` 和 `structure_anchor`。
+  - `M14`：训练入口必须执行 `prior_ready -> image_generator -> wsi_consistency` 三阶段，而不是继续只写 plan/contract manifest。
+  - `M15`：训练过程必须真实使用高/中/低 `structure_anchor` preset，并把 anchor 策略和计数写入 checkpoint manifest。
+- 本轮明确不做：
+  - Stage 5+ 生成、writer、QC 或 UI 新功能；
+  - ControlNet、DiT、gigapixel Stage5 inference backend；
+  - 完整 production-ready 视觉质量承诺。
+
+### 预期落地
+
+- `train-latent-diffusion-unet` 成为独立的真实 Stage4 训练入口，保留 `init-training-run` 的 contract gate 语义不变。
+- 训练产物包含真实 `model.pt`、`training_log.jsonl`、更新后的 `training_plan.json`、`training_run.json` 和可加载的 `checkpoint_manifest.json`。
+- 真实 `291288_.svs` 的 `Stage 1-4` 验证链可在不使用 smoke backend 的前提下跑通，并通过 `runtime.batch_size` 对每层训练样本做子采样，避免把整张大图的全部 training-index 记录一次性吃进内存。
+
+## v0.78.1 - 2026-05-27 Stage 1-3 M08 statistical pseudo-mask contract convergence
+
+### 用户需求
+
+- 用户要求阅读 `docs/` 后，根据 `docs/audit/2026-05-27-stage-module-real-implementation-audit-v0780.md` 的结论，只执行 `Stage 1-3` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户明确本轮只完成 `Stage 1-3`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现非 smoke 级的真实主体功能，处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 Stage Gate 的最小必要改动，并使用当前仓库规定的验证方式运行测试。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.78.1`，属于向后兼容的 `Stage 1-3 / M08` 契约收敛补丁版本。
+- 根据 `v0.78.0` 审计结果，本轮 Stage 1-3 只处理 `M08 Patch embedding 与伪 mask`：
+  - 保留现有真实 WSI patch 读取、batch streaming embedding、全量 embedding 聚类和 pseudo mask 写出主线；
+  - `CheckpointPatchEmbedder` 必须明确声明为 checkpoint-backed statistical patch embedder，而不是 pathology foundation model；
+  - embedding cache metadata 与 `cluster_pseudo_mask.json` 顶层都要能直接审计 `embedding_backend`、`embedder_kind`、`production_ready` 和 `limitations`；
+  - CLI / README / 设计文档 / 开发文档需统一使用“统计型 embedding / clustering pseudo-mask 路径”的表述。
+- 本轮明确不做：
+  - `Stage 4-7` 的任何新开发；
+  - 第三方 pathology foundation model 接入；
+  - pseudo-mask 新 UI、新后处理或新的 prior 扩张。
+
+### 预期落地
+
+- `build-pseudo-mask` 主流程保持不变，但产物契约会如实暴露当前统计型 embedder 的能力边界。
+- `cluster_pseudo_mask.json` 可直接说明 pseudo-mask 是由统计型 patch embedding + clustering 形成，而不是被误读为真实病理基础模型产物。
+- Stage 1-3 文档、CLI 帮助和测试对 `M08` 的口径保持一致。
+
+## v0.78.0 - 2026-05-27 Real SVS streaming Stage 1-7 memory hardening
+
+### 用户需求
+
+- 用户要求按已确认方案执行代码修改，使真实 `.svs` Stage 1-7 全链路不再因一次性持有全部 patch、full mask merge 的 per-pixel `source_trace` 等路径产生不可接受的内存峰值。
+- 用户确认 `build_pseudo_mask_from_manifest()` 不解耦 `read_window_size / embed_size / stride`，只改为 chunk/batch streaming，不再先把全部 patch 攒进内存。
+- 用户确认 `batch_size` 固定默认使用 `512`。
+- 用户确认取消大图路径的 per-pixel `source_trace`，改为 compact provenance summary。
+- 用户确认 full level0 six-class `.npy` mask 可作为临时中间文件写盘，但必须在全流程成功、目标输出文件均正常写出后才删除；最终 `generated_mask/mask.npy` 不属于可删除中间文件。
+- 用户要求所有图统一走同一套 streaming/block 流程，不保留小图/大图 AB 两套路径。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.78.0`，属于向后兼容的真实 SVS 内存收敛版本。
+- pseudo-mask 构建：
+  - 从 manifest 读取真实 WSI 后按 `batch_size=512` 分批读取 patch 并调用 embedder；
+  - 聚类仍针对所有 patch embedding 执行；
+  - 输出 manifest 记录 batch streaming 元数据。
+- six-class mask 合并：
+  - 统一按 block streaming 合并；
+  - 不生成 full-image per-pixel `source_trace`；
+  - provenance summary 至少记录全局 class counts、每个 annotation 的 class counts、每个 block 的 class counts、priority order、conflict count 和冲突坐标样例。
+- 训练 batch 读取 `.npy` mask 时应使用 mmap，避免把 full level0 mask 整体读入内存。
+- CLI 暴露 `build-pseudo-mask --batch-size`，默认值为 `512`。
+
+### 预期落地
+
+- 真实 SVS pseudo-mask 构建的主要 patch 内存峰值由“全部 patch 同时驻留”降为单 batch patch。
+- Stage 2 six-class mask artifact 合并不再构造 per-pixel source trace。
+- 全链路验证完成后可安全删除临时 full level0 six-class mask 中间文件，同时保留最终生成目标输出。
+
+## v0.77.0 - 2026-05-26 Stage 7 convergent refactor for M26
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 7` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 7`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求完成后复核 `Stage 1-7` 的链路是否通畅，确定无误后更新相关开发文档。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.77.0`，属于向后兼容的 `Stage 7 / M26` 主体链路收敛版本。
+- 本轮只处理 `M26`：
+  - 把当前分散的 smoke/E2E 校验收束成一个固定、最小、可重复的 `Stage 1-7` 验收入口。
+  - 允许 UI workflow helper 在不改变默认行为的前提下，显式指定 `job_root`，解除 job 状态目录与生成输出目录的硬绑定。
+- 本轮明确不做：
+  - `M23-M25` 新功能扩展；
+  - UI 外观调整；
+  - 后台 daemon、并发队列或运行中任务终止。
+
+### 预期落地
+
+- `tests/test_stage1_7_e2e.py` 成为固定 Stage 1-7 入口。
+- `ui.workflow` 能在 E2E 场景下稳定消费显式 `job_root`。
+- `Stage 1-7` 主链复核通过。
+
+## v0.76.0 - 2026-05-26 Stage 6 convergent refactor for M20
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 6` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 6`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求完成后复核 `Stage 1-6` 的链路是否通畅，确定无误后更新相关开发文档。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.76.0`，属于向后兼容的 `Stage 6 / M20` 主体链路收敛版本。
+- 本轮只处理 `M20 Per-WSI metadata`：
+  - 不重做 metadata 系统，只把当前 placeholder 化的 source/path/mask mapping 信息回填成真实上游来源。
+  - source-conditioned 生成路径下，metadata 必须记录真实 `source_wsi_id / source_wsi_path / source_region / source_scale`。
+  - sampled layout mask 条件下，`mask_schema` 应在现有 schema 允许范围内记录真实 artifact provenance，而不是继续只写空 mapping。
+- 本轮明确不做：
+  - `M21` 基础 QC 新规则；
+  - `M22` batch index 结构调整；
+  - Stage 7 UI 改动；
+  - metadata schema 大改。
+
+### 预期落地
+
+- `metadata.json` 在 source-conditioned 路径下不再是 source 占位值。
+- `metadata.json` 在 sampled layout mask 条件下可追溯真实 mask 来源。
+- `Stage 1-6` CLI 主链复核通过。
+
+## v0.75.0 - 2026-05-26 Stage 5 convergent refactor for M16/M18
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 5` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 5`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户明确要求不开发任何 smoke 级新代码；若必须复用此前完成的 smoke 代码，需要将其迁移到主代码路径。
+- 用户要求完成后复核 `Stage 1-5` 的链路是否通畅，确认无误后再更新相关开发文档。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.75.0`，属于向后兼容的 `Stage 5 / M16 / M18` 主体链路收敛版本。
+- 本轮只处理以下 Module：
+  - `M16`：将现有可复用的四层 cascade 编排逻辑收敛为共享 `Stage 5` 主路径，不再把新增行为继续写入 smoke-only 分支。
+  - `M18`：补齐最小真实 source-conditioned generation 行为；高 anchor + source WSI 时，输出必须真实受 source tile 影响。
+- 本轮明确不做：
+  - `torch-diffusion-smoke` 或 `production-tile-stream` 的新 source-conditioned 主体实现；
+  - Stage 6+ 新功能；
+  - 更复杂的 feature injection、ControlNet、DiT 或 diagnostics 扩张。
+- 主体失败边界只保留：
+  - source-conditioned 模式下 source WSI 路径不可解析；
+  - source tile 读取失败；
+  - resume/tile manifest 与计划不一致；
+  - OME-TIFF writer handoff 失败。
+
+### 预期落地
+
+- `run_smoke_generation()` 作为兼容入口时，不再承担新增 smoke-only 行为，而是调用共享 `Stage 5 cascade core`。
+- `generation_run.json` / plan 会明确记录共享 cascade 编排语义。
+- 当 `structure_anchor > 0.3` 且存在 `source_wsi_id` 时，主路径会执行真实 `source_tile_rgb_mix`，并在 CLI 主链中可达。
+- `Stage 1-5` CLI 链路复核通过。
+
+## v0.74.0 - 2026-05-26 Stage 4 M12 convergent refactor
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 4` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 4`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 `Stage 4 Gate` 的最小必要改动，并使用当前仓库规定的验证方式运行测试。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.74.0`，属于向后兼容的 `Stage 4 / M12` 主体链路收敛版本。
+- 本轮只处理 `M12 多倍率训练样本`：
+  - 保留现有 `build_training_index()` 与 `load_training_batch()` 主体，不重写训练系统。
+  - 把 training index 从“按 cascade level 重复列 tile contract”收敛为“可直接供训练消费的多倍率样本主线”。
+  - 每条训练记录至少显式携带：层级、mask、coord、style、source、anchor；并保留与 texture/source condition 对接的最小条件对象。
+  - 训练 batch 在读取 `1/32 / 1/16 / 1/4 / 1/1` 时，应返回与对应层级一致的图像/mask 目标尺寸，而不是所有层级都固定返回 `512x512`。
+- 本轮明确不做：
+  - `M13-M15` 的真实模型、训练流程或 anchor 训练扩展；
+  - Stage 5+ 生成、writer、QC 或 UI 新功能；
+  - 新的 production model / inference backend。
+- 本轮只处理阻断主体链路的失败：
+  - 训练记录缺少多倍率条件对象；
+  - cascade level 与目标 shape 不一致；
+  - tile 越界；
+  - mask transform 无法对齐；
+  - source / anchor 必需字段缺失。
+
+### 预期落地
+
+- `build_training_index()` 输出的训练记录可以明确表达多倍率训练样本的 image/mask/coord/style/source/anchor 契约。
+- `load_training_batch()` 可以按目标 cascade level 读取相应分辨率的图像和 mask 样本，而不是只返回 level0 大小。
+- `Stage 4` 的 `M12` 不再只是 training-index contract，而成为可被后续训练代码直接消费的最小多倍率样本主线。
+
+## v0.73.0 - 2026-05-26 Stage 1-3 convergent refactor for M03/M05/M07/M08
+
+### 用户需求
+
+- 用户要求根据 `docs/audit/2026-05-26-module-stage-code-audit.md` 的结论，只执行 `Stage 1-3` 中状态为“缺失，需要后续新写”或“已有但需要简化/收敛”的 Module。
+- 用户要求本轮只完成 `Stage 1-3`，不要提前开发后续 Stage，不要扩展后置增强项，优先实现主体功能闭环，只处理会阻断主体链路的失败情况。
+- 用户要求保留当前可复用代码，不重头开发，不删除已有后置增强能力，但本轮不围绕它继续扩展。
+- 用户要求只做满足 Stage Gate 的最小必要改动，补充或调整必要测试，并使用当前仓库规定的验证方式运行测试。
+- 用户要求完成后更新相关开发文档，记录真实代码路径、函数/类、测试和验证命令。
+
+### 结构化需求
+
+- 版本号规划升级到 `v0.73.0`，属于向后兼容的 Stage 1-3 主体链路收敛版本。
+- 本轮只处理以下 Module：
+  - `M03`：收敛输入 manifest 与数据审计，至少补齐 `center_id`、`tissue_type`、annotation 摘要等当前开发文档要求的核心字段。
+  - `M05`：建立统一 annotation loader，支持 PNG/TIFF/NPY/NPZ mask、ROI JSON 和 `cluster_pseudo_mask` 最小读取能力。
+  - `M07`：建立对齐与合并主线，把人工 mask、ROI 和伪 mask 候选合并为统一 6 类 mask artifact；冲突优先级固定为人工 mask > ROI > 聚类伪 mask。
+  - `M08`：把现有 patch embedder / embedding cache / cluster 组件接成可执行闭环，输出 embedding cache、cluster report 和 pseudo mask 候选。
+- 本轮明确不做：
+  - `Stage 4-7` 新开发；
+  - 新的 backend、writer、QC 增强、UI 增强；
+  - 新的生产模型、训练骨架扩张或 source-conditioned generation 主体实现。
+- 失败边界只保留阻断主体链路的情况：
+  - 输入文件不存在或格式非法；
+  - transform 无法转为整数坐标或越界；
+  - label mapping 缺失；
+  - 多来源同优先级冲突；
+  - embedding checkpoint 缺失或 cluster 与 embedding 行数不一致。
+
+### 预期落地
+
+- `Stage 1` 可以稳定输出包含核心字段的 manifest audit。
+- `Stage 2` 可以从输入 annotation 形成统一 6 类 mask artifact，并满足“每张可用 WSI 有 thumbnail、pyramid metadata 和对齐 mask”的最小 gate。
+- `Stage 3` 可以从现有 embedding 组件形成 pseudo mask 候选闭环，并与 prior 主线对接，而不提前进入后续训练/生成阶段。
+
 ## v0.72.32 - 2026-05-25 P4 OME streaming writer progress evidence
 
 ### 用户需求

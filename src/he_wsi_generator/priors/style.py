@@ -20,6 +20,21 @@ STYLE_FEATURE_SCHEMA = (
     "std_g_normalized",
     "std_b_normalized",
 )
+# Dimensions listed in design §5.2/§5.4 that are intentionally outside the
+# current statistical style prior. They are recorded in artifacts and policies
+# so downstream training/generation cannot silently treat the prior as a full
+# global imaging style prior.
+STYLE_COVERAGE_DIMENSIONS = (
+    {"name": "color_distribution", "covered": True, "evidence": "rgb_statistics"},
+    {"name": "stain_intensity", "covered": True, "evidence": "rgb_statistics_normalized"},
+    {"name": "tile_style_latent", "covered": True, "evidence": "fitted_rgb_stats_pca_v1"},
+    {"name": "slide_level_style_seed_with_local_perturbation", "covered": False, "evidence": None},
+    {"name": "sharpness_focus_plane", "covered": False, "evidence": None},
+    {"name": "smudges_dust_artifacts", "covered": False, "evidence": None},
+    {"name": "compression_noise", "covered": False, "evidence": None},
+    {"name": "scanner_noise", "covered": False, "evidence": None},
+)
+STYLE_PRIOR_KIND = "statistical_rgb_style_prior_v1"
 
 
 def build_style_prior_from_training_index(
@@ -48,6 +63,7 @@ def build_style_prior_from_training_index(
     style_prior = {
         "schema_version": PROJECT_VERSION,
         "prior_type": "style_prior",
+        "prior_kind": STYLE_PRIOR_KIND,
         "created_at": _now_iso(),
         "source": {
             "source_type": "training_index_rgb_tiles",
@@ -66,10 +82,24 @@ def build_style_prior_from_training_index(
         "style_latent_encoder": style_latent_encoder,
         "tile_style_records": _tile_style_records(image_batch, batch, style_latents),
         "batch_summary": training_batch_summary(batch),
+        "coverage": {
+            "covered_dimensions": [
+                dim["name"] for dim in STYLE_COVERAGE_DIMENSIONS if dim["covered"]
+            ],
+            "uncovered_dimensions": [
+                dim["name"] for dim in STYLE_COVERAGE_DIMENSIONS if not dim["covered"]
+            ],
+            "details": [dict(dim) for dim in STYLE_COVERAGE_DIMENSIONS],
+        },
         "limitations": [
             "fitted_rgb_stats_style_latent_only",
             "not_deep_trainable_style_encoder",
             "not_a_vae_style_latent",
+            "no_slide_level_style_seed_with_local_perturbation",
+            "no_sharpness_focus_plane_distribution",
+            "no_smudges_dust_artifact_distribution",
+            "no_compression_noise_distribution",
+            "no_scanner_noise_distribution",
         ],
     }
 
@@ -130,11 +160,17 @@ def sample_style_policy_from_prior(
         },
         "style_latent_encoder_reference": _style_latent_encoder_reference(prior),
         "rgb_statistics_reference": dict(prior.get("rgb_statistics", {})),
+        "coverage_reference": _coverage_reference(prior),
         "limitations": [
             "deterministic_fitted_style_latent_policy_only",
             "not_deep_trainable_style_encoder",
             "not_a_vae_style_latent",
             "not_production_style_transfer",
+            "no_slide_level_style_seed_with_local_perturbation",
+            "no_sharpness_focus_plane_distribution",
+            "no_smudges_dust_artifact_distribution",
+            "no_compression_noise_distribution",
+            "no_scanner_noise_distribution",
         ],
     }
 
@@ -291,6 +327,35 @@ def _style_latent_encoder_reference(prior: dict[str, Any]) -> dict[str, Any]:
         "encoder_type": encoder_type,
         "latent_dim": latent_dim,
         "condition_outputs": list(condition_outputs),
+    }
+
+
+def _coverage_reference(prior: dict[str, Any]) -> dict[str, Any]:
+    coverage = prior.get("coverage")
+    if not isinstance(coverage, dict):
+        # Older artifacts written before coverage existed; surface this rather
+        # than silently treat the prior as a full global style prior.
+        return {
+            "covered_dimensions": [],
+            "uncovered_dimensions": [
+                dim["name"] for dim in STYLE_COVERAGE_DIMENSIONS if not dim["covered"]
+            ],
+            "details": [dict(dim) for dim in STYLE_COVERAGE_DIMENSIONS],
+            "note": "style_prior.coverage missing; default coverage assumes statistical RGB only",
+        }
+    covered = coverage.get("covered_dimensions")
+    uncovered = coverage.get("uncovered_dimensions")
+    details = coverage.get("details")
+    if not isinstance(covered, list) or not isinstance(uncovered, list):
+        raise StylePriorBuildError(
+            "style_prior.coverage.covered_dimensions and uncovered_dimensions must be lists"
+        )
+    if not isinstance(details, list):
+        raise StylePriorBuildError("style_prior.coverage.details must be a list")
+    return {
+        "covered_dimensions": list(covered),
+        "uncovered_dimensions": list(uncovered),
+        "details": [dict(item) for item in details if isinstance(item, dict)],
     }
 
 

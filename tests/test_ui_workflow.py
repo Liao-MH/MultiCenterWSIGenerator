@@ -39,6 +39,7 @@ def _form_state(**overrides: object) -> dict:
         "overlap_px_40x": "32",
         "non_copy_patch_nearest_neighbor_search": False,
         "condition_packet_path": "build/condition_packet.json",
+        "job_root": "build/generated/ui_jobs",
         "label_mapping_rows": [
             {"raw_label": "1", "class_name": "tissue"},
             {"raw_label": "2", "class_name": "target_pathology"},
@@ -215,6 +216,21 @@ class UIWorkflowTests(unittest.TestCase):
         self.assertIn("build/training-index.jsonl", command)
         self.assertNotIn("--condition-packet", command)
 
+    def test_build_run_generation_command_accepts_production_tile_stream_backend(self):
+        command = build_run_generation_command(
+            _form_state(
+                backend="production-tile-stream",
+                condition_packet_path="build/condition_packet.json",
+            ),
+            "build/generation.json",
+        )
+
+        self.assertIn("--backend", command)
+        self.assertIn("production-tile-stream", command)
+        self.assertNotIn("--training-index", command)
+        self.assertIn("--wsi-writer", command)
+        self.assertIn("tile-streaming", command)
+
     def test_build_run_generation_command_rejects_missing_required_field(self):
         with self.assertRaisesRegex(UIWorkflowError, "prior manifest is required"):
             build_run_generation_command(
@@ -237,7 +253,10 @@ class UIWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             record = create_run_generation_job(
-                _form_state(condition_packet_path=None),
+                _form_state(
+                    condition_packet_path=None,
+                    job_root=str(root / "jobs"),
+                ),
                 root / "jobs",
                 root / "generation.json",
                 cwd=root / "work",
@@ -251,6 +270,45 @@ class UIWorkflowTests(unittest.TestCase):
         self.assertEqual(record["cwd"], str(root / "work"))
         self.assertIn("run-generation", record["command"])
         self.assertIn("gen-001", persisted)
+
+    def test_run_generation_job_helpers_honor_explicit_job_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_root = root / "outputs" / "run-artifacts"
+            job_root = root / "outputs" / "ui-jobs"
+            create_run_generation_job(
+                _form_state(
+                    output_root=str(output_root),
+                    condition_packet_path=None,
+                    job_root=str(job_root),
+                ),
+                job_root,
+                root / "generation.json",
+            )
+            record = JobRunner(job_root).load_job("gen-001")
+            record["command"] = [sys.executable, "-c", "print('job root ok')"]
+            Path(record["record_path"]).write_text(
+                json.dumps(record, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            completed = run_queued_generation_job(
+                _form_state(
+                    output_root=str(output_root),
+                    condition_packet_path=None,
+                    job_root=str(job_root),
+                )
+            )
+            refreshed = load_generation_job_status(
+                _form_state(
+                    output_root=str(output_root),
+                    condition_packet_path=None,
+                    job_root=str(job_root),
+                )
+            )
+
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(refreshed["status"], "completed")
 
     def test_create_run_generation_job_rejects_invalid_generation_fields_before_queueing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -273,6 +331,7 @@ class UIWorkflowTests(unittest.TestCase):
                 _form_state(
                     output_root=str(output_root),
                     condition_packet_path=None,
+                    job_root=str(output_root / "ui_jobs"),
                 ),
                 output_root / "ui_jobs",
                 root / "generation.json",
@@ -285,10 +344,18 @@ class UIWorkflowTests(unittest.TestCase):
             )
 
             completed = run_queued_generation_job(
-                _form_state(output_root=str(output_root), condition_packet_path=None)
+                _form_state(
+                    output_root=str(output_root),
+                    condition_packet_path=None,
+                    job_root=str(output_root / "ui_jobs"),
+                )
             )
             refreshed = load_generation_job_status(
-                _form_state(output_root=str(output_root), condition_packet_path=None)
+                _form_state(
+                    output_root=str(output_root),
+                    condition_packet_path=None,
+                    job_root=str(output_root / "ui_jobs"),
+                )
             )
             stdout = Path(completed["stdout_path"]).read_text(encoding="utf-8")
 
@@ -312,7 +379,11 @@ class UIWorkflowTests(unittest.TestCase):
             runner.run_job("gen-001")
 
             summary = collect_generation_job_output_summary(
-                _form_state(output_root=str(output_root), condition_packet_path=None)
+                _form_state(
+                    output_root=str(output_root),
+                    condition_packet_path=None,
+                    job_root=str(output_root / "ui_jobs"),
+                )
             )
 
         self.assertEqual(summary["generated_id"], "gen-001")
@@ -329,13 +400,21 @@ class UIWorkflowTests(unittest.TestCase):
 
             with self.assertRaisesRegex(UIWorkflowError, "must be completed"):
                 collect_generation_job_output_summary(
-                    _form_state(output_root=str(output_root), condition_packet_path=None)
+                    _form_state(
+                        output_root=str(output_root),
+                        condition_packet_path=None,
+                        job_root=str(output_root / "ui_jobs"),
+                    )
                 )
 
             runner.run_job("gen-001")
             with self.assertRaisesRegex(UIWorkflowError, "metadata.json"):
                 collect_generation_job_output_summary(
-                    _form_state(output_root=str(output_root), condition_packet_path=None)
+                    _form_state(
+                        output_root=str(output_root),
+                        condition_packet_path=None,
+                        job_root=str(output_root / "ui_jobs"),
+                    )
                 )
 
 

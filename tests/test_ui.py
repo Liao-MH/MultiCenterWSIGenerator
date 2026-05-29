@@ -523,7 +523,12 @@ class PySideFormTests(unittest.TestCase):
         self.assertIsNotNone(window.findChild(QLineEdit, "checkpoint_manifest_input"))
         self.assertIsNotNone(window.findChild(QLineEdit, "output_root_input"))
         self.assertIsNotNone(window.findChild(QLineEdit, "generated_id_input"))
-        self.assertIsNotNone(window.findChild(QComboBox, "backend_select"))
+        backend_select = window.findChild(QComboBox, "backend_select")
+        self.assertIsNotNone(backend_select)
+        self.assertEqual(
+            [backend_select.itemText(index) for index in range(backend_select.count())],
+            ["smoke-cascade", "torch-diffusion-smoke", "production-tile-stream"],
+        )
         self.assertIsNotNone(window.findChild(QComboBox, "anchor_preset_select"))
         for class_name in MASK_CLASSES:
             self.assertIsNotNone(window.findChild(QLineEdit, f"label_mapping_{class_name}_input"))

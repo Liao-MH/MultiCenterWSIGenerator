@@ -248,6 +248,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to write wsi_tissue_overview JSON.",
     )
 
+    pseudo_mask_parser = subparsers.add_parser(
+        "build-pseudo-mask",
+        help=(
+            "Build a clustered pseudo-mask artifact from one manifest WSI "
+            "using the current statistical patch-embedding pipeline."
+        ),
+    )
+    pseudo_mask_parser.add_argument("manifest", help="Path to input manifest JSON/YAML.")
+    pseudo_mask_parser.add_argument(
+        "--backend",
+        choices=["openslide", "fixture-image"],
+        default="openslide",
+        help="Slide reader backend. Use fixture-image only for smoke tests.",
+    )
+    pseudo_mask_parser.add_argument("--output-dir", required=True, help="Output directory.")
+    pseudo_mask_parser.add_argument(
+        "--embedder-checkpoint",
+        help=(
+            "Optional JSON config checkpoint for the checkpoint-backed "
+            "statistical patch embedder; defaults to FixturePatchEmbedder "
+            "for tests/smoke flows."
+        ),
+    )
+    pseudo_mask_parser.add_argument("--patch-width", type=int, default=256, help="Patch width.")
+    pseudo_mask_parser.add_argument("--patch-height", type=int, default=256, help="Patch height.")
+    pseudo_mask_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Patch embedding batch size for streaming pseudo-mask construction.",
+    )
+    pseudo_mask_parser.add_argument("--n-clusters", type=int, required=True, help="Cluster count.")
+
     layout_sample_parser = subparsers.add_parser(
         "sample-layout-mask",
         help="Sample a reproducible layout mask artifact from a layout_mask_prior JSON.",
@@ -282,6 +315,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a label mapping JSON/YAML. Repeat for multiple annotations.",
     )
     index_parser.add_argument("--output", required=True, help="Path to write training-index JSONL.")
+
+    mask_parser = subparsers.add_parser(
+        "build-six-class-mask",
+        help="Build aligned unified six-class mask artifacts from manifest annotations.",
+    )
+    mask_parser.add_argument("manifest", help="Path to input manifest JSON/YAML.")
+    mask_parser.add_argument("--audit", required=True, help="Path to manifest audit JSON/YAML.")
+    mask_parser.add_argument(
+        "--label-mapping",
+        action="append",
+        required=True,
+        help="Path to a label mapping JSON/YAML. Repeat for multiple annotations.",
+    )
+    mask_parser.add_argument("--output-dir", required=True, help="Output directory.")
 
     batch_parser = subparsers.add_parser(
         "inspect-training-batch",
@@ -416,6 +463,15 @@ def build_parser() -> argparse.ArgumentParser:
     torch_diffusion_parser.add_argument(
         "--vae-checkpoint-manifest",
         help="Optional VAE smoke checkpoint_manifest.json used to encode trainable VAE latents.",
+    )
+
+    latent_diffusion_train_parser = subparsers.add_parser(
+        "train-latent-diffusion-unet",
+        help="Run the real Stage4 latent_diffusion_unet training backend from a training config.",
+    )
+    latent_diffusion_train_parser.add_argument(
+        "config",
+        help="Path to training config JSON/YAML.",
     )
 
     torch_sample_parser = subparsers.add_parser(

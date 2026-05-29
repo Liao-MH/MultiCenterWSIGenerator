@@ -154,7 +154,7 @@ def _load_project_mask_tile(numpy, record: dict[str, Any]):
     if not path.exists():
         raise TrainingBatchError(f"mask file does not exist: {path}")
     try:
-        mask = numpy.load(path)
+        mask = numpy.load(path, mmap_mode="r") if path.suffix.lower() == ".npy" else numpy.load(path)
     except Exception as exc:
         raise TrainingBatchError(f"mask file cannot be loaded: {path}") from exc
     if mask.ndim != 2:
@@ -166,7 +166,9 @@ def _load_project_mask_tile(numpy, record: dict[str, Any]):
     if x < 0 or y < 0 or x + width > mask.shape[1] or y + height > mask.shape[0]:
         raise TrainingBatchError(f"tile exceeds mask bounds for {record['sample_id']}")
     raw_tile = mask[y : y + height, x : x + width]
-    return _map_raw_mask_to_project_ids(numpy, raw_tile, mask_info["class_mapping"])
+    mapped = _map_raw_mask_to_project_ids(numpy, raw_tile, mask_info["class_mapping"])
+    target_mask_shape = _target_spatial_shape(record, "target_mask_shape")
+    return _resize_nearest_mask(numpy, mapped, target_mask_shape)
 
 
 def _load_rgb_image_tile(numpy, record: dict[str, Any]):
@@ -193,7 +195,8 @@ def _load_fixture_image_tile(numpy, path: Path, record: dict[str, Any]):
             if x < 0 or y < 0 or x + width > rgb.size[0] or y + height > rgb.size[1]:
                 raise TrainingBatchError(f"tile exceeds WSI image bounds for {record['sample_id']}")
             tile = rgb.crop((x, y, x + width, y + height))
-            return numpy.asarray(tile, dtype=numpy.uint8)
+            array = numpy.asarray(tile, dtype=numpy.uint8)
+            return _resize_rgb_tile(numpy, array, _target_spatial_shape(record, "target_image_shape"))
     except TrainingBatchError:
         raise
     except Exception as exc:
@@ -215,7 +218,8 @@ def _load_openslide_image_tile(numpy, path: Path, record: dict[str, Any]):
         if x < 0 or y < 0 or x + width > slide_width or y + height > slide_height:
             raise TrainingBatchError(f"tile exceeds WSI image bounds for {record['sample_id']}")
         tile = slide.read_region((x, y), 0, (width, height)).convert("RGB")
-        return numpy.asarray(tile, dtype=numpy.uint8)
+        array = numpy.asarray(tile, dtype=numpy.uint8)
+        return _resize_rgb_tile(numpy, array, _target_spatial_shape(record, "target_image_shape"))
     finally:
         slide.close()
 
@@ -256,6 +260,48 @@ def _map_raw_mask_to_project_ids(numpy, raw_tile, class_mapping: dict[str, Any])
             raise TrainingBatchError(f"mask class id {raw_id} is not mapped to a project class")
         mapped[raw_tile == raw_id] = MASK_CLASS_TO_ID[class_name]
     return mapped
+
+
+def _target_spatial_shape(record: dict[str, Any], key: str) -> tuple[int, int]:
+    coord = record.get("conditioning", {}).get("coord")
+    if not isinstance(coord, dict):
+        raise TrainingBatchError("training index record missing conditioning.coord")
+    shape = coord.get(key)
+    if (
+        not isinstance(shape, list)
+        or len(shape) != 2
+        or not all(isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in shape)
+    ):
+        raise TrainingBatchError(f"conditioning.coord.{key} must contain two positive integers")
+    return int(shape[0]), int(shape[1])
+
+
+def _resize_nearest_mask(numpy, array, target_shape: tuple[int, int]):
+    target_height, target_width = target_shape
+    if array.shape == (target_height, target_width):
+        return array.astype(numpy.uint8)
+    y_index = _nearest_indices(array.shape[0], target_height)
+    x_index = _nearest_indices(array.shape[1], target_width)
+    return array[y_index][:, x_index].astype(numpy.uint8)
+
+
+def _resize_rgb_tile(numpy, array, target_shape: tuple[int, int]):
+    target_height, target_width = target_shape
+    if array.shape[:2] == (target_height, target_width):
+        return array.astype(numpy.uint8)
+    y_index = _nearest_indices(array.shape[0], target_height)
+    x_index = _nearest_indices(array.shape[1], target_width)
+    return array[y_index][:, x_index, :].astype(numpy.uint8)
+
+
+def _nearest_indices(source_size: int, target_size: int):
+    if source_size <= 0 or target_size <= 0:
+        raise TrainingBatchError("resize dimensions must be positive")
+    if source_size == target_size:
+        return slice(None)
+    ratio = source_size / target_size
+    indexes = [min(source_size - 1, int(index * ratio)) for index in range(target_size)]
+    return indexes
 
 
 def _number(value: Any, name: str) -> float:

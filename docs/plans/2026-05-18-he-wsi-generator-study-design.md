@@ -240,6 +240,57 @@ flowchart TD
 
 如果这些问题不能解决，后续生成不应继续。因为 WSI 生成系统的可信度首先来自坐标和语义条件的可追溯，而不是来自扩散模型本身。
 
+Implementation Trace:
+- 状态：已实现
+- 主实现：
+  - src/he_wsi_generator/io/audit.py::audit_manifest，收敛输入 manifest 审计，补齐 `center_id`、`tissue_type` 和 annotation 摘要。
+  - src/he_wsi_generator/annotations/masks.py::load_annotation_source，统一读取 raster mask、ROI JSON 和 cluster pseudo mask。
+  - src/he_wsi_generator/annotations/masks.py::build_six_class_mask，按统一 block streaming 路径把多来源 annotation 合并为 6 类 level0 mask，并输出 compact provenance summary。
+  - src/he_wsi_generator/annotations/pipeline.py::{build_six_class_mask_artifact,cleanup_temporary_six_class_masks}，把 manifest、audit、label mapping 收束成临时 six-class mask artifact，并在全流程目标输出存在后删除临时 full level0 mask。
+  - src/he_wsi_generator/priors/pseudo_mask.py::build_pseudo_mask_from_manifest，把 patch extraction、batch streaming embedder、embedding cache、cluster report 和 pseudo mask 候选接成闭环。
+- 完整依赖：
+  - 入口与编排：
+    - src/he_wsi_generator/cli.py::build_parser，暴露 `audit-manifest`、`build-six-class-mask` 和带 `--batch-size` 的 `build-pseudo-mask` CLI。
+    - src/he_wsi_generator/cli_commands.py::run_command，连接上述 Stage 1-3 命令到 core 实现。
+  - 数据契约：
+    - src/he_wsi_generator/schemas.py::validate_input_manifest，校验 manifest 和 annotation record 基础字段。
+    - src/he_wsi_generator/schemas.py::validate_label_mapping，校验 6 类映射和 mapping source/confidence。
+  - 核心逻辑：
+    - src/he_wsi_generator/io/readers.py::{OpenSlideReader, FixtureImageSlideReader}，读取 WSI metadata 和 thumbnail。
+    - src/he_wsi_generator/annotations/alignment.py::validate_mask_alignment，校验 mask transform 是否落在 level0 范围内。
+    - src/he_wsi_generator/embeddings/embedder.py::{CheckpointPatchEmbedder, FixturePatchEmbedder}，提供可插拔统计型 patch embedding，并显式记录非 foundation-model 边界。
+    - src/he_wsi_generator/embeddings/cache.py::{save_embedding_cache, load_embedding_cache}，保存/读取 embedding cache。
+    - src/he_wsi_generator/embeddings/cluster.py::cluster_embeddings，输出 cluster labels / counts / inertia。
+  - 输出与持久化：
+    - src/he_wsi_generator/outputs/masks.py::{write_mask_array,write_mask_metadata}，写出普通 mask array 或 streaming memmap 对应 metadata。
+    - src/he_wsi_generator/annotations/pipeline.py::build_six_class_mask_artifact，写出 `six_class_mask_summary.json`、per-WSI artifact 和 compact provenance summary。
+    - src/he_wsi_generator/priors/pseudo_mask.py::{build_pseudo_mask_from_manifest,_build_embedding_summary}，写出 `cluster_report.json`、`pseudo_mask.npy`、`cluster_pseudo_mask.json`、batch streaming 元数据和顶层 `embedding_summary`。
+  - 测试覆盖：
+    - tests/test_wsi_io.py::WSIIOTests::test_audit_manifest_fills_metadata_from_reader，验证 manifest audit 补齐 `center_id`、`tissue_type` 和 annotation 摘要。
+    - tests/test_annotations.py::AnnotationTests::test_load_annotation_source_reads_roi_json，验证 ROI JSON loader。
+    - tests/test_annotations.py::AnnotationTests::test_build_six_class_mask_merges_manual_roi_and_pseudo_sources，验证多来源 mask 合并优先级。
+    - tests/test_annotations.py::AnnotationTests::test_build_six_class_mask_rejects_same_priority_conflict，验证同优先级冲突显式失败。
+    - tests/test_annotations.py::AnnotationTests::test_cleanup_temporary_six_class_masks_requires_target_outputs_before_deleting，验证临时 full mask 删除必须晚于目标输出。
+    - tests/test_embeddings.py::EmbeddingTests::test_checkpoint_embedder_outputs_finite_embedding_metadata，验证统计型 checkpoint embedder metadata。
+    - tests/test_embeddings.py::EmbeddingTests::test_fixture_embedder_marks_low_confidence，验证 fixture embedder smoke-only 限制说明。
+    - tests/test_pseudo_mask_pipeline.py::PseudoMaskPipelineTests::test_build_pseudo_mask_from_manifest_writes_embedding_cache_and_cluster_mask，验证 pseudo-mask 闭环产物与 `embedding_summary`。
+    - tests/test_pseudo_mask_pipeline.py::PseudoMaskPipelineTests::test_build_pseudo_mask_from_manifest_streams_patch_embedding_batches，验证 patch embedding batch streaming。
+    - tests/test_training_batch.py::TrainingBatchTests::test_load_training_batch_reads_npy_mask_with_mmap_mode，验证训练 batch 读取 `.npy` mask 使用 mmap。
+- 外部关键依赖：
+  - Pillow，用于 fixture-image patch/ROI 相关读取。
+  - openslide-python，用于真实 WSI metadata/thumbnail/level0 patch 读取。
+  - numpy，用于 mask、embedding 和 pseudo-mask 数组处理。
+- 参考行号：
+  - src/he_wsi_generator/io/audit.py 16-54，manifest audit 记录补齐和输出。
+  - src/he_wsi_generator/annotations/masks.py 87-189，block streaming six-class merge 入口与 compact provenance 汇总。
+  - src/he_wsi_generator/annotations/masks.py 272-592，block-local mask/ROI 合并、冲突记录和 provenance counts。
+  - src/he_wsi_generator/annotations/pipeline.py 14-130，six-class mask artifact 编排与临时 mask cleanup helper。
+  - src/he_wsi_generator/embeddings/embedder.py 24-109，统计型 checkpoint/fixture embedder metadata 与限制声明。
+  - src/he_wsi_generator/priors/pseudo_mask.py 17-129，pseudo-mask 主入口、`embedding_summary` 写出和 memmap artifact 编排。
+  - src/he_wsi_generator/priors/pseudo_mask.py 157-347，patch batch extraction、embedding streaming 和 pseudo-mask 写盘。
+  - src/he_wsi_generator/priors/pseudo_mask.py 350-367，artifact 顶层 `embedding_summary` 构建。
+- 更新时间：2026-05-27
+
 ## 5. Layout / Mask Prior 与 Global Imaging Style Prior
 
 ### 5.1 Layout / Mask Prior
@@ -428,6 +479,78 @@ p_theta(X | C)
 | 可选 source WSI 条件 | 在高 anchor 模式下继承源结构或像素 |
 | 邻域上下文或重叠区域 | 减少 tile seam 和局部断裂 |
 
+Implementation Trace:
+- 状态：已实现
+- 主实现：
+  - src/he_wsi_generator/generation/executor.py::run_production_tile_stream_generation，落实 M16 / M18，统一处理 external tile backend 与 internal `latent_diffusion_unet_checkpoint`。
+  - src/he_wsi_generator/generation/latent_diffusion_internal.py::materialize_internal_latent_diffusion_tile_sources，把 Stage4 checkpoint 接成真实四层 cascade tile source。
+  - src/he_wsi_generator/generation/executor.py::{_resolve_source_wsi_path_from_prior,_metadata_source_payload}，在高 anchor 时回填并透传真实 source WSI provenance。
+- 完整依赖：
+  - 入口与编排：
+    - src/he_wsi_generator/generation/planner.py::create_generation_plan，提供四层 stage 顺序和 generation backend compatibility gate。
+    - src/he_wsi_generator/generation/executor.py::run_production_tile_stream_generation，连接 Stage5 internal/external backend 与现有 metadata/QC/archive writer。
+  - 核心逻辑：
+    - src/he_wsi_generator/generation/latent_diffusion_internal.py::{_sample_internal_cascade,_write_internal_tile_source_manifest}，把 `latent_diffusion_unet` checkpoint 采样成 `1/32 -> 1/16 -> 1/4 -> 1/1` tile source manifest。
+    - src/he_wsi_generator/generation/latent_diffusion_internal.py::{_load_source_level0_rgb,_source_condition_summary}，读取 source WSI 对应 region 并作为 model condition。
+    - src/he_wsi_generator/generation/tiling.py::create_tile_traversal_plan，继续提供 Stage5 tile grid 计划。
+  - 输出与持久化：
+    - src/he_wsi_generator/outputs/ome_tiff.py::write_pyramid_ome_tiff_streaming_from_tile_sources，负责 OME-TIFF handoff。
+    - src/he_wsi_generator/generation/production_streaming.py::write_streaming_mask_from_tile_sources，负责最终 mask 输出。
+  - 测试覆盖：
+    - tests/test_production_latent_generation.py::ProductionLatentGenerationTests::test_run_production_tile_stream_generation_with_internal_latent_checkpoint，验证 M16 internal backend 主路径。
+    - tests/test_production_latent_generation.py::ProductionLatentGenerationTests::test_internal_latent_generation_records_real_source_conditioning，验证 M18 高 anchor 的真实 source-conditioned 行为。
+    - tests/test_generation_runner.py::GenerationRunnerTests::*，验证既有 smoke/external path 不回归。
+- 外部关键依赖：
+  - numpy，用于 tile source / mask materialization。
+  - torch，用于 internal latent diffusion checkpoint sampling。
+  - Pillow、openslide-python，用于 source WSI RGB 读取。
+- 参考行号：
+  - src/he_wsi_generator/generation/executor.py 432-620，Stage 5 production entry、internal/external backend 分流。
+  - src/he_wsi_generator/generation/latent_diffusion_internal.py 27-110，internal Stage5 主入口与 summary。
+  - src/he_wsi_generator/generation/latent_diffusion_internal.py 113-230，四层 cascade sampling。
+- 更新时间：2026-05-28
+
+Implementation Trace:
+- 状态：已实现
+- 主实现：
+  - src/he_wsi_generator/models/training_index.py::build_training_index，落实 M12，保留现有四层 cascade training-index 主线。
+  - src/he_wsi_generator/models/training_batch.py::load_training_batch，落实 M12，提供多倍率 image/mask batch 读取。
+  - src/he_wsi_generator/models/latent_diffusion_training.py::train_latent_diffusion_unet，落实 M13-M15，执行真实 `prior_ready -> image_generator -> wsi_consistency` 三阶段训练并写出 trained checkpoint。
+- 完整依赖：
+  - 入口与编排：
+    - src/he_wsi_generator/cli.py::build_parser，暴露 `build-training-index`、`inspect-training-batch` 和 `train-latent-diffusion-unet`。
+    - src/he_wsi_generator/cli_commands.py::run_command，连接 Stage4 contract gate、真实训练 backend 和 CLI 输出。
+    - src/he_wsi_generator/models/training.py::create_training_run，继续承担 config / dataset / objective / prior contract gate。
+  - 输入契约：
+    - src/he_wsi_generator/schemas.py::{validate_input_manifest, validate_label_mapping}，校验 manifest 与 label mapping。
+    - src/he_wsi_generator/io/audit.py::audit_manifest，提供 WSI 维度、倍率和 annotation 摘要。
+    - src/he_wsi_generator/priors/artifacts.py::load_prior_manifest，校验 Stage3 prior manifest 文件完整性。
+  - 核心逻辑：
+    - src/he_wsi_generator/models/training_index.py::{_records_for_slide,_coord_condition}，按 `1/32 / 1/16 / 1/4 / 1/1` 写出多倍率训练记录。
+    - src/he_wsi_generator/models/training_batch.py::{_load_project_mask_tile,_load_fixture_image_tile,_load_openslide_image_tile,_resize_nearest_mask,_resize_rgb_tile}，按目标层级返回真实训练样本。
+    - src/he_wsi_generator/models/latent_diffusion_training.py::{_load_conditioning_reference,_load_level_batches,_run_vae_stage,_run_diffusion_stage}，从 prior manifest 读取 style/texture 摘要，按每层子采样加载 batch，并执行真实训练循环。
+    - src/he_wsi_generator/models/latent_diffusion_training.py::{_previous_scale_condition,_source_condition_channels,_condition_feature_channels,_tile_seam_loss,_style_consistency_loss}，把 `previous_scale`、`source_condition`、`coord`、`style`、`texture` 和 `structure_anchor` 接成真实模型条件与训练目标。
+  - 输出与持久化：
+    - src/he_wsi_generator/models/latent_diffusion_training.py::_trained_checkpoint_manifest，写出真实 `checkpoint_manifest.json`，记录 `stage_execution`、`anchor_training`、`dataset_sampling` 和 inference/load contract。
+  - 测试覆盖：
+    - tests/test_training_index.py::TrainingIndexTests::test_build_training_index_writes_four_level_tile_records，验证 M12 记录显式条件对象与多倍率目标尺寸。
+    - tests/test_training_batch.py::TrainingBatchTests::{test_load_training_batch_downsamples_mask_for_lower_cascade_level,test_load_training_batch_reads_fixture_image_tiles_for_lower_cascade_level}，验证 lower cascade batch 读取。
+    - tests/test_models_generation.py::ModelGenerationSkeletonTests::*，验证 `init-training-run` contract gate 仍保持 plan-only 语义。
+    - tests/test_latent_diffusion_training.py::LatentDiffusionTrainingTests::{test_train_latent_diffusion_unet_writes_trained_checkpoint_and_stage_execution,test_cli_trains_latent_diffusion_unet,test_train_latent_diffusion_unet_respects_runtime_batch_size_per_level}，验证 M13-M15 真实 backend、CLI 和大图子采样。
+    - tests/test_torch_training.py::TorchSmokeTrainingTests::*，验证旧 smoke backend 兼容性未回归。
+- 外部关键依赖：
+  - numpy，用于 mask/image batch 处理与 nearest resize。
+  - Pillow、openslide-python，用于真实图像 tile 读取。
+  - torch，用于真实 Stage4 训练 backend。
+- 参考行号：
+  - src/he_wsi_generator/models/training_index.py 12-153，多倍率训练记录与条件对象。
+  - src/he_wsi_generator/models/training_batch.py 12-287，多倍率 batch 读取与缩放。
+  - src/he_wsi_generator/models/latent_diffusion_training.py 114-357，Stage4 真实训练主入口、checkpoint/training plan 回写。
+  - src/he_wsi_generator/models/latent_diffusion_training.py 484-510，每层 batch 子采样加载。
+  - src/he_wsi_generator/models/latent_diffusion_training.py 557-694，真实 diffusion / consistency 训练循环。
+  - src/he_wsi_generator/models/latent_diffusion_training.py 869-977，trained checkpoint manifest 与 inference contract。
+- 更新时间：2026-05-27
+
 完整条件会增加工程复杂度，但它支撑了系统最重要的能力：同一模型连续覆盖重扫描模拟、结构保留、布局重组和 fully de novo。若条件过少，模型可能只能生成看似合理的局部 tile，却无法稳定控制源结构继承或 WSI 层级一致性。
 
 ### 7.4 三阶段训练协议
@@ -564,6 +687,31 @@ LLM 不应直接决定像素真实性。它不替代真实 WSI 分布、生成�
 ### 9.2 必填 metadata 字段
 
 metadata 至少应包含以下字段。实际实现可以扩展，但不应少于这些核心字段。
+
+Implementation Trace:
+- 状态：部分实现
+- 主实现：
+  - src/he_wsi_generator/generation/executor.py::_metadata_payload，统一生成 per-WSI metadata 主体结构。
+  - src/he_wsi_generator/generation/executor.py::_metadata_source_payload，落实 M20 的 source 关系回填。
+  - src/he_wsi_generator/generation/executor.py::_metadata_mask_schema，落实 M20 的 mask 来源回填。
+- 完整依赖：
+  - 入口与编排：
+    - src/he_wsi_generator/generation/executor.py::{run_smoke_generation, run_torch_diffusion_smoke_generation, run_production_tile_stream_generation}，在各生成入口中统一调用 `_metadata_payload()`。
+  - 核心逻辑：
+    - src/he_wsi_generator/generation/executor.py::_metadata_source_payload，在 source-conditioned 路径下写出真实 `source_wsi_id / source_wsi_path / source_region / source_scale`。
+    - src/he_wsi_generator/generation/executor.py::_metadata_mask_schema，在 sampled layout mask 条件下写出 artifact provenance。
+  - 输出与持久化：
+    - src/he_wsi_generator/metadata/archive.py::{write_metadata, archive_sample, append_batch_index}，把 metadata 与 `qc.json / batch.jsonl` 一起落盘。
+  - 测试覆盖：
+    - tests/test_generation_runner.py::GenerationRunnerTests::test_run_smoke_generation_uses_source_conditioned_mix_for_high_anchor，验证 source-conditioned metadata 回填。
+    - tests/test_generation_runner.py::GenerationRunnerTests::test_run_smoke_generation_uses_sampled_layout_mask_condition，验证 sampled layout mask 的 mask_schema provenance。
+    - tests/test_outputs_qc_archive.py::OutputQCArchiveTests::test_archive_sample_writes_metadata_qc_and_batch_index，验证 metadata/QC/batch index 主线无回归。
+- 外部关键依赖：
+  - 无新增外部关键依赖；复用现有 metadata/QC/archive 主线。
+- 参考行号：
+  - src/he_wsi_generator/generation/executor.py 642-758，metadata payload 组装。
+  - src/he_wsi_generator/metadata/archive.py 1-68，metadata/QC/batch index 落盘。
+- 更新时间：2026-05-26
 
 ```json
 {
@@ -800,6 +948,32 @@ QC JSON 应尽量记录“为什么”而不是只记录状态。例如一个样
 ### Phase 6：自动 QC 与归档
 
 第六阶段执行 WSI/tile/mask 区域三级 QC，输出 pass/warning/fail、QC JSON 和 batch JSONL index。输出样本被归档为 OME-TIFF + mask + metadata + QC 的完整数据对象。决策门是硬错误和严重质量异常是否能自动暴露，warning 是否能帮助定位失败类型。
+
+Implementation Trace:
+- 状态：已实现
+- 主实现：
+  - src/he_wsi_generator/ui/workflow::{build_run_generation_command,create_run_generation_job,run_queued_generation_job,load_generation_job_status,collect_generation_job_output_summary}，落实 M23，支持 `production-tile-stream` 和显式 `job_root`。
+  - src/he_wsi_generator/ui/pyside_app.py::create_main_window，落实 M23，把 `production-tile-stream` 暴露到单页 UI backend 列表。
+  - tests/test_stage1_7_real_backend_e2e.py::Stage1To7RealBackendE2ETests::test_stage1_to_7_real_backend_entry_runs_generation_job_and_collects_summary，落实 M26，新增 non-smoke Stage1-7 入口。
+- 完整依赖：
+  - 入口与编排：
+    - src/he_wsi_generator/ui/workflow::{create_run_generation_job,run_queued_generation_job,load_generation_job_status,collect_generation_job_output_summary}，构成 Stage 7 workflow 主链。
+    - src/he_wsi_generator/cli_commands.py::run_command，构成真实 SVS CLI 验证链路的 audit / pseudo-mask / six-class mask / prior / training / run-generation 入口。
+  - 核心逻辑：
+    - src/he_wsi_generator/ui/workflow.py::_BACKENDS，把 `production-tile-stream` 纳入可调度 backend。
+    - tests/test_stage1_7_real_backend_e2e.py 复用 Stage1-4 主链工件与真实 latent checkpoint，最终通过 workflow/job/output summary 收束到 Stage 7。
+    - build/validation/real-291288-stage1-7-v0800.GEITCR/，记录本轮真实 `.svs` Stage1-7 复跑工件；最终输出 `generated/gen-real-291288-stage1-7-v0800/`。
+  - 测试覆盖：
+    - tests/test_ui_workflow.py::UIWorkflowTests::test_build_run_generation_command_accepts_production_tile_stream_backend，验证 production backend CLI contract。
+    - tests/test_ui.py::PySideFormTests::test_main_window_exposes_enabled_form_controls，验证 UI backend 列表。
+    - tests/test_stage1_7_real_backend_e2e.py::Stage1To7RealBackendE2ETests::test_stage1_to_7_real_backend_entry_runs_generation_job_and_collects_summary，验证 non-smoke E2E 入口。
+- 外部关键依赖：
+  - 无新增外部关键依赖；复用现有 workflow、job runner、generation、archive 和 output summary 主线。
+- 参考行号：
+  - src/he_wsi_generator/ui/workflow.py 17-110，backend 列表与 production workflow command builder。
+  - src/he_wsi_generator/ui/pyside_app.py 59-90，backend 下拉。
+  - tests/test_stage1_7_real_backend_e2e.py 41-459，non-smoke Stage 1-7 E2E 入口。
+- 更新时间：2026-05-28
 
 ### 13.1 阶段间依赖关系
 

@@ -15,7 +15,7 @@ class UIWorkflowError(ValueError):
 
 
 _MISSING = object()
-_BACKENDS = {"smoke-cascade", "torch-diffusion-smoke"}
+_BACKENDS = {"smoke-cascade", "torch-diffusion-smoke", "production-tile-stream"}
 _FIELD_LABELS = {
     "checkpoint_manifest_path": "checkpoint manifest",
     "condition_packet_path": "condition packet",
@@ -89,6 +89,8 @@ def build_run_generation_command(
             aliases=("training_index",),
         )
         command.extend(["--training-index", training_index])
+    elif backend == "production-tile-stream":
+        command.extend(["--wsi-writer", "tile-streaming"])
     command.extend(
         [
             "--output-root",
@@ -367,14 +369,22 @@ def _field_label(key: str) -> str:
 
 
 def _generation_job_runner_and_id(form_state: dict) -> tuple[JobRunner, str]:
-    output_root = _generation_output_root(form_state)
+    job_root = _generation_job_root(form_state)
     job_id = _required_text_field(form_state, "generated_id")
-    return JobRunner(output_root / "ui_jobs"), job_id
+    return JobRunner(job_root), job_id
 
 
 def _generation_output_root(form_state: dict) -> Path:
     _require_form_state(form_state)
     return Path(_required_path_field(form_state, "output_root", aliases=("output_dir",)))
+
+
+def _generation_job_root(form_state: dict) -> Path:
+    _require_form_state(form_state)
+    job_root = _optional_path_field(form_state, "job_root")
+    if job_root is not None:
+        return Path(job_root)
+    return _generation_output_root(form_state) / "ui_jobs"
 
 
 def _require_existing_artifact(path: Path, label: str) -> None:

@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..constants import PROJECT_VERSION
+
+STATISTICAL_EMBEDDING_BACKEND = "statistical_patch_moments"
+CHECKPOINT_EMBEDDER_KIND = "checkpoint_backed_statistical_patch_embedder"
+FIXTURE_EMBEDDER_KIND = "fixture_statistical_patch_embedder"
+
 
 class EmbeddingError(RuntimeError):
     """Raised when patch embedding cannot be computed safely."""
@@ -16,6 +22,8 @@ class EmbeddingResult:
 
 
 class CheckpointPatchEmbedder:
+    """Checkpoint-configured statistical patch embedder used by the M08 pseudo-mask path."""
+
     def __init__(self, checkpoint_path: str | Path):
         self.checkpoint_path = Path(checkpoint_path)
         if not self.checkpoint_path.exists():
@@ -27,9 +35,11 @@ class CheckpointPatchEmbedder:
         try:
             checkpoint = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise EmbeddingError("checkpoint must be a JSON object in v0.8.0") from exc
+            raise EmbeddingError(
+                f"checkpoint must be a JSON config object in {PROJECT_VERSION}"
+            ) from exc
         if not isinstance(checkpoint, dict):
-            raise EmbeddingError("checkpoint must be a JSON object in v0.8.0")
+            raise EmbeddingError(f"checkpoint must be a JSON config object in {PROJECT_VERSION}")
         model_id = checkpoint.get("model_id")
         embedding_dim = checkpoint.get("embedding_dim")
         if not isinstance(model_id, str) or not model_id:
@@ -53,6 +63,14 @@ class CheckpointPatchEmbedder:
                 "magnification": magnification,
                 "normalization": normalization,
                 "embedding_confidence": "checkpoint",
+                "embedding_backend": STATISTICAL_EMBEDDING_BACKEND,
+                "embedder_kind": CHECKPOINT_EMBEDDER_KIND,
+                "checkpoint_format": "json_statistical_embedder_config",
+                "production_ready": False,
+                "limitations": [
+                    "statistical_patch_moments_only",
+                    "not_a_pathology_foundation_model",
+                ],
             },
         )
 
@@ -78,6 +96,15 @@ class FixturePatchEmbedder:
                 "magnification": magnification,
                 "normalization": normalization,
                 "embedding_confidence": "low",
+                "embedding_backend": STATISTICAL_EMBEDDING_BACKEND,
+                "embedder_kind": FIXTURE_EMBEDDER_KIND,
+                "checkpoint_format": "fixture_statistical_embedder",
+                "production_ready": False,
+                "limitations": [
+                    "statistical_patch_moments_only",
+                    "not_a_pathology_foundation_model",
+                    "fixture_smoke_only",
+                ],
             },
         )
 

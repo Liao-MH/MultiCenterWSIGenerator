@@ -19,6 +19,7 @@ from ..priors.artifacts import PriorArtifactError, load_prior_manifest
 from ..qc.engine import QCReferenceError, build_qc_report
 from ..schemas import (
     ValidationError,
+    load_document,
     validate_generation_config,
     validate_generation_output_diagnostics,
 )
@@ -32,6 +33,11 @@ from .tiling import (
     validate_resumable_tile_manifest,
 )
 from .planner import create_generation_plan
+from .latent_diffusion_internal import (
+    INTERNAL_LATENT_DIFFUSION_BACKEND_NAME,
+    InternalLatentDiffusionError,
+    materialize_internal_latent_diffusion_tile_sources,
+)
 from .production_streaming import (
     PRODUCTION_TILE_STREAM_BACKEND,
     ProductionTileStreamError,
@@ -61,6 +67,7 @@ def run_smoke_generation(
     condition_packet_path: str | Path | None = None,
     resume_tile_manifest_path: str | Path | None = None,
     wsi_writer: str = ARRAY_WSI_WRITER,
+    source_wsi_path: str | Path | None = None,
 ) -> dict[str, Any]:
     if not isinstance(generated_id, str) or generated_id == "":
         raise GenerationExecutionError("generated_id must be a non-empty string")
@@ -83,22 +90,29 @@ def run_smoke_generation(
         )
     except ModelRunError as exc:
         raise GenerationExecutionError(str(exc)) from exc
+    resolved_source_wsi_path = _resolve_source_wsi_path_from_prior(
+        generation_config,
+        prior_manifest_path=prior_manifest_path,
+        explicit_source_wsi_path=source_wsi_path,
+    )
     condition_packet = _load_generation_condition_packet(condition_packet_path, plan)
 
     numpy = _import_numpy()
-    tile_output = _prepare_smoke_tile_outputs(
+    cascade_core = _run_stage5_shared_cascade_core(
         numpy,
         generation_config,
         plan["tile_traversal_plan"],
-        root,
+        output_root=root,
+        source_wsi_path=resolved_source_wsi_path,
         resume_manifest_path=resume_manifest_path,
         keep_tile_images=wsi_writer == ARRAY_WSI_WRITER,
     )
     plan = dict(plan)
     plan["stages"] = _complete_generation_stages(plan["stages"])
     plan["tile_traversal_plan"] = complete_tile_traversal_plan(plan["tile_traversal_plan"])
-    plan["tile_manifest_path"] = str(tile_output["tile_manifest_path"])
-    tile_source_manifest_path = tile_output["tile_source_manifest_path"]
+    plan["tile_manifest_path"] = str(cascade_core["tile_manifest_path"])
+    tile_source_manifest_path = cascade_core["tile_source_manifest_path"]
+    plan["cascade_generation"] = cascade_core["summary"]
     if wsi_writer == TILE_STREAMING_WSI_WRITER:
         tile_source_manifest_path = _write_smoke_direct_multilevel_tile_source_manifest(
             numpy,
@@ -112,7 +126,7 @@ def run_smoke_generation(
     else:
         smoke_canvas = _build_smoke_canvas_from_tile_records(
             numpy,
-            tile_output["tile_records"],
+            cascade_core["tile_records"],
             plan["tile_traversal_plan"],
         )
         pyramid_levels = list(_iter_smoke_pyramid_levels_high_to_low(numpy, smoke_canvas))
@@ -445,29 +459,65 @@ def run_production_tile_stream_generation(
             generation_backend=PRODUCTION_TILE_STREAM_BACKEND,
         )
         checkpoint = load_checkpoint_manifest(checkpoint_manifest_path)
-        if checkpoint["inference_contract"]["production_ready"] is not True:
+        inference_contract = checkpoint["inference_contract"]
+        uses_internal_latent_backend = (
+            inference_contract.get("backend_type") == "latent_diffusion_unet_checkpoint"
+        )
+        if not uses_internal_latent_backend and inference_contract["production_ready"] is not True:
             raise GenerationExecutionError("production-tile-stream requires a production_ready checkpoint")
-        backend_contract = load_external_tile_backend_contract(
-            checkpoint,
-            checkpoint_manifest_path,
+        backend_contract = (
+            None
+            if uses_internal_latent_backend
+            else load_external_tile_backend_contract(
+                checkpoint,
+                checkpoint_manifest_path,
+            )
         )
     except (ValidationError, ModelRunError, ProductionTileStreamError) as exc:
         raise GenerationExecutionError(str(exc)) from exc
     condition_packet = _load_generation_condition_packet(condition_packet_path, plan)
-
-    try:
-        tile_output = materialize_production_tile_sources(
-            config,
-            plan,
-            backend_contract,
-            root,
-            generated_id=generated_id,
-            resume_manifest_path=resume_manifest_path,
-            condition_packet_path=condition_packet_path,
-            retry_failed_tiles=retry_failed_tiles,
+    resolved_source_wsi_path = _resolve_source_wsi_path_from_prior(
+        config,
+        prior_manifest_path=prior_manifest_path,
+        explicit_source_wsi_path=None,
+    )
+    if (
+        float(config["structure_anchor"]) > 0.3
+        and isinstance(config.get("source_wsi_id"), str)
+        and config.get("source_wsi_id") != ""
+        and resolved_source_wsi_path is None
+    ):
+        raise GenerationExecutionError(
+            "source-conditioned generation requires source_wsi_path to be resolvable from prior input manifest"
         )
-    except ProductionTileStreamError as exc:
-        raise GenerationExecutionError(str(exc)) from exc
+
+    if uses_internal_latent_backend:
+        try:
+            tile_output = materialize_internal_latent_diffusion_tile_sources(
+                generation_config=config,
+                plan=plan,
+                checkpoint_manifest_path=checkpoint_manifest_path,
+                output_root=root,
+                generated_id=generated_id,
+                condition_packet=condition_packet,
+                source_wsi_path=resolved_source_wsi_path,
+            )
+        except InternalLatentDiffusionError as exc:
+            raise GenerationExecutionError(str(exc)) from exc
+    else:
+        try:
+            tile_output = materialize_production_tile_sources(
+                config,
+                plan,
+                backend_contract,
+                root,
+                generated_id=generated_id,
+                resume_manifest_path=resume_manifest_path,
+                condition_packet_path=condition_packet_path,
+                retry_failed_tiles=retry_failed_tiles,
+            )
+        except ProductionTileStreamError as exc:
+            raise GenerationExecutionError(str(exc)) from exc
 
     tile_source_manifest_path = tile_output["tile_source_manifest_path"]
     tile_source_manifest = tile_output["tile_source_manifest"]
@@ -476,10 +526,14 @@ def run_production_tile_stream_generation(
     plan["tile_manifest_path"] = str(tile_source_manifest_path)
     plan["tile_source_manifest_path"] = str(tile_source_manifest_path)
     plan["wsi_writer"] = TILE_STREAMING_WSI_WRITER
-    plan["tile_traversal"] = "pyramid_tile_grid_external_backend"
+    plan["tile_traversal"] = (
+        "pyramid_tile_grid_internal_latent_backend"
+        if uses_internal_latent_backend
+        else "pyramid_tile_grid_external_backend"
+    )
     plan["tile_traversal_plan"] = {
         "schema_version": PROJECT_VERSION,
-        "tile_traversal": "pyramid_tile_grid_external_backend",
+        "tile_traversal": plan["tile_traversal"],
         "canvas_size_40x": list(tile_source_manifest["canvas_size_40x"]),
         "model_tile_size_40x": list(tile_source_manifest["tile_size_40x"]),
         "tile_count": int(tile_source_manifest["tile_count"]),
@@ -493,13 +547,23 @@ def run_production_tile_stream_generation(
     }
     plan["blending"] = "not_applicable_external_backend_tiff_grid_tiles"
     plan["write_mode"] = "tile_iterator_streaming_write"
-    plan["production_tile_backend"] = {
-        "backend_name": backend_contract["backend_name"],
-        "artifact_path": backend_contract["artifact_path"],
-        "artifact_type": backend_contract["artifact_type"],
-        "output_format": backend_contract["output_format"],
-        "mask_output_format": backend_contract["mask_output_format"],
-    }
+    if uses_internal_latent_backend:
+        plan["production_tile_backend"] = {
+            "backend_name": INTERNAL_LATENT_DIFFUSION_BACKEND_NAME,
+            "artifact_path": str(Path(checkpoint_manifest_path)),
+            "artifact_type": "latent_diffusion_unet_checkpoint",
+            "output_format": "npy_uint8_rgb_tile_v1",
+            "mask_output_format": "npy_uint8_mask_tile_v1",
+        }
+        plan["cascade_generation"] = tile_output["summary"]
+    else:
+        plan["production_tile_backend"] = {
+            "backend_name": backend_contract["backend_name"],
+            "artifact_path": backend_contract["artifact_path"],
+            "artifact_type": backend_contract["artifact_type"],
+            "output_format": backend_contract["output_format"],
+            "mask_output_format": backend_contract["mask_output_format"],
+        }
 
     wsi_path = root / "generated.ome.tiff"
     mask_dir = root / "generated_mask"
@@ -531,9 +595,13 @@ def run_production_tile_stream_generation(
             non_copy_items=[
                 {
                     "name": "generation_backend",
-                    "status": "pass",
+                    "status": "warning" if uses_internal_latent_backend else "pass",
                     "value": PRODUCTION_TILE_STREAM_BACKEND,
-                    "message": "External production tile backend generated disk tiles before OME-TIFF publish.",
+                    "message": (
+                        "Internal latent diffusion checkpoint generated disk tiles before OME-TIFF publish."
+                        if uses_internal_latent_backend
+                        else "External production tile backend generated disk tiles before OME-TIFF publish."
+                    ),
                 }
             ],
         )
@@ -619,6 +687,17 @@ def _metadata_payload(
         "sample_steps": generation_config["sample_steps"],
         "overlap_px_40x": generation_config["overlap_px_40x"],
     }
+    checkpoint_contract = plan.get("checkpoint_inference_contract")
+    if isinstance(checkpoint_contract, dict):
+        generation_payload["checkpoint_inference_contract"] = {
+            "backend_type": checkpoint_contract.get("backend_type"),
+            "artifact_role": checkpoint_contract.get("artifact_role"),
+            "production_ready": checkpoint_contract.get("production_ready"),
+            "compatible_generation_backends": list(
+                checkpoint_contract.get("compatible_generation_backends", [])
+            ),
+            "limitations": list(checkpoint_contract.get("limitations", [])),
+        }
     if condition_packet is not None:
         generation_payload["condition_packet_path"] = condition_packet["path"]
         generation_payload["condition_summary"] = condition_packet["summary"]
@@ -632,6 +711,16 @@ def _metadata_payload(
         generation_payload["tile_source_manifest_path"] = plan["tile_source_manifest_path"]
     if "wsi_writer" in plan:
         generation_payload["wsi_writer"] = plan["wsi_writer"]
+    if "production_tile_backend" in plan:
+        generation_payload["production_tile_backend"] = plan["production_tile_backend"]
+
+    source_payload = _metadata_source_payload(
+        generation_config=generation_config,
+        plan=plan,
+    )
+    mask_schema = _metadata_mask_schema(
+        condition_packet=condition_packet,
+    )
 
     return {
         "schema_version": PROJECT_VERSION,
@@ -644,19 +733,9 @@ def _metadata_payload(
             "qc_json_path": str(qc_path),
             "diagnostics_manifest_path": str(diagnostics_manifest_path),
         },
-        "source": {
-            "source_wsi_id": generation_config.get("source_wsi_id"),
-            "source_wsi_path": None,
-            "source_region": None,
-            "source_scale": None,
-        },
+        "source": source_payload,
         "generation": generation_payload,
-        "mask_schema": {
-            "classes": list(MASK_CLASSES),
-            "input_label_mapping": {},
-            "mapping_source": "cluster",
-            "confidence": {},
-        },
+        "mask_schema": mask_schema,
         "qc": {
             "overall_status": "pass",
             "summary": {},
@@ -705,6 +784,86 @@ def _run_summary(
             "summary": condition_packet["summary"],
         }
     return summary
+
+
+def _metadata_source_payload(
+    *,
+    generation_config: dict[str, Any],
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    source_wsi_id = generation_config.get("source_wsi_id")
+    cascade_generation = plan.get("cascade_generation")
+    if not isinstance(cascade_generation, dict):
+        return {
+            "source_wsi_id": source_wsi_id,
+            "source_wsi_path": None,
+            "source_region": None,
+            "source_scale": None,
+        }
+    source_condition = cascade_generation.get("source_condition")
+    if not isinstance(source_condition, dict) or source_condition.get("mode") not in {
+        "source_tile_rgb_mix",
+        "source_tile_rgb_model_condition",
+        "source_tile_rgb_model_condition_per_tile",
+    }:
+        return {
+            "source_wsi_id": source_wsi_id,
+            "source_wsi_path": None,
+            "source_region": None,
+            "source_scale": None,
+        }
+    tile_plan = plan.get("tile_traversal_plan", {})
+    tiles = tile_plan.get("tiles")
+    source_region = None
+    if isinstance(tiles, list) and tiles:
+        first_tile = tiles[0]
+        if isinstance(first_tile, dict):
+            write_region = first_tile.get("write_region_40x")
+            if isinstance(write_region, list) and len(write_region) == 4:
+                source_region = [int(value) for value in write_region]
+    if source_region is None:
+        summary_region = source_condition.get("source_region")
+        if isinstance(summary_region, list) and len(summary_region) == 4:
+            source_region = [int(value) for value in summary_region]
+    return {
+        "source_wsi_id": source_wsi_id,
+        "source_wsi_path": source_condition.get("source_wsi_path"),
+        "source_region": source_region,
+        "source_scale": "1/1",
+    }
+
+
+def _metadata_mask_schema(
+    *,
+    condition_packet: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if condition_packet is None:
+        return {
+            "classes": list(MASK_CLASSES),
+            "input_label_mapping": {},
+            "mapping_source": "cluster",
+            "confidence": {},
+        }
+    sampled_layout_mask = condition_packet["summary"].get("sampled_layout_mask")
+    if isinstance(sampled_layout_mask, dict):
+        return {
+            "classes": list(MASK_CLASSES),
+            "input_label_mapping": {
+                "artifact_path": sampled_layout_mask.get("artifact_path"),
+                "mask_path": sampled_layout_mask.get("mask_path"),
+                "sample_id": sampled_layout_mask.get("sample_id"),
+            },
+            "mapping_source": "mixed",
+            "confidence": {
+                "provenance": "sampled_layout_mask_condition",
+            },
+        }
+    return {
+        "classes": list(MASK_CLASSES),
+        "input_label_mapping": {},
+        "mapping_source": "cluster",
+        "confidence": {},
+    }
 
 
 def _generation_output_diagnostics(
@@ -1663,6 +1822,160 @@ def _prepare_smoke_tile_outputs(
         "tile_manifest_path": manifest_path,
         "tile_source_manifest_path": tile_source_manifest_path,
     }
+
+
+def _run_stage5_shared_cascade_core(
+    numpy,
+    generation_config: dict[str, Any],
+    tile_traversal_plan: dict[str, Any],
+    *,
+    output_root: Path,
+    source_wsi_path: str | Path | None,
+    resume_manifest_path: Path | None,
+    keep_tile_images: bool,
+) -> dict[str, Any]:
+    tile_output = _prepare_smoke_tile_outputs(
+        numpy,
+        generation_config,
+        tile_traversal_plan,
+        output_root,
+        resume_manifest_path=resume_manifest_path,
+        keep_tile_images=keep_tile_images,
+    )
+    source_condition = _stage5_source_condition_summary(
+        generation_config,
+        source_wsi_path=source_wsi_path,
+    )
+    if source_condition["mode"] == "source_tile_rgb_mix":
+        mixed_records = []
+        for tile_record in tile_output["tile_records"]:
+            mixed = dict(tile_record)
+            if keep_tile_images:
+                mixed["image"] = _mix_source_conditioned_tile(
+                    numpy,
+                    generation_config,
+                    tile_record,
+                    source_wsi_path=source_wsi_path,
+                )
+                tile_path = Path(tile_record["path"])
+                numpy.save(tile_path, mixed["image"])
+            mixed_records.append(mixed)
+        tile_output["tile_records"] = mixed_records
+    return {
+        **tile_output,
+        "summary": {
+            "pipeline_role": "shared_stage5_cascade_core",
+            "stages": [
+                {
+                    "level": level,
+                    "status": "completed",
+                }
+                for level in CASCADE_LEVELS
+            ],
+            "tile_traversal": {
+                "strategy": tile_traversal_plan["tile_traversal"],
+                "blending": "overlap_weighted_average",
+            },
+            "source_condition": source_condition,
+        },
+    }
+
+
+def _resolve_source_wsi_path_from_prior(
+    generation_config: dict[str, Any],
+    *,
+    prior_manifest_path: str | Path,
+    explicit_source_wsi_path: str | Path | None,
+) -> str | Path | None:
+    if explicit_source_wsi_path is not None:
+        return explicit_source_wsi_path
+    source_wsi_id = generation_config.get("source_wsi_id")
+    anchor = float(generation_config["structure_anchor"])
+    if not isinstance(source_wsi_id, str) or source_wsi_id == "" or anchor <= 0.3:
+        return None
+    prior = load_prior_manifest(prior_manifest_path, verify_files=True)
+    manifest_path = prior.get("input_data", {}).get("manifest_path")
+    if not isinstance(manifest_path, str) or manifest_path == "":
+        return None
+    source = Path(manifest_path)
+    if not source.is_absolute():
+        candidate = Path(prior_manifest_path).parent / source
+        source = candidate if candidate.exists() else source
+    input_manifest = load_document(source)
+    records = input_manifest.get("records")
+    if not isinstance(records, list):
+        return None
+    for record in records:
+        if isinstance(record, dict) and record.get("wsi_id") == source_wsi_id:
+            return record.get("wsi_path")
+    return None
+
+
+def _stage5_source_condition_summary(
+    generation_config: dict[str, Any],
+    *,
+    source_wsi_path: str | Path | None,
+) -> dict[str, Any]:
+    anchor = float(generation_config["structure_anchor"])
+    source_wsi_id = generation_config.get("source_wsi_id")
+    enabled = (
+        anchor > 0.3
+        and isinstance(source_wsi_id, str)
+        and source_wsi_id != ""
+        and source_wsi_path is not None
+    )
+    return {
+        "enabled": enabled,
+        "mode": "source_tile_rgb_mix" if enabled else "de_novo_generation",
+        "source_wsi_id": source_wsi_id if enabled else None,
+        "source_wsi_path": str(source_wsi_path) if enabled else None,
+        "strength": anchor if enabled else 0.0,
+    }
+
+
+def _mix_source_conditioned_tile(
+    numpy,
+    generation_config: dict[str, Any],
+    tile_record: dict[str, Any],
+    *,
+    source_wsi_path: str | Path | None,
+):
+    if source_wsi_path is None:
+        raise GenerationExecutionError("source_wsi_path is required for source-conditioned generation")
+    generated = numpy.asarray(tile_record["image"], dtype=numpy.uint8)
+    source_tile = _load_source_tile_rgb(
+        numpy,
+        Path(source_wsi_path),
+        tile_record["tile_origin_40x"],
+        generated.shape[1],
+        generated.shape[0],
+    )
+    strength = float(generation_config["structure_anchor"])
+    mixed = (
+        source_tile.astype(numpy.float32) * strength
+        + generated.astype(numpy.float32) * (1.0 - strength)
+    )
+    mixed = numpy.rint(mixed)
+    mixed = numpy.clip(mixed, 0, 255)
+    return mixed.astype(numpy.uint8)
+
+
+def _load_source_tile_rgb(numpy, path: Path, tile_origin_40x: list[int], width: int, height: int):
+    if not path.exists():
+        raise GenerationExecutionError(f"source-conditioned WSI does not exist: {path}")
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise GenerationExecutionError("source-conditioned tile loading requires Pillow") from exc
+    x_origin = int(tile_origin_40x[0])
+    y_origin = int(tile_origin_40x[1])
+    try:
+        with Image.open(path) as image:
+            rgb = image.convert("RGB")
+            crop = rgb.crop((x_origin, y_origin, x_origin + width, y_origin + height))
+            return numpy.asarray(crop, dtype=numpy.uint8)
+    except Exception as exc:
+        raise GenerationExecutionError(f"failed to read source-conditioned tile from {path}") from exc
 
 
 def _build_smoke_canvas_from_tile_records(

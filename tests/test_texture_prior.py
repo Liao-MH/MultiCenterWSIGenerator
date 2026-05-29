@@ -65,8 +65,11 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(prior, saved)
-        self.assertEqual(prior["schema_version"], "v0.72.32")
+        self.assertEqual(prior["schema_version"], "v0.80.0")
         self.assertEqual(prior["prior_type"], "texture_prior")
+        self.assertEqual(prior["prior_kind"], "statistical_embedding_cluster_texture_prior_v1")
+        self.assertIn("trainable_codebook", prior["coverage"]["uncovered_dimensions"])
+        self.assertIn("no_morphology_semantic_class_label", prior["limitations"])
         self.assertEqual(prior["source"]["cache_dir"], str(cache_dir))
         self.assertEqual(prior["source"]["cache_key"], cache_key)
         self.assertEqual(prior["source"]["cluster_report_path"], str(cluster_path))
@@ -194,7 +197,7 @@ class TexturePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(policy, saved)
-        self.assertEqual(policy["schema_version"], "v0.72.32")
+        self.assertEqual(policy["schema_version"], "v0.80.0")
         self.assertEqual(policy["artifact_type"], "sampled_texture_policy")
         self.assertEqual(policy["sample_id"], "texture-sample-001")
         self.assertEqual(policy["random_seed"], 3)
@@ -220,13 +223,19 @@ class TexturePriorTests(unittest.TestCase):
             ["texture_token", "morphology_latent"],
         )
         self.assertIn("not_a_vq_vae_or_morphology_token_sampler", policy["limitations"])
+        self.assertIn("no_morphology_semantic_class_label", policy["limitations"])
+        self.assertIn("coverage_reference", policy)
+        self.assertIn(
+            "trainable_codebook",
+            policy["coverage_reference"]["uncovered_dimensions"],
+        )
 
     def test_sample_texture_policy_from_prior_rejects_invalid_inputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             prior_path = root / "texture_prior.json"
             prior = {
-                "schema_version": "v0.72.32",
+                "schema_version": "v0.80.0",
                 "prior_type": "texture_prior",
                 "cluster_count": 1,
                 "texture_codebook": {

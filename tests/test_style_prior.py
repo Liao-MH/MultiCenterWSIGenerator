@@ -31,7 +31,7 @@ class StylePriorTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -66,7 +66,7 @@ class StylePriorTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "dataset_id": "demo-style",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -92,7 +92,7 @@ class StylePriorTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -145,7 +145,7 @@ class StylePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(style_prior, saved)
-        self.assertEqual(style_prior["schema_version"], "v0.72.32")
+        self.assertEqual(style_prior["schema_version"], "v0.80.0")
         self.assertEqual(style_prior["prior_type"], "style_prior")
         self.assertEqual(style_prior["source"]["training_index_path"], str(index_path))
         self.assertEqual(style_prior["source"]["batch_size"], 2)
@@ -191,6 +191,18 @@ class StylePriorTests(unittest.TestCase):
         self.assertEqual(
             [record["wsi_id"] for record in style_prior["tile_style_records"]],
             ["slide-001", "slide-001"],
+        )
+        self.assertEqual(
+            style_prior["prior_kind"],
+            "statistical_rgb_style_prior_v1",
+        )
+        self.assertIn(
+            "slide_level_style_seed_with_local_perturbation",
+            style_prior["coverage"]["uncovered_dimensions"],
+        )
+        self.assertIn(
+            "no_sharpness_focus_plane_distribution",
+            style_prior["limitations"],
         )
 
     def test_build_style_prior_rejects_missing_wsi_image(self):
@@ -268,7 +280,7 @@ class StylePriorTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(policy, saved)
-        self.assertEqual(policy["schema_version"], "v0.72.32")
+        self.assertEqual(policy["schema_version"], "v0.80.0")
         self.assertEqual(policy["artifact_type"], "sampled_style_policy")
         self.assertEqual(policy["sample_id"], "style-sample-001")
         self.assertEqual(policy["random_seed"], 3)
@@ -286,13 +298,22 @@ class StylePriorTests(unittest.TestCase):
         )
         self.assertEqual(policy["rgb_statistics_reference"]["mean_rgb"], [130.0, 110.0, 100.0])
         self.assertIn("not_deep_trainable_style_encoder", policy["limitations"])
+        self.assertIn(
+            "no_compression_noise_distribution",
+            policy["limitations"],
+        )
+        self.assertIn("coverage_reference", policy)
+        self.assertIn(
+            "smudges_dust_artifacts",
+            policy["coverage_reference"]["uncovered_dimensions"],
+        )
 
     def test_sample_style_policy_from_prior_rejects_invalid_inputs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             prior_path = root / "style_prior.json"
             prior = {
-                "schema_version": "v0.72.32",
+                "schema_version": "v0.80.0",
                 "prior_type": "style_prior",
                 "rgb_statistics": {"mean_rgb": [1.0, 2.0, 3.0]},
                 "tile_style_records": [

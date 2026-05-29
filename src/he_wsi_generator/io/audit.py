@@ -37,7 +37,19 @@ def audit_manifest(manifest: dict, reader: SlideReader | None = None) -> dict:
         audited["status"] = "ok"
         audited["split"] = record["split"]
         audited["cancer_type"] = record["cancer_type"]
+        audited["center_id"] = record.get("center_id")
+        audited["tissue_type"] = record.get("tissue_type")
         audited["annotation_count"] = len(record.get("annotations", []))
+        audited["annotation_summary"] = [
+            {
+                "annotation_id": annotation["annotation_id"],
+                "annotation_path": annotation["annotation_path"],
+                "annotation_type": annotation["annotation_type"],
+                "coordinate_level": annotation["coordinate_level"],
+                "status": annotation["status"],
+            }
+            for annotation in record.get("annotations", [])
+        ]
         records.append(audited)
 
     return {

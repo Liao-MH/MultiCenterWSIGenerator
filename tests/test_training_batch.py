@@ -35,7 +35,7 @@ class TrainingBatchTests(unittest.TestCase):
     def manifest(self, root: Path, mask_path: Path, slide_path: Path | None = None) -> dict:
         wsi_path = slide_path if slide_path is not None else root / "slide-001.svs"
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -71,7 +71,7 @@ class TrainingBatchTests(unittest.TestCase):
     def audit(self, root: Path, slide_path: Path | None = None) -> dict:
         wsi_path = slide_path if slide_path is not None else root / "slide-001.svs"
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -97,7 +97,7 @@ class TrainingBatchTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -151,7 +151,7 @@ class TrainingBatchTests(unittest.TestCase):
                 cascade_level="1/1",
             )
 
-        self.assertEqual(batch["schema_version"], "v0.72.32")
+        self.assertEqual(batch["schema_version"], "v0.80.0")
         self.assertEqual(batch["batch_size"], 2)
         self.assertEqual(batch["mask_batch_shape"], [2, 512, 512])
         self.assertEqual(batch["cascade_levels"], ["1/1"])
@@ -160,6 +160,81 @@ class TrainingBatchTests(unittest.TestCase):
         self.assertEqual(batch["mask_batch"].shape, (2, 512, 512))
         self.assertTrue((batch["mask_batch"][0] == 2).all())
         self.assertTrue((batch["mask_batch"][1] == 5).all())
+
+    def test_load_training_batch_reads_npy_mask_with_mmap_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            mask_path = root / "mask.npy"
+            mask = np.zeros((512, 1024), dtype=np.uint8)
+            mask[:, :512] = 2
+            mask[:, 512:] = 5
+            np.save(mask_path, mask)
+            index_path = self.write_training_index(root, mask_path)
+            original_load = np.load
+            mmap_modes = []
+
+            def spy_load(path, *args, **kwargs):
+                if Path(path) == mask_path:
+                    mmap_modes.append(kwargs.get("mmap_mode"))
+                return original_load(path, *args, **kwargs)
+
+            np.load = spy_load
+            try:
+                batch = load_training_batch(
+                    index_path,
+                    batch_size=1,
+                    split="train",
+                    cascade_level="1/1",
+                )
+            finally:
+                np.load = original_load
+
+        self.assertEqual(mmap_modes, ["r"])
+        self.assertEqual(batch["mask_batch_shape"], [1, 512, 512])
+
+    def test_load_training_batch_downsamples_mask_for_lower_cascade_level(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            mask_path = root / "mask.npy"
+            mask = np.zeros((512, 1024), dtype=np.uint8)
+            mask[:, :512] = 2
+            mask[:, 512:] = 5
+            np.save(mask_path, mask)
+            index_path = self.write_training_index(root, mask_path)
+
+            batch = load_training_batch(
+                index_path,
+                batch_size=2,
+                split="train",
+                cascade_level="1/32",
+            )
+
+        self.assertEqual(batch["mask_batch_shape"], [2, 16, 16])
+        self.assertEqual(batch["conditioning"][0]["coord"]["target_image_shape"], [16, 16])
+        self.assertEqual(batch["conditioning"][1]["coord"]["target_mask_shape"], [16, 16])
+
+    def test_load_training_batch_reads_fixture_image_tiles_for_lower_cascade_level(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            slide_path = self.create_fixture_slide(root)
+            mask_path = root / "mask.npy"
+            mask = np.zeros((512, 1024), dtype=np.uint8)
+            mask[:, :512] = 2
+            mask[:, 512:] = 5
+            np.save(mask_path, mask)
+            index_path = self.write_training_index(root, mask_path, slide_path=slide_path)
+
+            batch = load_training_batch(
+                index_path,
+                batch_size=2,
+                split="train",
+                cascade_level="1/16",
+                include_image=True,
+            )
+
+        self.assertEqual(batch["image_batch_shape"], [2, 32, 32, 3])
+        self.assertEqual(batch["conditioning"][0]["coord"]["target_image_shape"], [32, 32])
+        self.assertEqual(batch["image_batch"][0].shape, (32, 32, 3))
 
     def test_load_training_batch_reads_fixture_image_tiles_when_requested(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -260,6 +335,7 @@ class TrainingBatchTests(unittest.TestCase):
         self.assertEqual(summary["image_dtype"], "uint8")
         self.assertNotIn("mask_batch", summary)
         self.assertNotIn("image_batch", summary)
+        self.assertEqual(summary["conditioning"][0]["coord"]["target_image_shape"], [512, 512])
 
 
 if __name__ == "__main__":

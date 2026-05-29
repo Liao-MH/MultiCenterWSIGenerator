@@ -4,6 +4,11 @@ import sys
 from pathlib import Path
 
 from .constants import DEFAULT_GENERATION_CONFIG
+from .annotations import (
+    AnnotationPipelineError,
+    MaskMappingError,
+    build_six_class_mask_artifact,
+)
 from .generation.conditioning import (
     GenerationConditionError,
     build_generation_condition_packet,
@@ -18,6 +23,10 @@ from .generation.planner import create_generation_plan
 from .io.audit import audit_manifest, build_reader
 from .metadata.archive import archive_sample
 from .models.training import ModelRunError, create_training_run
+from .models.latent_diffusion_training import (
+    LatentDiffusionTrainingError,
+    train_latent_diffusion_unet,
+)
 from .models.training_batch import (
     TrainingBatchError,
     load_training_batch,
@@ -37,6 +46,7 @@ from .priors.artifacts import (
     load_prior_manifest,
 )
 from .priors.layout import LayoutMaskPriorBuildError, build_layout_mask_prior_from_training_index
+from .priors.pseudo_mask import PseudoMaskBuildError, build_pseudo_mask_from_manifest
 from .priors.sampler import LayoutMaskSamplerError, sample_layout_mask_from_prior
 from .priors.style import (
     StylePriorBuildError,
@@ -56,6 +66,7 @@ from .ui.config import create_default_ui_config, load_ui_config, save_ui_config
 from .ui.controller import collect_output_summary
 from .ui.jobs import JobRunner, JobRunnerError
 from .ui.pyside_app import UIUnavailableError, launch_ui
+from .embeddings.embedder import CheckpointPatchEmbedder, FixturePatchEmbedder
 
 
 def run_command(args: argparse.Namespace) -> int:
@@ -239,6 +250,50 @@ def run_command(args: argparse.Namespace) -> int:
         )
         return 0
 
+    if args.command == "build-pseudo-mask":
+        try:
+            embedder = (
+                CheckpointPatchEmbedder(args.embedder_checkpoint)
+                if args.embedder_checkpoint
+                else FixturePatchEmbedder()
+            )
+            output = build_pseudo_mask_from_manifest(
+                manifest_path=args.manifest,
+                output_dir=args.output_dir,
+                backend=args.backend,
+                embedder=embedder,
+                patch_size=(args.patch_width, args.patch_height),
+                n_clusters=args.n_clusters,
+                batch_size=args.batch_size,
+            )
+        except (PseudoMaskBuildError, RuntimeError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(
+            "pseudo mask written: "
+            f"{output['pseudo_mask_path']} "
+            f"(cluster report: {output['cluster_report_path']})"
+        )
+        return 0
+
+    if args.command == "build-six-class-mask":
+        try:
+            result = build_six_class_mask_artifact(
+                manifest_path=args.manifest,
+                audit_path=args.audit,
+                label_mapping_paths=args.label_mapping,
+                output_dir=args.output_dir,
+            )
+        except (AnnotationPipelineError, MaskMappingError, ValidationError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(
+            "six-class mask summary written: "
+            f"{result['summary_path']} "
+            f"({result['record_count']} records)"
+        )
+        return 0
+
     if args.command == "sample-layout-mask":
         try:
             manifest = sample_layout_mask_from_prior(
@@ -263,6 +318,16 @@ def run_command(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"training run initialized: {run['output_dir']}")
+        return 0
+
+    if args.command == "train-latent-diffusion-unet":
+        try:
+            config = load_document(args.config)
+            run = train_latent_diffusion_unet(config)
+        except (ValidationError, LatentDiffusionTrainingError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"latent diffusion training completed: {run['checkpoint_manifest_path']}")
         return 0
 
     if args.command == "build-training-index":

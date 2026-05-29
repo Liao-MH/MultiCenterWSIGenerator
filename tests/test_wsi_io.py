@@ -61,32 +61,56 @@ class WSIIOTests(unittest.TestCase):
             tmp_path = Path(tmpdir)
             slide_path = self.create_fixture_slide(tmp_path)
             manifest = {
-                "schema_version": "v0.72.32",
+                "schema_version": "v0.80.0",
                 "dataset_id": "demo",
                 "created_at": "2026-05-23T09:00:00",
                 "records": [
                     {
                         "wsi_id": "slide-001",
                         "wsi_path": str(slide_path),
+                        "center_id": "center-a",
                         "cancer_type": "lung",
+                        "tissue_type": "lung",
                         "split": "train",
-                        "annotations": [],
+                        "annotations": [
+                            {
+                                "annotation_id": "ann-001",
+                                "annotation_path": str(tmp_path / "mask.npy"),
+                                "annotation_type": "numpy_mask",
+                                "coordinate_level": 0,
+                                "label_encoding": "integer_index",
+                                "transform_to_level0": {
+                                    "scale_x": 1.0,
+                                    "scale_y": 1.0,
+                                    "offset_x": 0,
+                                    "offset_y": 0,
+                                },
+                                "status": "validated",
+                            }
+                        ],
                     }
                 ],
             }
 
             audit = audit_manifest(manifest, reader=FixtureImageSlideReader())
 
-        self.assertEqual(audit["schema_version"], "v0.72.32")
+        self.assertEqual(audit["schema_version"], "v0.80.0")
         self.assertEqual(audit["dataset_id"], "demo")
         self.assertEqual(audit["records"][0]["wsi_id"], "slide-001")
         self.assertEqual(audit["records"][0]["dimensions"], [16, 8])
         self.assertEqual(audit["records"][0]["mpp_x"], 0.25)
         self.assertEqual(audit["records"][0]["backend"], "fixture-image")
+        self.assertEqual(audit["records"][0]["center_id"], "center-a")
+        self.assertEqual(audit["records"][0]["tissue_type"], "lung")
+        self.assertEqual(audit["records"][0]["annotation_count"], 1)
+        self.assertEqual(
+            audit["records"][0]["annotation_summary"][0]["annotation_type"],
+            "numpy_mask",
+        )
 
     def test_audit_manifest_records_read_errors(self):
         manifest = {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "dataset_id": "demo",
             "created_at": "2026-05-23T09:00:00",
             "records": [

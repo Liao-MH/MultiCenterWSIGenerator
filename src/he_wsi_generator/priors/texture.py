@@ -9,6 +9,19 @@ from ..embeddings.cache import load_embedding_cache
 
 TEXTURE_CODEBOOK_TYPE = "fitted_embedding_cluster_codebook_v1"
 TEXTURE_TOKEN_TYPE = "embedding_cluster_texture_token_v1"
+TEXTURE_PRIOR_KIND = "statistical_embedding_cluster_texture_prior_v1"
+# Dimensions listed in design §5.5 that are intentionally outside the current
+# statistical embedding-cluster texture prior. They are recorded so downstream
+# training/generation cannot silently treat the prior as a full morphology
+# token sampler.
+TEXTURE_COVERAGE_DIMENSIONS = (
+    {"name": "embedding_cluster_codebook", "covered": True, "evidence": "fitted_embedding_cluster_codebook_v1"},
+    {"name": "morphology_latent_per_cluster", "covered": True, "evidence": "global_z_score_cluster_centroid"},
+    {"name": "trainable_codebook", "covered": False, "evidence": None},
+    {"name": "vq_vae_token_sampler", "covered": False, "evidence": None},
+    {"name": "morphology_semantic_class", "covered": False, "evidence": None},
+    {"name": "region_specific_token_distribution", "covered": False, "evidence": None},
+)
 
 
 class TexturePriorBuildError(ValueError):
@@ -51,6 +64,7 @@ def build_texture_prior_from_embedding_cache(
     prior = {
         "schema_version": PROJECT_VERSION,
         "prior_type": "texture_prior",
+        "prior_kind": TEXTURE_PRIOR_KIND,
         "created_at": _now_iso(),
         "source": {
             "source_type": "embedding_cache_cluster_report",
@@ -76,11 +90,22 @@ def build_texture_prior_from_embedding_cache(
             token_count=cluster_count,
         ),
         "texture_prototypes": prototypes,
+        "coverage": {
+            "covered_dimensions": [
+                dim["name"] for dim in TEXTURE_COVERAGE_DIMENSIONS if dim["covered"]
+            ],
+            "uncovered_dimensions": [
+                dim["name"] for dim in TEXTURE_COVERAGE_DIMENSIONS if not dim["covered"]
+            ],
+            "details": [dict(dim) for dim in TEXTURE_COVERAGE_DIMENSIONS],
+        },
         "limitations": [
             "statistical_embedding_texture_prior_only",
             "fitted_embedding_cluster_codebook_only",
             "not_a_trainable_texture_codebook",
             "not_a_vq_vae_or_morphology_token_sampler",
+            "no_morphology_semantic_class_label",
+            "no_region_specific_token_distribution",
         ],
     }
 
@@ -156,12 +181,15 @@ def sample_texture_policy_from_prior(
             "morphology_latent": morphology_latent,
         },
         "texture_codebook_reference": _texture_codebook_reference(prior),
+        "coverage_reference": _texture_coverage_reference(prior),
         "limitations": [
             "deterministic_statistical_texture_policy_only",
             "deterministic_fitted_embedding_cluster_codebook_policy_only",
             "not_a_trainable_texture_codebook",
             "not_a_vq_vae_or_morphology_token_sampler",
             "not_production_texture_model",
+            "no_morphology_semantic_class_label",
+            "no_region_specific_token_distribution",
         ],
     }
 
@@ -358,6 +386,37 @@ def _texture_codebook_reference(prior: dict[str, Any]) -> dict[str, Any]:
         "embedding_dim": embedding_dim,
         "token_count": token_count,
         "condition_outputs": list(condition_outputs),
+    }
+
+
+def _texture_coverage_reference(prior: dict[str, Any]) -> dict[str, Any]:
+    coverage = prior.get("coverage")
+    if not isinstance(coverage, dict):
+        # Older artifacts written before coverage existed; surface this rather
+        # than silently treat the prior as a full morphology token sampler.
+        return {
+            "covered_dimensions": [
+                dim["name"] for dim in TEXTURE_COVERAGE_DIMENSIONS if dim["covered"]
+            ],
+            "uncovered_dimensions": [
+                dim["name"] for dim in TEXTURE_COVERAGE_DIMENSIONS if not dim["covered"]
+            ],
+            "details": [dict(dim) for dim in TEXTURE_COVERAGE_DIMENSIONS],
+            "note": "texture_prior.coverage missing; default coverage assumes statistical embedding clusters only",
+        }
+    covered = coverage.get("covered_dimensions")
+    uncovered = coverage.get("uncovered_dimensions")
+    details = coverage.get("details")
+    if not isinstance(covered, list) or not isinstance(uncovered, list):
+        raise TexturePriorBuildError(
+            "texture_prior.coverage.covered_dimensions and uncovered_dimensions must be lists"
+        )
+    if not isinstance(details, list):
+        raise TexturePriorBuildError("texture_prior.coverage.details must be a list")
+    return {
+        "covered_dimensions": list(covered),
+        "uncovered_dimensions": list(uncovered),
+        "details": [dict(item) for item in details if isinstance(item, dict)],
     }
 
 

@@ -50,7 +50,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def manifest(self, root: Path, mask_path: Path, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "records": [
@@ -85,7 +85,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def audit(self, slide_path: Path) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "dataset_id": "demo-training",
             "created_at": "2026-05-23T14:00:00Z",
             "backend": "fixture-image",
@@ -111,7 +111,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def label_mapping(self) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "wsi_id": "slide-001",
             "source_annotation_id": "ann-001",
             "classes": {
@@ -156,7 +156,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         return save_prior_manifest(
             root,
             {
-                "schema_version": "v0.72.32",
+                "schema_version": "v0.80.0",
                 "prior_id": "prior-torch-smoke",
                 "created_at": "2026-05-23T13:00:00Z",
                 "random_seed": 17,
@@ -172,7 +172,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
 
     def generation_config(self) -> dict:
         return {
-            "schema_version": "v0.72.32",
+            "schema_version": "v0.80.0",
             "random_seed": 3,
             "model_family": "latent_diffusion_unet",
             "max_magnification": "40x",
@@ -279,7 +279,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
         path.write_text(
             json.dumps(
                 {
-                    "schema_version": "v0.72.32",
+                    "schema_version": "v0.80.0",
                     "condition_packet_type": "generation_condition_packet",
                     "created_at": "2026-05-23T16:00:00Z",
                     "prior_manifest_path": str(root / "prior_manifest.json"),
@@ -463,7 +463,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             log_exists = Path(run["training_log_path"]).exists()
             checkpoint_exists = Path(run["checkpoint_path"]).exists()
 
-        self.assertEqual(run["schema_version"], "v0.72.32")
+        self.assertEqual(run["schema_version"], "v0.80.0")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["status"], "trained")
         self.assertFalse(manifest["usable_for_inference"])
@@ -791,7 +791,7 @@ class TorchSmokeTrainingTests(unittest.TestCase):
             latent_preview = np.load(run["latent_preview_path"])
             reconstruction_preview = np.load(run["reconstruction_preview_path"])
 
-        self.assertEqual(run["schema_version"], "v0.72.32")
+        self.assertEqual(run["schema_version"], "v0.80.0")
         self.assertEqual(run["status"], "completed")
         self.assertEqual(manifest["training_backend"], "torch-smoke-rgb-vae-latent-autoencoder")
         self.assertEqual(manifest["target_type"], "vae_rgb_reconstruction")
